@@ -171,6 +171,15 @@ pub struct ServerStatus {
     pub open_circuit_count: u32,
     /// 当前活跃请求数（近似值，当前版本默认 0）
     pub active_requests: u64,
+    /// 能力过滤与跨 Provider 回退指标
+    pub capability_routing:
+        middleware::capability_routing_metrics::CapabilityRoutingMetricsSnapshot,
+    /// 响应缓存运行时统计
+    pub response_cache: middleware::response_cache::ResponseCacheStats,
+    /// 请求去重运行时统计
+    pub request_dedup: middleware::request_dedup::RequestDedupStats,
+    /// 幂等运行时统计
+    pub idempotency: middleware::idempotency::IdempotencyStats,
 }
 
 pub struct ServerState {
@@ -191,6 +200,15 @@ pub struct ServerState {
     pub running_api_key: Option<String>,
     /// 服务器实际监听的 host（可能与配置不同，因为会自动切换到有效的 IP）
     pub running_host: Option<String>,
+    /// 能力路由指标（能力过滤/模型回退/Provider 回退）
+    pub capability_routing_metrics_store:
+        Arc<middleware::capability_routing_metrics::CapabilityRoutingMetricsStore>,
+    /// 响应缓存存储（用于状态统计与运行时共享）
+    pub response_cache_store: Arc<middleware::response_cache::ResponseCacheStore>,
+    /// 请求去重存储（用于状态统计与运行时共享）
+    pub request_dedup_store: Arc<middleware::request_dedup::RequestDedupStore>,
+    /// 幂等性存储（用于状态统计与运行时共享）
+    pub idempotency_store: Arc<middleware::idempotency::IdempotencyStore>,
 }
 
 impl ServerState {
@@ -200,6 +218,21 @@ impl ServerState {
         let openai_custom = OpenAICustomProvider::new();
         let claude_custom = ClaudeCustomProvider::new();
         let default_provider_ref = Arc::new(RwLock::new(config.default_provider.clone()));
+        let idempotency_store = Arc::new(middleware::idempotency::IdempotencyStore::new(
+            middleware::idempotency::IdempotencyConfig::default(),
+        ));
+        let request_dedup_store = Arc::new(middleware::request_dedup::RequestDedupStore::new(
+            middleware::request_dedup::RequestDedupConfig::default(),
+        ));
+        let response_cache_store = Arc::new(middleware::response_cache::ResponseCacheStore::new(
+            middleware::response_cache::ResponseCacheConfig {
+                enabled: config.server.response_cache.enabled,
+                ttl_secs: config.server.response_cache.ttl_secs,
+                max_entries: config.server.response_cache.max_entries,
+                max_body_bytes: config.server.response_cache.max_body_bytes,
+                cacheable_status_codes: config.server.response_cache.cacheable_status_codes.clone(),
+            },
+        ));
 
         Self {
             config,
@@ -215,6 +248,12 @@ impl ServerState {
             shutdown_tx: None,
             running_api_key: None,
             running_host: None,
+            capability_routing_metrics_store: Arc::new(
+                middleware::capability_routing_metrics::CapabilityRoutingMetricsStore::new(),
+            ),
+            response_cache_store,
+            request_dedup_store,
+            idempotency_store,
         }
     }
 
@@ -233,6 +272,10 @@ impl ServerState {
             p95_latency_ms_1m: None,
             open_circuit_count: 0,
             active_requests: 0,
+            capability_routing: self.capability_routing_metrics_store.snapshot(),
+            response_cache: self.response_cache_store.stats(),
+            request_dedup: self.request_dedup_store.stats(),
+            idempotency: self.idempotency_store.stats(),
         }
     }
 
@@ -392,6 +435,27 @@ impl ServerState {
 
         // 保存实际使用的 host（在移动到 spawn 之前克隆）
         let running_host = host.clone();
+        let idempotency_store = Arc::new(middleware::idempotency::IdempotencyStore::new(
+            middleware::idempotency::IdempotencyConfig::default(),
+        ));
+        self.idempotency_store = idempotency_store.clone();
+        let request_dedup_store = Arc::new(middleware::request_dedup::RequestDedupStore::new(
+            middleware::request_dedup::RequestDedupConfig::default(),
+        ));
+        self.request_dedup_store = request_dedup_store.clone();
+        let capability_routing_metrics_store =
+            Arc::new(middleware::capability_routing_metrics::CapabilityRoutingMetricsStore::new());
+        self.capability_routing_metrics_store = capability_routing_metrics_store.clone();
+        let response_cache_store = Arc::new(middleware::response_cache::ResponseCacheStore::new(
+            middleware::response_cache::ResponseCacheConfig {
+                enabled: config.server.response_cache.enabled,
+                ttl_secs: config.server.response_cache.ttl_secs,
+                max_entries: config.server.response_cache.max_entries,
+                max_body_bytes: config.server.response_cache.max_body_bytes,
+                cacheable_status_codes: config.server.response_cache.cacheable_status_codes.clone(),
+            },
+        ));
+        self.response_cache_store = response_cache_store.clone();
 
         tokio::spawn(async move {
             if let Err(e) = run_server(
@@ -413,6 +477,10 @@ impl ServerState {
                 Some(config),
                 Some(config_path),
                 Some(processor),
+                capability_routing_metrics_store,
+                response_cache_store,
+                request_dedup_store,
+                idempotency_store,
                 None, // dev_bridge_callback: 由主 crate 在重新导出层注入
             )
             .await
@@ -477,6 +545,9 @@ pub struct AppState {
     pub amp_router: Arc<proxycast_core::router::AmpRouter>,
     /// 端点 Provider 配置
     pub endpoint_providers: Arc<RwLock<EndpointProvidersConfig>>,
+    /// Provider 维度模型配置（用于能力感知回退）
+    pub provider_models:
+        Arc<std::collections::HashMap<String, proxycast_core::config::ProviderModelsConfig>>,
     /// Kiro 事件服务
     pub kiro_event_service: Arc<KiroEventService>,
     /// API Key Provider 服务（用于智能降级）
@@ -488,6 +559,13 @@ pub struct AppState {
     pub rate_limiter: Option<Arc<middleware::rate_limit::SlidingWindowRateLimiter>>,
     /// 幂等性存储
     pub idempotency_store: Arc<middleware::idempotency::IdempotencyStore>,
+    /// 请求去重存储（请求指纹 in-flight + 短 TTL 回放）
+    pub request_dedup_store: Arc<middleware::request_dedup::RequestDedupStore>,
+    /// 响应缓存存储（非流式短时缓存）
+    pub response_cache_store: Arc<middleware::response_cache::ResponseCacheStore>,
+    /// 能力路由指标（能力过滤/模型回退/Provider 回退）
+    pub capability_routing_metrics_store:
+        Arc<middleware::capability_routing_metrics::CapabilityRoutingMetricsStore>,
     /// 凭证清理器
     pub sanitizer: Arc<proxycast_core::sanitizer::CredentialSanitizer>,
 }
@@ -775,6 +853,12 @@ async fn run_server(
     config: Option<Config>,
     config_path: Option<PathBuf>,
     processor: Option<Arc<RequestProcessor>>,
+    capability_routing_metrics_store: Arc<
+        middleware::capability_routing_metrics::CapabilityRoutingMetricsStore,
+    >,
+    response_cache_store: Arc<middleware::response_cache::ResponseCacheStore>,
+    request_dedup_store: Arc<middleware::request_dedup::RequestDedupStore>,
+    idempotency_store: Arc<middleware::idempotency::IdempotencyStore>,
     dev_bridge_callback: Option<DevBridgeCallback>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let base_url = format!("http://{host}:{port}");
@@ -865,6 +949,12 @@ async fn run_server(
             .map(|c| c.endpoint_providers.clone())
             .unwrap_or_default(),
     ));
+    let provider_models = Arc::new(
+        config
+            .as_ref()
+            .map(|c| c.models.providers.clone())
+            .unwrap_or_default(),
+    );
 
     // 创建 Kiro 事件服务
     let kiro_event_service = Arc::new(KiroEventService::new());
@@ -878,7 +968,6 @@ async fn run_server(
         .as_ref()
         .map(|c| c.retry.auto_switch_provider)
         .unwrap_or(true);
-
     let state = AppState {
         api_key: api_key.to_string(),
         base_url,
@@ -900,6 +989,7 @@ async fn run_server(
         request_logger: shared_logger,
         amp_router,
         endpoint_providers,
+        provider_models,
         kiro_event_service,
         api_key_service,
         batch_executor: Arc::new(tokio::sync::RwLock::new(None)),
@@ -908,9 +998,10 @@ async fn run_server(
                 middleware::rate_limit::RateLimitConfig::default(),
             ),
         )),
-        idempotency_store: Arc::new(middleware::idempotency::IdempotencyStore::new(
-            middleware::idempotency::IdempotencyConfig::default(),
-        )),
+        idempotency_store,
+        request_dedup_store,
+        response_cache_store,
+        capability_routing_metrics_store,
         sanitizer: Arc::new(proxycast_core::sanitizer::CredentialSanitizer::with_defaults()),
     };
 

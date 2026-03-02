@@ -821,6 +821,32 @@ server:
         // 其他字段应使用默认值
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.retry.max_retries, 3);
+        assert_eq!(
+            config.server.response_cache.cacheable_status_codes,
+            vec![200]
+        );
+    }
+
+    #[test]
+    fn test_parse_yaml_with_response_cache_settings() {
+        let yaml = r#"
+server:
+  response_cache:
+    enabled: true
+    ttl_secs: 120
+    max_entries: 64
+    max_body_bytes: 262144
+    cacheable_status_codes: [200, 201]
+"#;
+        let config = ConfigManager::parse_yaml(yaml).unwrap();
+        assert!(config.server.response_cache.enabled);
+        assert_eq!(config.server.response_cache.ttl_secs, 120);
+        assert_eq!(config.server.response_cache.max_entries, 64);
+        assert_eq!(config.server.response_cache.max_body_bytes, 262144);
+        assert_eq!(
+            config.server.response_cache.cacheable_status_codes,
+            vec![200, 201]
+        );
     }
 
     #[test]

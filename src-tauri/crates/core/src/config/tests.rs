@@ -39,6 +39,7 @@ fn arb_server_config() -> impl Strategy<Value = ServerConfig> {
         port,
         api_key,
         tls: crate::config::TlsConfig::default(),
+        response_cache: crate::config::ResponseCacheSettings::default(),
     })
 }
 
@@ -357,6 +358,7 @@ fn arb_valid_server_config() -> impl Strategy<Value = ServerConfig> {
         port,
         api_key,
         tls: crate::config::TlsConfig::default(),
+        response_cache: crate::config::ResponseCacheSettings::default(),
     })
 }
 

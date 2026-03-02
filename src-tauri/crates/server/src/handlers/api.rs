@@ -16,19 +16,28 @@
 //! - 需求 5.3: 流中发生错误时发送错误事件并优雅关闭流
 
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     extract::State,
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
-use std::future::Future;
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::Arc,
+};
 
 use crate::client_detector::ClientType;
+use crate::middleware::request_dedup::{
+    build_request_fingerprint, RequestDedupCheck, RequestDedupStore,
+};
+use crate::middleware::response_cache::{CachedHttpResponse, ResponseCacheStore};
 use crate::{record_request_telemetry, record_token_usage, AppState};
+use aster::context::MODEL_CONTEXT_WINDOWS;
 use proxycast_core::errors::GatewayErrorCode;
 use proxycast_core::models::anthropic::AnthropicMessagesRequest;
-use proxycast_core::models::openai::ChatCompletionRequest;
+use proxycast_core::models::openai::{ChatCompletionRequest, ContentPart, MessageContent};
 use proxycast_core::ProviderType;
 use proxycast_processor::RequestContext;
 use proxycast_providers::converter::anthropic_to_openai::convert_anthropic_to_openai;
@@ -261,6 +270,735 @@ where
     }
 }
 
+const REPLAY_CAPTURE_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+struct IdempotencyGuard {
+    key: Option<String>,
+    store: Arc<crate::middleware::idempotency::IdempotencyStore>,
+    is_stream: bool,
+    finalized: bool,
+}
+
+impl IdempotencyGuard {
+    fn new(
+        key: Option<String>,
+        is_stream: bool,
+        store: Arc<crate::middleware::idempotency::IdempotencyStore>,
+    ) -> Self {
+        Self {
+            key,
+            store,
+            is_stream,
+            finalized: false,
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.is_stream && self.key.is_some()
+    }
+
+    fn complete(&mut self, status: u16, body: String) {
+        if !self.is_enabled() || self.finalized {
+            return;
+        }
+        if let Some(ref key) = self.key {
+            self.store.complete(key, status, body);
+            self.finalized = true;
+        }
+    }
+
+    fn remove(&mut self) {
+        if !self.is_enabled() || self.finalized {
+            return;
+        }
+        if let Some(ref key) = self.key {
+            self.store.remove(key);
+        }
+        self.finalized = true;
+    }
+}
+
+impl Drop for IdempotencyGuard {
+    fn drop(&mut self) {
+        if !self.finalized {
+            self.remove();
+        }
+    }
+}
+
+struct RequestDedupGuard {
+    key: Option<String>,
+    store: Arc<RequestDedupStore>,
+    is_stream: bool,
+    finalized: bool,
+}
+
+impl RequestDedupGuard {
+    fn disabled(store: Arc<RequestDedupStore>) -> Self {
+        Self {
+            key: None,
+            store,
+            is_stream: true,
+            finalized: true,
+        }
+    }
+
+    fn new(key: Option<String>, is_stream: bool, store: Arc<RequestDedupStore>) -> Self {
+        Self {
+            key,
+            store,
+            is_stream,
+            finalized: false,
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.is_stream && self.key.is_some()
+    }
+
+    fn complete(&mut self, status: u16, body: String) {
+        if !self.is_enabled() || self.finalized {
+            return;
+        }
+        if let Some(ref key) = self.key {
+            self.store.complete(key, status, body);
+        }
+        self.finalized = true;
+    }
+
+    fn remove(&mut self) {
+        if !self.is_enabled() || self.finalized {
+            return;
+        }
+        if let Some(ref key) = self.key {
+            self.store.remove(key);
+        }
+        self.finalized = true;
+    }
+}
+
+impl Drop for RequestDedupGuard {
+    fn drop(&mut self) {
+        if !self.finalized {
+            self.remove();
+        }
+    }
+}
+
+struct ResponseCacheGuard {
+    key: Option<String>,
+    store: Arc<ResponseCacheStore>,
+    is_stream: bool,
+    finalized: bool,
+}
+
+impl ResponseCacheGuard {
+    fn disabled(store: Arc<ResponseCacheStore>) -> Self {
+        Self {
+            key: None,
+            store,
+            is_stream: true,
+            finalized: true,
+        }
+    }
+
+    fn new(key: Option<String>, is_stream: bool, store: Arc<ResponseCacheStore>) -> Self {
+        Self {
+            key,
+            store,
+            is_stream,
+            finalized: false,
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        !self.is_stream && self.key.is_some()
+    }
+
+    fn should_cache_status(&self, status: u16) -> bool {
+        self.store.should_cache_status(status)
+    }
+
+    fn complete(&mut self, status: u16, headers: HashMap<String, String>, body: String) {
+        if !self.is_enabled() || self.finalized {
+            return;
+        }
+
+        if let Some(ref key) = self.key {
+            let _ = self.store.set(
+                key,
+                CachedHttpResponse {
+                    status,
+                    headers,
+                    body,
+                },
+            );
+        }
+        self.finalized = true;
+    }
+
+    fn skip(&mut self) {
+        self.finalized = true;
+    }
+}
+
+impl Drop for ResponseCacheGuard {
+    fn drop(&mut self) {
+        if !self.finalized {
+            self.skip();
+        }
+    }
+}
+
+fn headers_to_string_map(headers: &axum::http::HeaderMap) -> HashMap<String, String> {
+    headers
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|v| (name.as_str().to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+fn build_cached_response(response: CachedHttpResponse) -> Response {
+    let status = StatusCode::from_u16(response.status).unwrap_or(StatusCode::OK);
+    let mut resp = Response::new(Body::from(response.body));
+    *resp.status_mut() = status;
+    for (key, value) in response.headers {
+        if let (Ok(name), Ok(val)) = (
+            axum::http::HeaderName::from_bytes(key.as_bytes()),
+            axum::http::HeaderValue::from_str(&value),
+        ) {
+            resp.headers_mut().insert(name, val);
+        }
+    }
+    resp
+}
+
+fn has_no_cache_header(headers: &HeaderMap) -> bool {
+    let cache_control = headers
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_lowercase();
+    let pragma = headers
+        .get(header::PRAGMA)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_lowercase();
+    cache_control.contains("no-cache") || pragma.contains("no-cache")
+}
+
+fn request_explicitly_disables_cache(value: &serde_json::Value) -> bool {
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    obj.get("cache").and_then(|v| v.as_bool()) == Some(false)
+        || obj.get("no_cache").and_then(|v| v.as_bool()) == Some(true)
+}
+
+fn replay_response(status: u16, body: String) -> Response {
+    let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+    (status_code, body).into_response()
+}
+
+async fn begin_request_dedup(
+    request_id: &str,
+    endpoint: &str,
+    request_payload: &serde_json::Value,
+    is_stream: bool,
+    has_idempotency_key: bool,
+    store: Arc<RequestDedupStore>,
+) -> Result<RequestDedupGuard, Response> {
+    if is_stream || has_idempotency_key || !store.is_enabled() {
+        return Ok(RequestDedupGuard::disabled(store));
+    }
+
+    let fingerprint = build_request_fingerprint(&serde_json::json!({
+        "endpoint": endpoint,
+        "payload": request_payload
+    }));
+    let key = format!("{endpoint}:{fingerprint}");
+
+    match store.check_or_register(&key) {
+        RequestDedupCheck::New => Ok(RequestDedupGuard::new(Some(key), is_stream, store)),
+        RequestDedupCheck::Completed { status, body } => Err(replay_response(status, body)),
+        RequestDedupCheck::InProgress { notify } => {
+            match store.wait_for_completion(&key, notify).await {
+                Some(replay) => Err(replay_response(replay.status, replay.body)),
+                None => {
+                    tracing::warn!(
+                        "[REQUEST_DEDUP] request_id={} endpoint={} wait timeout for key={}",
+                        request_id,
+                        endpoint,
+                        key
+                    );
+                    Err(build_error_response_with_meta(
+                        StatusCode::CONFLICT.as_u16(),
+                        "Equivalent request is still in progress, please retry later",
+                        Some(request_id),
+                        None,
+                        Some(GatewayErrorCode::RequestConflict),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+async fn begin_response_cache(
+    endpoint: &str,
+    request_payload: &serde_json::Value,
+    headers: &HeaderMap,
+    is_stream: bool,
+    has_idempotency_key: bool,
+    store: Arc<ResponseCacheStore>,
+) -> Result<ResponseCacheGuard, Response> {
+    if is_stream || has_idempotency_key || !store.is_enabled() || has_no_cache_header(headers) {
+        return Ok(ResponseCacheGuard::disabled(store));
+    }
+
+    if request_explicitly_disables_cache(request_payload) {
+        return Ok(ResponseCacheGuard::disabled(store));
+    }
+
+    let fingerprint = build_request_fingerprint(&serde_json::json!({
+        "endpoint": endpoint,
+        "payload": request_payload
+    }));
+    let key = format!("{endpoint}:{fingerprint}");
+
+    if let Some(cached) = store.get(&key) {
+        return Err(build_cached_response(cached));
+    }
+
+    Ok(ResponseCacheGuard::new(Some(key), is_stream, store))
+}
+
+async fn finalize_replayable_response(
+    response: Response,
+    guard: &mut IdempotencyGuard,
+    dedup_guard: &mut RequestDedupGuard,
+    cache_guard: &mut ResponseCacheGuard,
+    request_id: &str,
+) -> Response {
+    if !guard.is_enabled() && !dedup_guard.is_enabled() && !cache_guard.is_enabled() {
+        return response;
+    }
+
+    let status = response.status().as_u16();
+    if status >= 500 {
+        guard.remove();
+        dedup_guard.remove();
+        cache_guard.skip();
+        return response;
+    }
+
+    let (parts, body) = response.into_parts();
+    match to_bytes(body, REPLAY_CAPTURE_MAX_BYTES).await {
+        Ok(bytes) => {
+            let body_string = String::from_utf8_lossy(&bytes).to_string();
+            let headers_map = headers_to_string_map(&parts.headers);
+            guard.complete(status, body_string.clone());
+            dedup_guard.complete(status, body_string.clone());
+            if cache_guard.should_cache_status(status) {
+                cache_guard.complete(status, headers_map, body_string);
+            } else {
+                cache_guard.skip();
+            }
+            Response::from_parts(parts, Body::from(bytes))
+        }
+        Err(err) => {
+            tracing::warn!(
+                "[REPLAY] request_id={} failed to capture response body: {}",
+                request_id,
+                err
+            );
+            guard.remove();
+            dedup_guard.remove();
+            cache_guard.skip();
+            build_error_response_with_meta(
+                StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                "Failed to capture response for replay",
+                Some(request_id),
+                None,
+                Some(GatewayErrorCode::InternalError),
+            )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::middleware::idempotency::{IdempotencyCheck, IdempotencyConfig, IdempotencyStore};
+    use crate::middleware::request_dedup::RequestDedupConfig;
+    use crate::middleware::response_cache::ResponseCacheConfig;
+
+    fn create_store() -> Arc<IdempotencyStore> {
+        Arc::new(IdempotencyStore::new(IdempotencyConfig {
+            enabled: true,
+            ttl_secs: 60,
+            header_name: "Idempotency-Key".to_string(),
+        }))
+    }
+
+    #[tokio::test]
+    async fn finalize_idempotency_response_should_complete_for_non_5xx() {
+        let store = create_store();
+        let key = "idem-complete-1".to_string();
+
+        assert!(matches!(store.check(&key), IdempotencyCheck::New));
+
+        let mut guard = IdempotencyGuard::new(Some(key.clone()), false, store.clone());
+        let response = (StatusCode::OK, r#"{"ok":true}"#).into_response();
+        let dedup_store = Arc::new(RequestDedupStore::new(Default::default()));
+        let mut dedup_guard = RequestDedupGuard::disabled(dedup_store);
+        let cache_store = Arc::new(ResponseCacheStore::new(ResponseCacheConfig::default()));
+        let mut cache_guard = ResponseCacheGuard::disabled(cache_store);
+        let finalized = finalize_replayable_response(
+            response,
+            &mut guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            "req-1",
+        )
+        .await;
+
+        assert_eq!(finalized.status(), StatusCode::OK);
+        match store.check(&key) {
+            IdempotencyCheck::Completed { status, body } => {
+                assert_eq!(status, 200);
+                assert_eq!(body, r#"{"ok":true}"#);
+            }
+            other => panic!("expected completed response, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn finalize_idempotency_response_should_remove_for_5xx() {
+        let store = create_store();
+        let key = "idem-remove-1".to_string();
+
+        assert!(matches!(store.check(&key), IdempotencyCheck::New));
+
+        let mut guard = IdempotencyGuard::new(Some(key.clone()), false, store.clone());
+        let response = (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":"upstream failed"}"#,
+        )
+            .into_response();
+        let dedup_store = Arc::new(RequestDedupStore::new(Default::default()));
+        let mut dedup_guard = RequestDedupGuard::disabled(dedup_store);
+        let cache_store = Arc::new(ResponseCacheStore::new(ResponseCacheConfig::default()));
+        let mut cache_guard = ResponseCacheGuard::disabled(cache_store);
+        let finalized = finalize_replayable_response(
+            response,
+            &mut guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            "req-2",
+        )
+        .await;
+
+        assert_eq!(finalized.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(matches!(store.check(&key), IdempotencyCheck::New));
+    }
+
+    #[test]
+    fn idempotency_guard_drop_should_remove_inflight() {
+        let store = create_store();
+        let key = "idem-drop-1".to_string();
+
+        assert!(matches!(store.check(&key), IdempotencyCheck::New));
+
+        {
+            let _guard = IdempotencyGuard::new(Some(key.clone()), false, store.clone());
+        }
+
+        assert!(matches!(store.check(&key), IdempotencyCheck::New));
+    }
+
+    #[tokio::test]
+    async fn finalize_replayable_response_should_complete_dedup_for_non_5xx() {
+        let idem_store = create_store();
+        let dedup_store = Arc::new(RequestDedupStore::new(RequestDedupConfig {
+            enabled: true,
+            ttl_secs: 30,
+            wait_timeout_ms: 1000,
+        }));
+        let key = "dedup-complete-1".to_string();
+
+        assert!(matches!(
+            dedup_store.check_or_register(&key),
+            RequestDedupCheck::New
+        ));
+
+        let mut idem_guard = IdempotencyGuard::new(None, false, idem_store);
+        let mut dedup_guard = RequestDedupGuard::new(Some(key.clone()), false, dedup_store.clone());
+        let cache_store = Arc::new(ResponseCacheStore::new(ResponseCacheConfig::default()));
+        let mut cache_guard = ResponseCacheGuard::disabled(cache_store);
+
+        let response = (StatusCode::OK, r#"{"ok":true}"#).into_response();
+        let finalized = finalize_replayable_response(
+            response,
+            &mut idem_guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            "req-3",
+        )
+        .await;
+
+        assert_eq!(finalized.status(), StatusCode::OK);
+        match dedup_store.check_or_register(&key) {
+            RequestDedupCheck::Completed { status, body } => {
+                assert_eq!(status, 200);
+                assert_eq!(body, r#"{"ok":true}"#);
+            }
+            other => panic!("expected completed replay, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn finalize_replayable_response_should_remove_dedup_for_5xx() {
+        let idem_store = create_store();
+        let dedup_store = Arc::new(RequestDedupStore::new(RequestDedupConfig {
+            enabled: true,
+            ttl_secs: 30,
+            wait_timeout_ms: 1000,
+        }));
+        let key = "dedup-remove-1".to_string();
+
+        assert!(matches!(
+            dedup_store.check_or_register(&key),
+            RequestDedupCheck::New
+        ));
+
+        let mut idem_guard = IdempotencyGuard::new(None, false, idem_store);
+        let mut dedup_guard = RequestDedupGuard::new(Some(key.clone()), false, dedup_store.clone());
+        let cache_store = Arc::new(ResponseCacheStore::new(ResponseCacheConfig::default()));
+        let mut cache_guard = ResponseCacheGuard::disabled(cache_store);
+
+        let response = (StatusCode::INTERNAL_SERVER_ERROR, "boom").into_response();
+        let finalized = finalize_replayable_response(
+            response,
+            &mut idem_guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            "req-4",
+        )
+        .await;
+
+        assert_eq!(finalized.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(matches!(
+            dedup_store.check_or_register(&key),
+            RequestDedupCheck::New
+        ));
+    }
+
+    #[tokio::test]
+    async fn finalize_replayable_response_should_cache_success_response() {
+        let idem_store = create_store();
+        let dedup_store = Arc::new(RequestDedupStore::new(Default::default()));
+        let cache_store = Arc::new(ResponseCacheStore::new(ResponseCacheConfig::default()));
+        let cache_key = "cache-hit-1".to_string();
+
+        let mut idem_guard = IdempotencyGuard::new(None, false, idem_store);
+        let mut dedup_guard = RequestDedupGuard::disabled(dedup_store);
+        let mut cache_guard =
+            ResponseCacheGuard::new(Some(cache_key.clone()), false, cache_store.clone());
+
+        let mut response = Response::new(Body::from(r#"{"ok":true}"#));
+        *response.status_mut() = StatusCode::OK;
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+
+        let finalized = finalize_replayable_response(
+            response,
+            &mut idem_guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            "req-5",
+        )
+        .await;
+        assert_eq!(finalized.status(), StatusCode::OK);
+
+        let cached = cache_store
+            .get(&cache_key)
+            .expect("cache response should exist");
+        assert_eq!(cached.status, 200);
+        assert_eq!(cached.body, r#"{"ok":true}"#);
+        assert_eq!(
+            cached
+                .headers
+                .get("content-type")
+                .map(std::string::String::as_str),
+            Some("application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_replayable_response_should_not_cache_201_with_default_policy() {
+        let idem_store = create_store();
+        let dedup_store = Arc::new(RequestDedupStore::new(Default::default()));
+        let cache_store = Arc::new(ResponseCacheStore::new(ResponseCacheConfig::default()));
+        let cache_key = "cache-miss-201-default".to_string();
+
+        let mut idem_guard = IdempotencyGuard::new(None, false, idem_store);
+        let mut dedup_guard = RequestDedupGuard::disabled(dedup_store);
+        let mut cache_guard =
+            ResponseCacheGuard::new(Some(cache_key.clone()), false, cache_store.clone());
+
+        let mut response = Response::new(Body::from(r#"{"created":true}"#));
+        *response.status_mut() = StatusCode::CREATED;
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+
+        let finalized = finalize_replayable_response(
+            response,
+            &mut idem_guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            "req-6",
+        )
+        .await;
+        assert_eq!(finalized.status(), StatusCode::CREATED);
+        assert!(cache_store.get(&cache_key).is_none());
+    }
+
+    #[tokio::test]
+    async fn finalize_replayable_response_should_cache_201_when_policy_allows() {
+        let idem_store = create_store();
+        let dedup_store = Arc::new(RequestDedupStore::new(Default::default()));
+        let cache_store = Arc::new(ResponseCacheStore::new(ResponseCacheConfig {
+            enabled: true,
+            ttl_secs: 600,
+            max_entries: 200,
+            max_body_bytes: 1_048_576,
+            cacheable_status_codes: vec![200, 201],
+        }));
+        let cache_key = "cache-hit-201-custom".to_string();
+
+        let mut idem_guard = IdempotencyGuard::new(None, false, idem_store);
+        let mut dedup_guard = RequestDedupGuard::disabled(dedup_store);
+        let mut cache_guard =
+            ResponseCacheGuard::new(Some(cache_key.clone()), false, cache_store.clone());
+
+        let mut response = Response::new(Body::from(r#"{"created":true}"#));
+        *response.status_mut() = StatusCode::CREATED;
+        response.headers_mut().insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("application/json"),
+        );
+
+        let finalized = finalize_replayable_response(
+            response,
+            &mut idem_guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            "req-7",
+        )
+        .await;
+        assert_eq!(finalized.status(), StatusCode::CREATED);
+
+        let cached = cache_store
+            .get(&cache_key)
+            .expect("cache response should exist");
+        assert_eq!(cached.status, 201);
+        assert_eq!(cached.body, r#"{"created":true}"#);
+    }
+
+    #[test]
+    fn openai_requires_vision_should_detect_image_part() {
+        let request = ChatCompletionRequest {
+            model: "gpt-4o".to_string(),
+            messages: vec![proxycast_core::models::openai::ChatMessage {
+                role: "user".to_string(),
+                content: Some(MessageContent::Parts(vec![
+                    ContentPart::Text {
+                        text: "请看图".to_string(),
+                    },
+                    ContentPart::ImageUrl {
+                        image_url: proxycast_core::models::openai::ImageUrl {
+                            url: "https://example.com/img.png".to_string(),
+                            detail: None,
+                        },
+                    },
+                ])),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: None,
+            }],
+            temperature: None,
+            max_tokens: Some(256),
+            top_p: None,
+            stream: false,
+            tools: None,
+            tool_choice: None,
+            reasoning_effort: None,
+        };
+
+        assert!(openai_requires_vision(&request));
+    }
+
+    #[test]
+    fn anthropic_requires_vision_should_detect_image_block() {
+        let request = AnthropicMessagesRequest {
+            model: "claude-sonnet-4-5-20250929".to_string(),
+            messages: vec![proxycast_core::models::anthropic::AnthropicMessage {
+                role: "user".to_string(),
+                content: serde_json::json!([
+                    { "type": "text", "text": "看看这张图" },
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "AAAA"
+                        }
+                    }
+                ]),
+            }],
+            max_tokens: Some(256),
+            system: None,
+            temperature: None,
+            stream: false,
+            tools: None,
+            tool_choice: None,
+        };
+
+        assert!(anthropic_requires_vision(&request));
+    }
+
+    #[test]
+    fn model_meets_capability_requirements_should_reject_mismatch() {
+        let requirements = CapabilityRequirements {
+            requires_tools: true,
+            requires_vision: false,
+            estimated_total_tokens: Some(100_000),
+        };
+        let snapshot = ModelCapabilitySnapshot {
+            supports_tools: Some(false),
+            supports_vision: Some(true),
+            context_length: Some(32_000),
+        };
+
+        let result = model_meets_capability_requirements(&snapshot, &requirements);
+        assert!(result.is_err());
+        let reasons = result.err().unwrap_or_default();
+        assert!(reasons.contains(&CapabilityMismatchReason::ToolsUnsupported));
+        assert!(reasons
+            .iter()
+            .any(|reason| matches!(reason, CapabilityMismatchReason::ContextTooSmall { .. })));
+    }
+}
+
 // ============================================================================
 // Provider 选择辅助函数
 // ============================================================================
@@ -284,6 +1022,576 @@ async fn select_provider_for_client(headers: &HeaderMap, state: &AppState) -> (S
     };
 
     (selected_provider, client_type)
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CapabilityRequirements {
+    requires_tools: bool,
+    requires_vision: bool,
+    estimated_total_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ModelCapabilitySnapshot {
+    supports_tools: Option<bool>,
+    supports_vision: Option<bool>,
+    context_length: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CapabilityMismatchReason {
+    ToolsUnsupported,
+    VisionUnsupported,
+    ContextTooSmall { context_length: u32, required: u32 },
+}
+
+impl CapabilityMismatchReason {
+    fn to_log_message(self) -> String {
+        match self {
+            Self::ToolsUnsupported => "不支持 tools/function-calling".to_string(),
+            Self::VisionUnsupported => "不支持 vision".to_string(),
+            Self::ContextTooSmall {
+                context_length,
+                required,
+            } => format!("上下文窗口不足（{} < 需求 {}）", context_length, required),
+        }
+    }
+
+    fn to_metrics_reason(
+        self,
+    ) -> crate::middleware::capability_routing_metrics::CapabilityFilterExcludedReason {
+        match self {
+            Self::ToolsUnsupported => {
+                crate::middleware::capability_routing_metrics::CapabilityFilterExcludedReason::Tools
+            }
+            Self::VisionUnsupported => {
+                crate::middleware::capability_routing_metrics::CapabilityFilterExcludedReason::Vision
+            }
+            Self::ContextTooSmall { .. } => {
+                crate::middleware::capability_routing_metrics::CapabilityFilterExcludedReason::Context
+            }
+        }
+    }
+}
+
+fn estimate_token_count_from_json<T: serde::Serialize>(value: &T) -> u32 {
+    serde_json::to_vec(value)
+        .map(|bytes| (bytes.len() / 4) as u32)
+        .unwrap_or(0)
+}
+
+fn openai_requires_vision(request: &ChatCompletionRequest) -> bool {
+    request.messages.iter().any(|msg| {
+        matches!(
+            &msg.content,
+            Some(MessageContent::Parts(parts))
+                if parts
+                    .iter()
+                    .any(|part| matches!(part, ContentPart::ImageUrl { .. }))
+        )
+    })
+}
+
+fn anthropic_requires_vision(request: &AnthropicMessagesRequest) -> bool {
+    request.messages.iter().any(|msg| {
+        msg.content
+            .as_array()
+            .map(|blocks| {
+                blocks.iter().any(|block| {
+                    matches!(
+                        block.get("type").and_then(|v| v.as_str()),
+                        Some("image") | Some("image_url")
+                    )
+                })
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn build_openai_capability_requirements(request: &ChatCompletionRequest) -> CapabilityRequirements {
+    let estimated_input_tokens = estimate_token_count_from_json(&request.messages);
+    let estimated_output_tokens = request.max_tokens.unwrap_or(4096);
+    CapabilityRequirements {
+        requires_tools: request
+            .tools
+            .as_ref()
+            .map(|tools| !tools.is_empty())
+            .unwrap_or(false),
+        requires_vision: openai_requires_vision(request),
+        estimated_total_tokens: Some(
+            estimated_input_tokens.saturating_add(estimated_output_tokens),
+        ),
+    }
+}
+
+fn build_anthropic_capability_requirements(
+    request: &AnthropicMessagesRequest,
+) -> CapabilityRequirements {
+    let estimated_input_tokens = estimate_token_count_from_json(&request.messages);
+    let estimated_output_tokens = request.max_tokens.unwrap_or(4096);
+    CapabilityRequirements {
+        requires_tools: request
+            .tools
+            .as_ref()
+            .map(|tools| !tools.is_empty())
+            .unwrap_or(false),
+        requires_vision: anthropic_requires_vision(request),
+        estimated_total_tokens: Some(
+            estimated_input_tokens.saturating_add(estimated_output_tokens),
+        ),
+    }
+}
+
+fn load_model_capability_from_registry(
+    state: &AppState,
+    model: &str,
+) -> Option<ModelCapabilitySnapshot> {
+    use rusqlite::OptionalExtension;
+
+    let db = state.db.as_ref()?;
+    let conn = db.lock().ok()?;
+    let row = conn
+        .query_row(
+            "SELECT capabilities, limits
+             FROM model_registry
+             WHERE id = ?1
+             ORDER BY is_latest DESC, updated_at DESC
+             LIMIT 1",
+            [model],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .ok()??;
+
+    let capabilities: serde_json::Value = serde_json::from_str(&row.0).unwrap_or_default();
+    let limits: serde_json::Value = serde_json::from_str(&row.1).unwrap_or_default();
+
+    let supports_tools = capabilities
+        .get("tools")
+        .and_then(|v| v.as_bool())
+        .or_else(|| {
+            capabilities
+                .get("function_calling")
+                .and_then(|v| v.as_bool())
+        });
+    let supports_vision = capabilities.get("vision").and_then(|v| v.as_bool());
+    let context_length = limits
+        .get("context_length")
+        .or_else(|| limits.get("context"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u32);
+
+    Some(ModelCapabilitySnapshot {
+        supports_tools,
+        supports_vision,
+        context_length,
+    })
+}
+
+fn load_context_window_from_aster(model: &str) -> Option<u32> {
+    let model_lower = model.to_lowercase();
+    if let Some(v) = MODEL_CONTEXT_WINDOWS.get(model_lower.as_str()) {
+        return Some(*v as u32);
+    }
+
+    MODEL_CONTEXT_WINDOWS.iter().find_map(|(pattern, value)| {
+        if model_lower.contains(*pattern) {
+            Some(*value as u32)
+        } else {
+            None
+        }
+    })
+}
+
+fn resolve_model_capability_snapshot(state: &AppState, model: &str) -> ModelCapabilitySnapshot {
+    let mut snapshot = load_model_capability_from_registry(state, model).unwrap_or_default();
+    if snapshot.context_length.is_none() {
+        snapshot.context_length = load_context_window_from_aster(model);
+    }
+    snapshot
+}
+
+fn model_meets_capability_requirements(
+    snapshot: &ModelCapabilitySnapshot,
+    requirements: &CapabilityRequirements,
+) -> Result<(), Vec<CapabilityMismatchReason>> {
+    let mut reasons = Vec::new();
+
+    if requirements.requires_tools && matches!(snapshot.supports_tools, Some(false)) {
+        reasons.push(CapabilityMismatchReason::ToolsUnsupported);
+    }
+
+    if requirements.requires_vision && matches!(snapshot.supports_vision, Some(false)) {
+        reasons.push(CapabilityMismatchReason::VisionUnsupported);
+    }
+
+    if let (Some(estimated_total_tokens), Some(context_length)) =
+        (requirements.estimated_total_tokens, snapshot.context_length)
+    {
+        let required = ((estimated_total_tokens as f64) * 1.1).ceil() as u32;
+        if context_length < required {
+            reasons.push(CapabilityMismatchReason::ContextTooSmall {
+                context_length,
+                required,
+            });
+        }
+    }
+
+    if reasons.is_empty() {
+        Ok(())
+    } else {
+        Err(reasons)
+    }
+}
+
+fn collect_provider_model_candidates(
+    state: &AppState,
+    selected_provider: &str,
+    current_model: &str,
+) -> Vec<String> {
+    let mut candidates = vec![current_model.to_string()];
+    let provider_key = selected_provider.to_lowercase();
+    if let Some(provider_models) = state.provider_models.get(&provider_key) {
+        let mut seen: HashSet<String> = candidates.iter().cloned().collect();
+        for model in &provider_models.models {
+            if !model.enabled || model.id.trim().is_empty() {
+                continue;
+            }
+            if seen.insert(model.id.clone()) {
+                candidates.push(model.id.clone());
+            }
+        }
+    }
+    candidates
+}
+
+async fn collect_provider_fallback_chain(state: &AppState, selected_provider: &str) -> Vec<String> {
+    let mut chain = Vec::new();
+    let mut seen = HashSet::new();
+
+    let push_unique =
+        |chain: &mut Vec<String>, seen: &mut HashSet<String>, provider: Option<String>| {
+            if let Some(provider) = provider {
+                let normalized = provider.trim().to_lowercase();
+                if !normalized.is_empty() && seen.insert(normalized.clone()) {
+                    chain.push(normalized);
+                }
+            }
+        };
+
+    push_unique(&mut chain, &mut seen, Some(selected_provider.to_string()));
+    push_unique(
+        &mut chain,
+        &mut seen,
+        Some(state.default_provider.read().await.clone()),
+    );
+
+    let endpoint_providers = state.endpoint_providers.read().await.clone();
+    push_unique(&mut chain, &mut seen, endpoint_providers.cursor);
+    push_unique(&mut chain, &mut seen, endpoint_providers.claude_code);
+    push_unique(&mut chain, &mut seen, endpoint_providers.codex);
+    push_unique(&mut chain, &mut seen, endpoint_providers.windsurf);
+    push_unique(&mut chain, &mut seen, endpoint_providers.kiro);
+    push_unique(&mut chain, &mut seen, endpoint_providers.other);
+
+    for provider in state.provider_models.keys() {
+        push_unique(&mut chain, &mut seen, Some(provider.clone()));
+    }
+
+    chain
+}
+
+fn apply_capability_filtering_for_openai(
+    state: &AppState,
+    request_id: &str,
+    selected_provider: &str,
+    request: &mut ChatCompletionRequest,
+) {
+    let requirements = build_openai_capability_requirements(request);
+    let candidates = collect_provider_model_candidates(state, selected_provider, &request.model);
+    if candidates.len() <= 1 {
+        return;
+    }
+
+    let mut filtered = Vec::new();
+    for model in &candidates {
+        state
+            .capability_routing_metrics_store
+            .record_filter_evaluation();
+        let snapshot = resolve_model_capability_snapshot(state, model);
+        match model_meets_capability_requirements(&snapshot, &requirements) {
+            Ok(()) => filtered.push(model.clone()),
+            Err(reasons) => {
+                state
+                    .capability_routing_metrics_store
+                    .record_filter_excluded_with_reasons(
+                        reasons.iter().map(|reason| reason.to_metrics_reason()),
+                    );
+                tracing::info!(
+                    "[CAP_FILTER] request_id={} endpoint=chat_completions provider={} excluded_model={} reasons={}",
+                    request_id,
+                    selected_provider,
+                    model,
+                    reasons
+                        .iter()
+                        .map(|reason| reason.to_log_message())
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+            }
+        }
+    }
+
+    if filtered.is_empty() {
+        state
+            .capability_routing_metrics_store
+            .record_all_candidates_excluded();
+        tracing::warn!(
+            "[CAP_FILTER] request_id={} endpoint=chat_completions provider={} all candidates excluded, keep original model={}",
+            request_id,
+            selected_provider,
+            request.model
+        );
+        return;
+    }
+
+    let original_model = request.model.clone();
+    let chosen_model = filtered
+        .first()
+        .cloned()
+        .unwrap_or_else(|| original_model.clone());
+    if chosen_model != original_model {
+        tracing::info!(
+            "[CAP_FILTER] request_id={} endpoint=chat_completions provider={} fallback_model {} -> {}",
+            request_id,
+            selected_provider,
+            original_model,
+            chosen_model
+        );
+        request.model = chosen_model;
+    }
+}
+
+async fn resolve_openai_credential_with_capability_fallback(
+    state: &AppState,
+    request_id: &str,
+    selected_provider: &str,
+    client_type: &ClientType,
+    explicit_provider_id: Option<&str>,
+    request: &mut ChatCompletionRequest,
+) -> Result<
+    (
+        String,
+        Option<proxycast_core::models::provider_pool_model::ProviderCredential>,
+    ),
+    Response,
+> {
+    if explicit_provider_id.is_some() {
+        let cred = select_credential_for_request(
+            state,
+            Some(request_id),
+            selected_provider,
+            &request.model,
+            client_type,
+            explicit_provider_id,
+            "CHAT_COMPLETIONS",
+            true,
+        )
+        .await?;
+        return Ok((selected_provider.to_string(), cred));
+    }
+
+    let provider_chain = collect_provider_fallback_chain(state, selected_provider).await;
+    let selected_provider_normalized = selected_provider.to_lowercase();
+    for provider in provider_chain {
+        let mut candidate_request = request.clone();
+        apply_capability_filtering_for_openai(state, request_id, &provider, &mut candidate_request);
+
+        let candidate_model = candidate_request.model.clone();
+        let cred = select_credential_for_request(
+            state,
+            Some(request_id),
+            &provider,
+            &candidate_model,
+            client_type,
+            None,
+            "CHAT_COMPLETIONS",
+            true,
+        )
+        .await?;
+
+        if let Some(credential) = cred {
+            if provider != selected_provider_normalized {
+                state
+                    .capability_routing_metrics_store
+                    .record_provider_fallback();
+                tracing::info!(
+                    "[CAP_FILTER] request_id={} endpoint=chat_completions provider_fallback {} -> {}",
+                    request_id,
+                    selected_provider,
+                    provider
+                );
+            }
+            if candidate_model != request.model {
+                state
+                    .capability_routing_metrics_store
+                    .record_model_fallback();
+                request.model = candidate_model;
+            }
+            return Ok((provider, Some(credential)));
+        }
+    }
+
+    Ok((selected_provider.to_string(), None))
+}
+
+fn apply_capability_filtering_for_anthropic(
+    state: &AppState,
+    request_id: &str,
+    selected_provider: &str,
+    request: &mut AnthropicMessagesRequest,
+) {
+    let requirements = build_anthropic_capability_requirements(request);
+    let candidates = collect_provider_model_candidates(state, selected_provider, &request.model);
+    if candidates.len() <= 1 {
+        return;
+    }
+
+    let mut filtered = Vec::new();
+    for model in &candidates {
+        state
+            .capability_routing_metrics_store
+            .record_filter_evaluation();
+        let snapshot = resolve_model_capability_snapshot(state, model);
+        match model_meets_capability_requirements(&snapshot, &requirements) {
+            Ok(()) => filtered.push(model.clone()),
+            Err(reasons) => {
+                state
+                    .capability_routing_metrics_store
+                    .record_filter_excluded_with_reasons(
+                        reasons.iter().map(|reason| reason.to_metrics_reason()),
+                    );
+                tracing::info!(
+                    "[CAP_FILTER] request_id={} endpoint=anthropic_messages provider={} excluded_model={} reasons={}",
+                    request_id,
+                    selected_provider,
+                    model,
+                    reasons
+                        .iter()
+                        .map(|reason| reason.to_log_message())
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                );
+            }
+        }
+    }
+
+    if filtered.is_empty() {
+        state
+            .capability_routing_metrics_store
+            .record_all_candidates_excluded();
+        tracing::warn!(
+            "[CAP_FILTER] request_id={} endpoint=anthropic_messages provider={} all candidates excluded, keep original model={}",
+            request_id,
+            selected_provider,
+            request.model
+        );
+        return;
+    }
+
+    let original_model = request.model.clone();
+    let chosen_model = filtered
+        .first()
+        .cloned()
+        .unwrap_or_else(|| original_model.clone());
+    if chosen_model != original_model {
+        tracing::info!(
+            "[CAP_FILTER] request_id={} endpoint=anthropic_messages provider={} fallback_model {} -> {}",
+            request_id,
+            selected_provider,
+            original_model,
+            chosen_model
+        );
+        request.model = chosen_model;
+    }
+}
+
+async fn resolve_anthropic_credential_with_capability_fallback(
+    state: &AppState,
+    request_id: &str,
+    selected_provider: &str,
+    client_type: &ClientType,
+    explicit_provider_id: Option<&str>,
+    request: &mut AnthropicMessagesRequest,
+) -> Result<
+    (
+        String,
+        Option<proxycast_core::models::provider_pool_model::ProviderCredential>,
+    ),
+    Response,
+> {
+    if explicit_provider_id.is_some() {
+        let cred = select_credential_for_request(
+            state,
+            Some(request_id),
+            selected_provider,
+            &request.model,
+            client_type,
+            explicit_provider_id,
+            "ANTHROPIC_MESSAGES",
+            false,
+        )
+        .await?;
+        return Ok((selected_provider.to_string(), cred));
+    }
+
+    let provider_chain = collect_provider_fallback_chain(state, selected_provider).await;
+    let selected_provider_normalized = selected_provider.to_lowercase();
+    for provider in provider_chain {
+        let mut candidate_request = request.clone();
+        apply_capability_filtering_for_anthropic(
+            state,
+            request_id,
+            &provider,
+            &mut candidate_request,
+        );
+
+        let candidate_model = candidate_request.model.clone();
+        let cred = select_credential_for_request(
+            state,
+            Some(request_id),
+            &provider,
+            &candidate_model,
+            client_type,
+            None,
+            "ANTHROPIC_MESSAGES",
+            false,
+        )
+        .await?;
+
+        if let Some(credential) = cred {
+            if provider != selected_provider_normalized {
+                state
+                    .capability_routing_metrics_store
+                    .record_provider_fallback();
+                tracing::info!(
+                    "[CAP_FILTER] request_id={} endpoint=anthropic_messages provider_fallback {} -> {}",
+                    request_id,
+                    selected_provider,
+                    provider
+                );
+            }
+            if candidate_model != request.model {
+                state
+                    .capability_routing_metrics_store
+                    .record_model_fallback();
+                request.model = candidate_model;
+            }
+            return Ok((provider, Some(credential)));
+        }
+    }
+
+    Ok((selected_provider.to_string(), None))
 }
 
 // ============================================================================
@@ -456,6 +1764,13 @@ pub async fn chat_completions(
             }
         }
     }
+    let mut idempotency_guard = IdempotencyGuard::new(
+        idempotency_key.clone(),
+        request.stream,
+        state.idempotency_store.clone(),
+    );
+    let mut dedup_guard = RequestDedupGuard::disabled(state.request_dedup_store.clone());
+    let mut cache_guard = ResponseCacheGuard::disabled(state.response_cache_store.clone());
 
     state.logs.write().await.add(
         "info",
@@ -568,40 +1883,71 @@ pub async fn chat_completions(
         ),
     );
 
-    // 记录路由结果（使用 selected_provider）
-    state.logs.write().await.add(
-        "info",
-        &format!(
-            "[ROUTE] request_id={} model={} provider={}",
-            ctx.request_id, ctx.resolved_model, selected_provider
-        ),
-    );
-
     // 从请求头提取 X-Provider-Id（用于精确路由）
     let provider_id_header = headers
         .get("x-provider-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_lowercase());
 
-    // 尝试选择凭证：
+    // 尝试选择凭证（含能力感知 + 跨 Provider 回退）：
     // 1) X-Provider-Id 指定时仅走精确匹配（不降级）
-    // 2) 否则走统一的“池优先 + API Key Provider 智能降级”路径
+    // 2) 否则先按 provider 链路做能力过滤，再选择可用凭证
     eprintln!("[CHAT_COMPLETIONS] 开始选择凭证...");
-    let credential = match select_credential_for_request(
+    let (effective_provider, credential) = match resolve_openai_credential_with_capability_fallback(
         &state,
-        Some(&ctx.request_id),
+        &ctx.request_id,
         &selected_provider,
-        &request.model,
         &client_type,
         provider_id_header.as_deref(),
-        "CHAT_COMPLETIONS",
-        true,
+        &mut request,
     )
     .await
     {
-        Ok(cred) => cred,
+        Ok(result) => result,
         Err(resp) => return resp,
     };
+    if ctx.resolved_model != request.model {
+        ctx.set_resolved_model(request.model.clone());
+    }
+
+    // 记录路由结果（使用最终 provider/model）
+    state.logs.write().await.add(
+        "info",
+        &format!(
+            "[ROUTE] request_id={} model={} provider={} requested_provider={}",
+            ctx.request_id, ctx.resolved_model, effective_provider, selected_provider
+        ),
+    );
+
+    if !request.stream {
+        let request_payload = serde_json::to_value(&request).unwrap_or_default();
+        match begin_response_cache(
+            "chat_completions",
+            &request_payload,
+            &headers,
+            request.stream,
+            idempotency_key.is_some(),
+            state.response_cache_store.clone(),
+        )
+        .await
+        {
+            Ok(guard) => cache_guard = guard,
+            Err(resp) => return resp,
+        }
+        match begin_request_dedup(
+            &ctx.request_id,
+            "chat_completions",
+            &request_payload,
+            request.stream,
+            idempotency_key.is_some(),
+            state.request_dedup_store.clone(),
+        )
+        .await
+        {
+            Ok(guard) => dedup_guard = guard,
+            Err(resp) => return resp,
+        }
+    }
 
     // 如果找到凭证池中的凭证，使用它
     if let Some(cred) = credential {
@@ -625,7 +1971,7 @@ pub async fn chat_completions(
 
         // 尝试将 selected_provider 解析为 ProviderType
         // 构建 Flow Metadata，同时保存 provider_type 和实际的 provider_id
-        let _provider_type = selected_provider
+        let _provider_type = effective_provider
             .parse::<ProviderType>()
             .unwrap_or(ProviderType::OpenAI);
 
@@ -670,13 +2016,20 @@ pub async fn chat_completions(
 
         // 如果成功且需要 Flow 捕获，提取响应体内容和响应头
         // 注意：非流式响应需要读取 body，所以必须在这里处理
-        return response;
+        return finalize_replayable_response(
+            response,
+            &mut idempotency_guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            &ctx.request_id,
+        )
+        .await;
     }
 
     // 回退到旧的单凭证模式（仅当允许自动降级且选择的 Provider 是 Kiro 时）
     // 其余情况（含禁用自动降级）直接返回无可用凭证错误
     // **Validates: Requirements 3.2**
-    if !state.allow_provider_fallback || selected_provider.to_lowercase() != "kiro" {
+    if !state.allow_provider_fallback || effective_provider.to_lowercase() != "kiro" {
         let reason = if !state.allow_provider_fallback {
             "auto fallback disabled by retry.auto_switch_provider=false"
         } else {
@@ -685,38 +2038,38 @@ pub async fn chat_completions(
         state.logs.write().await.add(
             "error",
             &format!(
-                "[ROUTE] No pool credential found for '{selected_provider}' (client_type={client_type}), {reason}"
+                "[ROUTE] No pool credential found for '{effective_provider}' (client_type={client_type}), {reason}"
             ),
         );
         let message = if !state.allow_provider_fallback {
             format!(
                 "没有找到可用的 '{}' 凭证（已禁用自动降级）。请在凭证池中添加对应的凭证。",
-                selected_provider
+                effective_provider
             )
         } else {
             format!(
                 "没有找到可用的 '{}' 凭证。请在凭证池中添加对应的凭证。",
-                selected_provider
+                effective_provider
             )
         };
         return build_error_response_with_meta(
             StatusCode::SERVICE_UNAVAILABLE.as_u16(),
             &message,
             Some(&ctx.request_id),
-            Some(&selected_provider),
+            Some(&effective_provider),
             Some(GatewayErrorCode::NoCredentials),
         );
     }
 
     state.logs.write().await.add(
         "debug",
-        &format!("[ROUTE] No pool credential found for '{selected_provider}', using legacy mode"),
+        &format!("[ROUTE] No pool credential found for '{effective_provider}', using legacy mode"),
     );
 
     // 启动 Flow 捕获（legacy mode）
 
     // 使用实际的 provider ID 构建 Flow Metadata
-    let _provider_type = selected_provider
+    let _provider_type = effective_provider
         .parse::<ProviderType>()
         .unwrap_or(ProviderType::OpenAI);
 
@@ -839,7 +2192,15 @@ pub async fn chat_completions(
                         );
                         // 完成 Flow 捕获并检查响应拦截
                         // **Validates: Requirements 2.1, 2.5**
-                        Json(response).into_response()
+                        let response = Json(response).into_response();
+                        return finalize_replayable_response(
+                            response,
+                            &mut idempotency_guard,
+                            &mut dedup_guard,
+                            &mut cache_guard,
+                            &ctx.request_id,
+                        )
+                        .await;
                     }
                     Err(e) => {
                         // 记录失败请求统计
@@ -939,7 +2300,15 @@ pub async fn chat_completions(
                                             });
                                             // 完成 Flow 捕获并检查响应拦截（重试成功）
                                             // **Validates: Requirements 2.1, 2.5**
-                                            return Json(response).into_response();
+                                            let response = Json(response).into_response();
+                                            return finalize_replayable_response(
+                                                response,
+                                                &mut idempotency_guard,
+                                                &mut dedup_guard,
+                                                &mut cache_guard,
+                                                &ctx.request_id,
+                                            )
+                                            .await;
                                         }
                                         Err(e) => {
                                             // 标记 Flow 失败
@@ -1059,12 +2428,12 @@ pub async fn anthropic_messages(
     let mut ctx = RequestContext::new(request.model.clone()).with_stream(request.stream);
 
     // 幂等性检查（仅非流式）
-    let _idempotency_key = headers
+    let idempotency_key = headers
         .get("idempotency-key")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
     if !request.stream {
-        if let Some(ref key) = _idempotency_key {
+        if let Some(ref key) = idempotency_key {
             match state.idempotency_store.check(key) {
                 crate::middleware::idempotency::IdempotencyCheck::InProgress => {
                     return build_error_response_with_meta(
@@ -1083,6 +2452,13 @@ pub async fn anthropic_messages(
             }
         }
     }
+    let mut idempotency_guard = IdempotencyGuard::new(
+        idempotency_key.clone(),
+        request.stream,
+        state.idempotency_store.clone(),
+    );
+    let mut dedup_guard = RequestDedupGuard::disabled(state.request_dedup_store.clone());
+    let mut cache_guard = ResponseCacheGuard::disabled(state.response_cache_store.clone());
 
     // 详细记录请求信息
     let msg_count = request.messages.len();
@@ -1229,39 +2605,69 @@ pub async fn anthropic_messages(
         ),
     );
 
-    // 记录路由结果（使用 selected_provider）
-    state.logs.write().await.add(
-        "info",
-        &format!(
-            "[ROUTE] request_id={} model={} provider={}",
-            ctx.request_id, ctx.resolved_model, selected_provider
-        ),
-    );
-
     // 从请求头提取 X-Provider-Id（用于精确路由）
     let provider_id_header = headers
         .get("x-provider-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_lowercase());
 
-    // 尝试选择凭证：
-    // 1) X-Provider-Id 指定时仅走精确匹配（不降级）
-    // 2) 否则走统一的“池优先 + API Key Provider 智能降级”路径
-    let credential = match select_credential_for_request(
-        &state,
-        Some(&ctx.request_id),
-        &selected_provider,
-        &request.model,
-        &client_type,
-        provider_id_header.as_deref(),
-        "ANTHROPIC_MESSAGES",
-        false,
-    )
-    .await
-    {
-        Ok(cred) => cred,
-        Err(resp) => return resp,
-    };
+    // 尝试选择凭证（含能力感知 + 跨 Provider 回退）
+    let (effective_provider, credential) =
+        match resolve_anthropic_credential_with_capability_fallback(
+            &state,
+            &ctx.request_id,
+            &selected_provider,
+            &client_type,
+            provider_id_header.as_deref(),
+            &mut request,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(resp) => return resp,
+        };
+    if ctx.resolved_model != request.model {
+        ctx.set_resolved_model(request.model.clone());
+    }
+
+    // 记录路由结果（使用最终 provider/model）
+    state.logs.write().await.add(
+        "info",
+        &format!(
+            "[ROUTE] request_id={} model={} provider={} requested_provider={}",
+            ctx.request_id, ctx.resolved_model, effective_provider, selected_provider
+        ),
+    );
+
+    if !request.stream {
+        let request_payload = serde_json::to_value(&request).unwrap_or_default();
+        match begin_response_cache(
+            "anthropic_messages",
+            &request_payload,
+            &headers,
+            request.stream,
+            idempotency_key.is_some(),
+            state.response_cache_store.clone(),
+        )
+        .await
+        {
+            Ok(guard) => cache_guard = guard,
+            Err(resp) => return resp,
+        }
+        match begin_request_dedup(
+            &ctx.request_id,
+            "anthropic_messages",
+            &request_payload,
+            request.stream,
+            idempotency_key.is_some(),
+            state.request_dedup_store.clone(),
+        )
+        .await
+        {
+            Ok(guard) => dedup_guard = guard,
+            Err(resp) => return resp,
+        }
+    }
 
     // 如果找到凭证池中的凭证，使用它
     if let Some(cred) = credential {
@@ -1345,13 +2751,20 @@ pub async fn anthropic_messages(
         // 完成 Flow 捕获并检查响应拦截
         // **Validates: Requirements 2.1, 2.5**
 
-        return response;
+        return finalize_replayable_response(
+            response,
+            &mut idempotency_guard,
+            &mut dedup_guard,
+            &mut cache_guard,
+            &ctx.request_id,
+        )
+        .await;
     }
 
     // 回退到旧的单凭证模式（仅当允许自动降级且选择的 Provider 是 Kiro 时）
     // 其余情况（含禁用自动降级）直接返回无可用凭证错误
     // **Validates: Requirements 3.2**
-    if !state.allow_provider_fallback || selected_provider.to_lowercase() != "kiro" {
+    if !state.allow_provider_fallback || effective_provider.to_lowercase() != "kiro" {
         let reason = if !state.allow_provider_fallback {
             "auto fallback disabled by retry.auto_switch_provider=false"
         } else {
@@ -1360,25 +2773,25 @@ pub async fn anthropic_messages(
         state.logs.write().await.add(
             "error",
             &format!(
-                "[ROUTE] No pool credential found for '{selected_provider}' (client_type={client_type}), {reason}"
+                "[ROUTE] No pool credential found for '{effective_provider}' (client_type={client_type}), {reason}"
             ),
         );
         let message = if !state.allow_provider_fallback {
             format!(
                 "没有找到可用的 '{}' 凭证（已禁用自动降级）。请在凭证池中添加对应的凭证。",
-                selected_provider
+                effective_provider
             )
         } else {
             format!(
                 "没有找到可用的 '{}' 凭证。请在凭证池中添加对应的凭证。",
-                selected_provider
+                effective_provider
             )
         };
         let body = build_gateway_error_json(
             StatusCode::SERVICE_UNAVAILABLE.as_u16(),
             &message,
             Some(&ctx.request_id),
-            Some(&selected_provider),
+            Some(&effective_provider),
             Some(GatewayErrorCode::NoCredentials),
         );
         return (
@@ -1390,13 +2803,13 @@ pub async fn anthropic_messages(
 
     state.logs.write().await.add(
         "debug",
-        &format!("[ROUTE] No pool credential found for '{selected_provider}', using legacy mode"),
+        &format!("[ROUTE] No pool credential found for '{effective_provider}', using legacy mode"),
     );
 
     // 启动 Flow 捕获（legacy mode）
 
     // 使用实际的 provider ID 构建 Flow Metadata
-    let _provider_type = selected_provider
+    let _provider_type = effective_provider
         .parse::<ProviderType>()
         .unwrap_or(ProviderType::OpenAI);
 
@@ -1524,7 +2937,15 @@ pub async fn anthropic_messages(
                         // **Validates: Requirements 2.1, 2.5**
 
                         // 非流式响应
-                        build_anthropic_response(&request.model, &parsed)
+                        let response = build_anthropic_response(&request.model, &parsed);
+                        return finalize_replayable_response(
+                            response,
+                            &mut idempotency_guard,
+                            &mut dedup_guard,
+                            &mut cache_guard,
+                            &ctx.request_id,
+                        )
+                        .await;
                     }
                     Err(e) => {
                         state
@@ -1596,10 +3017,16 @@ pub async fn anthropic_messages(
                                                     &parsed,
                                                 );
                                             }
-                                            return build_anthropic_response(
-                                                &request.model,
-                                                &parsed,
-                                            );
+                                            let response =
+                                                build_anthropic_response(&request.model, &parsed);
+                                            return finalize_replayable_response(
+                                                response,
+                                                &mut idempotency_guard,
+                                                &mut dedup_guard,
+                                                &mut cache_guard,
+                                                &ctx.request_id,
+                                            )
+                                            .await;
                                         }
                                         Err(e) => {
                                             state.logs.write().await.add(

@@ -5,6 +5,7 @@
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// 幂等性配置
@@ -62,10 +63,28 @@ enum RequestState {
     },
 }
 
+/// 幂等性运行时统计
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IdempotencyStats {
+    pub entries_size: u64,
+    pub in_progress_size: u64,
+    pub completed_size: u64,
+    pub check_new_total: u64,
+    pub check_in_progress_total: u64,
+    pub check_completed_total: u64,
+    pub complete_total: u64,
+    pub remove_total: u64,
+}
+
 /// 幂等性存储
 pub struct IdempotencyStore {
     config: IdempotencyConfig,
     entries: Mutex<HashMap<String, RequestState>>,
+    check_new_total: AtomicU64,
+    check_in_progress_total: AtomicU64,
+    check_completed_total: AtomicU64,
+    complete_total: AtomicU64,
+    remove_total: AtomicU64,
 }
 
 impl IdempotencyStore {
@@ -73,6 +92,11 @@ impl IdempotencyStore {
         Self {
             config,
             entries: Mutex::new(HashMap::new()),
+            check_new_total: AtomicU64::new(0),
+            check_in_progress_total: AtomicU64::new(0),
+            check_completed_total: AtomicU64::new(0),
+            complete_total: AtomicU64::new(0),
+            remove_total: AtomicU64::new(0),
         }
     }
 
@@ -94,8 +118,10 @@ impl IdempotencyStore {
                         key.to_string(),
                         RequestState::InProgress { started_at: now },
                     );
+                    self.check_new_total.fetch_add(1, Ordering::Relaxed);
                     IdempotencyCheck::New
                 } else {
+                    self.check_in_progress_total.fetch_add(1, Ordering::Relaxed);
                     IdempotencyCheck::InProgress
                 }
             }
@@ -109,8 +135,10 @@ impl IdempotencyStore {
                         key.to_string(),
                         RequestState::InProgress { started_at: now },
                     );
+                    self.check_new_total.fetch_add(1, Ordering::Relaxed);
                     IdempotencyCheck::New
                 } else {
+                    self.check_completed_total.fetch_add(1, Ordering::Relaxed);
                     IdempotencyCheck::Completed {
                         status: *status,
                         body: body.clone(),
@@ -122,6 +150,7 @@ impl IdempotencyStore {
                     key.to_string(),
                     RequestState::InProgress { started_at: now },
                 );
+                self.check_new_total.fetch_add(1, Ordering::Relaxed);
                 IdempotencyCheck::New
             }
         }
@@ -141,12 +170,16 @@ impl IdempotencyStore {
                 completed_at: Instant::now(),
             },
         );
+        self.complete_total.fetch_add(1, Ordering::Relaxed);
     }
 
     /// 移除键（请求失败时调用，允许重试）
     pub fn remove(&self, key: &str) {
         let mut entries = self.entries.lock();
-        entries.remove(key);
+        let removed = entries.remove(key);
+        if removed.is_some() {
+            self.remove_total.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// 清理过期条目
@@ -167,6 +200,31 @@ impl IdempotencyStore {
 
     pub fn is_empty(&self) -> bool {
         self.entries.lock().is_empty()
+    }
+
+    pub fn stats(&self) -> IdempotencyStats {
+        let entries = self.entries.lock();
+        let entries_size = entries.len() as u64;
+        let mut in_progress_size = 0u64;
+        let mut completed_size = 0u64;
+        for state in entries.values() {
+            match state {
+                RequestState::InProgress { .. } => in_progress_size += 1,
+                RequestState::Completed { .. } => completed_size += 1,
+            }
+        }
+        drop(entries);
+
+        IdempotencyStats {
+            entries_size,
+            in_progress_size,
+            completed_size,
+            check_new_total: self.check_new_total.load(Ordering::Relaxed),
+            check_in_progress_total: self.check_in_progress_total.load(Ordering::Relaxed),
+            check_completed_total: self.check_completed_total.load(Ordering::Relaxed),
+            complete_total: self.complete_total.load(Ordering::Relaxed),
+            remove_total: self.remove_total.load(Ordering::Relaxed),
+        }
     }
 }
 
@@ -266,5 +324,30 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.ttl_secs, 86400);
         assert_eq!(config.header_name, "Idempotency-Key");
+    }
+
+    #[test]
+    fn test_stats_tracking() {
+        let store = IdempotencyStore::new(enabled_config(60));
+
+        assert_eq!(store.check("key1"), IdempotencyCheck::New);
+        assert_eq!(store.check("key1"), IdempotencyCheck::InProgress);
+        store.complete("key1", 200, "ok".to_string());
+        assert_eq!(
+            store.check("key1"),
+            IdempotencyCheck::Completed {
+                status: 200,
+                body: "ok".to_string(),
+            }
+        );
+        store.remove("key1");
+
+        let stats = store.stats();
+        assert_eq!(stats.entries_size, 0);
+        assert_eq!(stats.check_new_total, 1);
+        assert_eq!(stats.check_in_progress_total, 1);
+        assert_eq!(stats.check_completed_total, 1);
+        assert_eq!(stats.complete_total, 1);
+        assert_eq!(stats.remove_total, 1);
     }
 }

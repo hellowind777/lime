@@ -977,6 +977,61 @@ pub struct ServerConfig {
     /// TLS 配置
     #[serde(default)]
     pub tls: TlsConfig,
+    /// 响应缓存配置（仅影响非流式请求）
+    #[serde(default)]
+    pub response_cache: ResponseCacheSettings,
+}
+
+/// 响应缓存配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResponseCacheSettings {
+    /// 是否启用响应缓存
+    #[serde(default = "default_response_cache_enabled")]
+    pub enabled: bool,
+    /// 缓存 TTL（秒）
+    #[serde(default = "default_response_cache_ttl_secs")]
+    pub ttl_secs: u64,
+    /// 最大缓存条目数
+    #[serde(default = "default_response_cache_max_entries")]
+    pub max_entries: usize,
+    /// 单响应最大缓存字节数
+    #[serde(default = "default_response_cache_max_body_bytes")]
+    pub max_body_bytes: usize,
+    /// 可缓存的 HTTP 状态码列表（默认仅 200）
+    #[serde(default = "default_response_cache_cacheable_status_codes")]
+    pub cacheable_status_codes: Vec<u16>,
+}
+
+fn default_response_cache_enabled() -> bool {
+    true
+}
+
+fn default_response_cache_ttl_secs() -> u64 {
+    600
+}
+
+fn default_response_cache_max_entries() -> usize {
+    200
+}
+
+fn default_response_cache_max_body_bytes() -> usize {
+    1_048_576
+}
+
+fn default_response_cache_cacheable_status_codes() -> Vec<u16> {
+    vec![200]
+}
+
+impl Default for ResponseCacheSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_response_cache_enabled(),
+            ttl_secs: default_response_cache_ttl_secs(),
+            max_entries: default_response_cache_max_entries(),
+            max_body_bytes: default_response_cache_max_body_bytes(),
+            cacheable_status_codes: default_response_cache_cacheable_status_codes(),
+        }
+    }
 }
 
 /// TLS 配置
@@ -1113,6 +1168,7 @@ impl Default for ServerConfig {
             port: default_port(),
             api_key: default_api_key(),
             tls: TlsConfig::default(),
+            response_cache: ResponseCacheSettings::default(),
         }
     }
 }
@@ -2181,6 +2237,11 @@ mod unit_tests {
         assert_eq!(config.server.host, "127.0.0.1");
         assert_eq!(config.server.port, 8999);
         assert_eq!(config.server.api_key, "proxy_cast");
+        assert!(config.server.response_cache.enabled);
+        assert_eq!(
+            config.server.response_cache.cacheable_status_codes,
+            vec![200]
+        );
         assert!(config.providers.kiro.enabled);
         assert!(!config.providers.gemini.enabled);
         assert_eq!(config.default_provider, "kiro");
@@ -2304,6 +2365,21 @@ mod unit_tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8999);
         assert_eq!(config.api_key, "proxy_cast");
+        assert!(config.response_cache.enabled);
+        assert_eq!(config.response_cache.ttl_secs, 600);
+        assert_eq!(config.response_cache.max_entries, 200);
+        assert_eq!(config.response_cache.max_body_bytes, 1_048_576);
+        assert_eq!(config.response_cache.cacheable_status_codes, vec![200]);
+    }
+
+    #[test]
+    fn test_response_cache_settings_default() {
+        let config = ResponseCacheSettings::default();
+        assert!(config.enabled);
+        assert_eq!(config.ttl_secs, 600);
+        assert_eq!(config.max_entries, 200);
+        assert_eq!(config.max_body_bytes, 1_048_576);
+        assert_eq!(config.cacheable_status_codes, vec![200]);
     }
 
     #[test]

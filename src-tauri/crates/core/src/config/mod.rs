@@ -30,10 +30,10 @@ pub use types::{
     MemoryConfig, MemoryProfileConfig, MemoryResolveConfig, MemorySourcesConfig, ModelInfo,
     ModelsConfig, NativeAgentConfig, NavigationConfig, OpenAIAsrConfig, PairingSettings,
     ProviderConfig, ProviderModelsConfig, ProvidersConfig, QuotaExceededConfig, RateLimitSettings,
-    RemoteManagementConfig, RetrySettings, RoutingConfig, ScreenshotChatConfig, SearchEngine,
-    ServerConfig, TaskSchedule, TlsConfig, UpdateCheckConfig, UserProfile, VertexApiKeyEntry,
-    VertexModelAlias, VoiceConfig, VoiceInputConfig, VoiceInstruction, VoiceOutputConfig,
-    VoiceOutputMode, VoiceProcessorConfig, WebSearchConfig, WhisperLocalConfig, WhisperModelSize,
-    WorkspaceSandboxConfig, XunfeiConfig, DEFAULT_API_KEY,
+    RemoteManagementConfig, ResponseCacheSettings, RetrySettings, RoutingConfig,
+    ScreenshotChatConfig, SearchEngine, ServerConfig, TaskSchedule, TlsConfig, UpdateCheckConfig,
+    UserProfile, VertexApiKeyEntry, VertexModelAlias, VoiceConfig, VoiceInputConfig,
+    VoiceInstruction, VoiceOutputConfig, VoiceOutputMode, VoiceProcessorConfig, WebSearchConfig,
+    WhisperLocalConfig, WhisperModelSize, WorkspaceSandboxConfig, XunfeiConfig, DEFAULT_API_KEY,
 };
 pub use yaml::{load_config, save_config, ConfigError, ConfigManager, YamlService};

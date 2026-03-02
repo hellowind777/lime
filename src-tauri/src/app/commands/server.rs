@@ -119,6 +119,10 @@ pub async fn get_server_status(
         .iter()
         .filter(|log| matches!(log.status, RequestStatus::Retrying))
         .count() as u64;
+    status.capability_routing = s.capability_routing_metrics_store.snapshot();
+    status.response_cache = s.response_cache_store.stats();
+    status.request_dedup = s.request_dedup_store.stats();
+    status.idempotency = s.idempotency_store.stats();
 
     Ok(status)
 }
