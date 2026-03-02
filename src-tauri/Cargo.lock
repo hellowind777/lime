@@ -7345,6 +7345,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures",
  "hex",
+ "indexmap 2.13.0",
  "once_cell",
  "parking_lot",
  "proptest",
