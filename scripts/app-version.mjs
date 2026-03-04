@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -68,4 +66,3 @@ if (entryFilePath && currentFilePath === entryFilePath) {
   }
   process.stdout.write(version);
 }
-
