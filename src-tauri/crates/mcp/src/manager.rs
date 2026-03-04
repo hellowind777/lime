@@ -445,8 +445,8 @@ impl McpClientManager {
             }
         }
 
-        // 设置工作目录
-        if let Some(ref cwd) = config.cwd {
+        // 设置工作目录（清洗 `\0` 和无效空白）
+        if let Some(cwd) = config.sanitized_cwd() {
             command.current_dir(cwd);
         }
 

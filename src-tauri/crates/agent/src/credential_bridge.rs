@@ -17,6 +17,7 @@ use proxycast_core::database::DbConnection;
 use proxycast_core::models::provider_pool_model::{
     CredentialData, PoolProviderType, ProviderCredential,
 };
+use proxycast_core::models::provider_type::is_custom_provider_id;
 use proxycast_services::api_key_provider_service::ApiKeyProviderService;
 use proxycast_services::provider_pool_service::ProviderPoolService;
 use std::sync::Arc;
@@ -63,6 +64,8 @@ pub struct AsterProviderConfig {
     pub base_url: Option<String>,
     /// 凭证 UUID（用于记录使用和健康状态）
     pub credential_uuid: String,
+    /// 是否强制 OpenAI provider 使用 Responses API（用于 Codex 等兼容链路）
+    pub force_responses_api: bool,
 }
 
 /// 凭证池桥接器
@@ -128,6 +131,39 @@ impl CredentialBridge {
             .await
     }
 
+    fn resolve_api_provider_type_hint(
+        &self,
+        db: &DbConnection,
+        provider_type_hint: &str,
+    ) -> Option<ApiProviderType> {
+        if let Ok(api_type) = provider_type_hint.parse::<ApiProviderType>() {
+            return Some(api_type);
+        }
+
+        if !is_custom_provider_id(provider_type_hint) {
+            return None;
+        }
+
+        match self.api_key_service.get_provider(db, provider_type_hint) {
+            Ok(Some(provider_with_keys)) => Some(provider_with_keys.provider.provider_type),
+            Ok(None) => {
+                tracing::warn!(
+                    "[CredentialBridge] custom provider 不存在: {}, 使用默认映射",
+                    provider_type_hint
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    "[CredentialBridge] 读取 custom provider 失败: {} ({})，使用默认映射",
+                    provider_type_hint,
+                    error
+                );
+                None
+            }
+        }
+    }
+
     /// 将 ProxyCast 凭证转换为 Aster Provider 配置
     async fn credential_to_config(
         &self,
@@ -142,20 +178,23 @@ impl CredentialBridge {
             credential.provider_type
         );
 
-        let (provider_name, api_key, base_url) = match &credential.credential {
+        let (provider_name, api_key, base_url, force_responses_api) = match &credential.credential {
             // OpenAI API Key - 根据 provider_type_hint 确定实际的 Provider
             CredentialData::OpenAIKey { api_key, base_url } => {
-                // 使用 provider_type_hint 来确定 aster provider 名称
-                let provider = map_provider_type_to_aster(provider_type_hint);
+                let resolved_api_type = self.resolve_api_provider_type_hint(db, provider_type_hint);
+                let provider =
+                    map_provider_type_to_aster_with_api_type(provider_type_hint, resolved_api_type);
                 tracing::info!(
-                    "[CredentialBridge] OpenAIKey: provider_type_hint={} -> aster_provider={}",
+                    "[CredentialBridge] OpenAIKey: provider_type_hint={}, resolved_api_type={:?} -> aster_provider={}",
                     provider_type_hint,
+                    resolved_api_type,
                     provider
                 );
                 (
                     provider.to_string(),
                     Some(api_key.clone()),
                     base_url.clone(),
+                    resolved_api_type == Some(ApiProviderType::Codex),
                 )
             }
 
@@ -165,6 +204,7 @@ impl CredentialBridge {
                 "anthropic".to_string(),
                 Some(api_key.clone()),
                 base_url.clone(),
+                false,
             ),
 
             // Kiro OAuth - 需要获取 access_token
@@ -173,7 +213,7 @@ impl CredentialBridge {
                     .get_kiro_token(creds_file_path, db, &credential.uuid)
                     .await?;
                 // Kiro 使用 CodeWhisperer API，映射到 bedrock provider
-                ("bedrock".to_string(), Some(token), None)
+                ("bedrock".to_string(), Some(token), None, false)
             }
 
             // Gemini OAuth
@@ -181,7 +221,7 @@ impl CredentialBridge {
                 creds_file_path, ..
             } => {
                 let token = self.get_oauth_token(creds_file_path).await?;
-                ("google".to_string(), Some(token), None)
+                ("google".to_string(), Some(token), None, false)
             }
 
             // Gemini API Key
@@ -191,6 +231,7 @@ impl CredentialBridge {
                 "google".to_string(),
                 Some(api_key.clone()),
                 base_url.clone(),
+                false,
             ),
 
             // Vertex AI
@@ -200,6 +241,7 @@ impl CredentialBridge {
                 "gcpvertexai".to_string(),
                 Some(api_key.clone()),
                 base_url.clone(),
+                false,
             ),
 
             // Codex OAuth
@@ -208,13 +250,19 @@ impl CredentialBridge {
                 api_base_url,
             } => {
                 let token = self.get_codex_token(creds_file_path).await?;
-                ("codex".to_string(), Some(token), api_base_url.clone())
+                (
+                    // 统一走 OpenAI provider，保证 tools/stream 事件链路一致
+                    "openai".to_string(),
+                    Some(token),
+                    api_base_url.clone(),
+                    true,
+                )
             }
 
             // Claude OAuth
             CredentialData::ClaudeOAuth { creds_file_path } => {
                 let token = self.get_oauth_token(creds_file_path).await?;
-                ("anthropic".to_string(), Some(token), None)
+                ("anthropic".to_string(), Some(token), None, false)
             }
 
             // Antigravity OAuth
@@ -222,7 +270,7 @@ impl CredentialBridge {
                 creds_file_path, ..
             } => {
                 let token = self.get_oauth_token(creds_file_path).await?;
-                ("google".to_string(), Some(token), None)
+                ("google".to_string(), Some(token), None, false)
             }
         };
 
@@ -232,6 +280,7 @@ impl CredentialBridge {
             api_key,
             base_url,
             credential_uuid: credential.uuid.clone(),
+            force_responses_api,
         })
     }
 
@@ -418,12 +467,32 @@ fn set_provider_env_vars(config: &AsterProviderConfig) {
         std::env::set_var(env_key, api_key);
     }
 
+    if config.provider_name == "openai" {
+        if config.force_responses_api {
+            std::env::set_var("OPENAI_FORCE_RESPONSES_API", "1");
+        } else {
+            std::env::remove_var("OPENAI_FORCE_RESPONSES_API");
+        }
+    }
+
     // 设置 base_url
     // Aster 的 OpenAI Provider 使用 OPENAI_HOST（仅 scheme+host+port）和
     // OPENAI_BASE_PATH（路径部分 + /chat/completions）环境变量
     if let Some(base_url) = &config.base_url {
         match config.provider_name.as_str() {
             "openai" => {
+                // 当显式强制 responses 模式时，需要将路径前缀保留在 OPENAI_HOST 中，
+                // 因为 Aster OpenAI provider 在 responses 模式下固定请求 v1/responses，
+                // 不会读取 OPENAI_BASE_PATH。
+                if config.force_responses_api {
+                    std::env::set_var("OPENAI_HOST", base_url);
+                    std::env::remove_var("OPENAI_BASE_PATH");
+                    tracing::info!(
+                        "[CredentialBridge] 强制 Responses 模式: 设置 OPENAI_HOST={}, 清理 OPENAI_BASE_PATH",
+                        base_url
+                    );
+                    return;
+                }
                 // 解析 base_url，将路径部分拆分到 OPENAI_BASE_PATH
                 // 例如 https://open.bigmodel.cn/api/paas/v4
                 //   -> OPENAI_HOST = https://open.bigmodel.cn
@@ -525,6 +594,21 @@ fn map_provider_type_to_aster(provider_type: &str) -> &'static str {
     }
 }
 
+fn map_provider_type_to_aster_with_api_type(
+    provider_type: &str,
+    resolved_api_type: Option<ApiProviderType>,
+) -> &'static str {
+    if let Some(api_type) = resolved_api_type {
+        // Codex API Key 在 Aster 中应走 OpenAI provider（支持标准 tools + responses 转换逻辑），
+        // 避免误走 codex CLI provider 导致工具事件丢失。
+        if api_type == ApiProviderType::Codex {
+            return "openai";
+        }
+        return api_type.runtime_spec().aster_provider_name;
+    }
+    map_provider_type_to_aster(provider_type)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,6 +622,56 @@ mod tests {
         );
         assert_eq!(map_pool_type_to_aster(&PoolProviderType::Gemini), "google");
         assert_eq!(map_pool_type_to_aster(&PoolProviderType::Kiro), "bedrock");
+    }
+
+    #[test]
+    fn test_map_provider_type_to_aster_with_api_type() {
+        assert_eq!(
+            map_provider_type_to_aster_with_api_type(
+                "custom-a32774c6-6fd0-433b-8b81-e95340e08793",
+                Some(ApiProviderType::Codex),
+            ),
+            "openai"
+        );
+        assert_eq!(
+            map_provider_type_to_aster_with_api_type(
+                "custom-a32774c6-6fd0-433b-8b81-e95340e08793",
+                Some(ApiProviderType::AnthropicCompatible),
+            ),
+            "anthropic"
+        );
+        assert_eq!(
+            map_provider_type_to_aster_with_api_type("deepseek", None),
+            "openai"
+        );
+    }
+
+    #[test]
+    fn test_set_provider_env_vars_openai_codex_responses_keeps_full_base_url() {
+        std::env::remove_var("OPENAI_HOST");
+        std::env::remove_var("OPENAI_BASE_PATH");
+        std::env::remove_var("OPENAI_FORCE_RESPONSES_API");
+
+        let config = AsterProviderConfig {
+            provider_name: "openai".to_string(),
+            model_name: "gpt-5.3-codex".to_string(),
+            api_key: Some("test-key".to_string()),
+            base_url: Some("https://example.com/openai".to_string()),
+            credential_uuid: "test-uuid".to_string(),
+            force_responses_api: true,
+        };
+
+        set_provider_env_vars(&config);
+
+        assert_eq!(
+            std::env::var("OPENAI_HOST").ok(),
+            Some("https://example.com/openai".to_string())
+        );
+        assert!(std::env::var("OPENAI_BASE_PATH").is_err());
+        assert_eq!(
+            std::env::var("OPENAI_FORCE_RESPONSES_API").ok().as_deref(),
+            Some("1")
+        );
     }
 
     #[test]
@@ -582,6 +716,7 @@ mod tests {
             api_key: Some("test-key".to_string()),
             base_url: Some("https://open.bigmodel.cn/api/anthropic".to_string()),
             credential_uuid: "test-uuid".to_string(),
+            force_responses_api: false,
         };
 
         set_provider_env_vars(&config);

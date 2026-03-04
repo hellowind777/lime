@@ -56,6 +56,74 @@ fn default_timeout() -> u64 {
     10
 }
 
+fn shell_command_flag(shell: &str) -> &'static str {
+    let executable = std::path::Path::new(shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+
+    if executable == "cmd" || executable == "cmd.exe" {
+        "/C"
+    } else if executable.contains("powershell") || executable == "pwsh" || executable == "pwsh.exe"
+    {
+        "-Command"
+    } else {
+        "-c"
+    }
+}
+
+fn resolve_command_shell() -> String {
+    let shell_from_env = std::env::var("SHELL").ok().and_then(|value| {
+        let cleaned = value
+            .split('\0')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        (!cleaned.is_empty()).then_some(cleaned)
+    });
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(shell) = shell_from_env {
+            let path = std::path::Path::new(&shell);
+            if path.is_absolute() && path.exists() {
+                return shell;
+            }
+        }
+
+        if let Ok(comspec) = std::env::var("COMSPEC") {
+            let cleaned = comspec
+                .split('\0')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !cleaned.is_empty() && std::path::Path::new(&cleaned).exists() {
+                return cleaned;
+            }
+        }
+
+        "cmd.exe".to_string()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(shell) = shell_from_env {
+            if std::path::Path::new(&shell).exists() {
+                return shell;
+            }
+        }
+
+        if std::path::Path::new("/bin/sh").exists() {
+            "/bin/sh".to_string()
+        } else {
+            "sh".to_string()
+        }
+    }
+}
+
 /// Hook 执行结果
 #[derive(Debug)]
 pub struct HookResult {
@@ -209,9 +277,11 @@ impl HookManager {
 
     async fn execute_hook(hook: &HookDefinition, context: &HookContext) -> HookResult {
         let context_json = serde_json::to_string(context).unwrap_or_default();
+        let shell = resolve_command_shell();
+        let shell_flag = shell_command_flag(&shell);
 
-        let child = Command::new("sh")
-            .arg("-c")
+        let child = Command::new(&shell)
+            .arg(shell_flag)
             .arg(&hook.command)
             .env(
                 "HOOK_EVENT",
@@ -409,6 +479,19 @@ mod tests {
             additional_context: None,
         }];
         assert!(!HookManager::is_blocked(&results_ok));
+    }
+
+    #[test]
+    fn test_shell_command_flag_for_common_shells() {
+        assert_eq!(shell_command_flag("cmd.exe"), "/C");
+        assert_eq!(shell_command_flag("pwsh"), "-Command");
+        assert_eq!(shell_command_flag("/bin/sh"), "-c");
+    }
+
+    #[test]
+    fn test_resolve_command_shell_not_empty() {
+        let shell = resolve_command_shell();
+        assert!(!shell.trim().is_empty());
     }
 
     #[tokio::test]

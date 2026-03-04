@@ -31,6 +31,7 @@ import {
   Palette,
   Type,
   Download,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -39,6 +40,7 @@ import {
   type AgentSuggestion,
   type PosterAgentId,
 } from "./index";
+import { ActivityLogList } from "../components/ActivityLog";
 
 /**
  * 消息类型
@@ -327,6 +329,7 @@ export function AgentChatPanel({
   const [inputValue, setInputValue] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeAgent, setActiveAgent] = useState<PosterAgentId | null>(null);
+  const [showActivityLog, setShowActivityLog] = useState(false);
 
   // Refs
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -516,16 +519,28 @@ export function AgentChatPanel({
   );
 
   return (
-    <Card className={cn("flex flex-col h-full", className)}>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Bot className="h-5 w-5" />
-          AI 设计助手
-          {activeAgent && (
-            <Badge variant="secondary">{getAgentName(activeAgent)}</Badge>
-          )}
-        </CardTitle>
-      </CardHeader>
+    <div className={cn("flex gap-4 h-full", className)}>
+      {/* 主对话面板 */}
+      <Card className={cn("flex flex-col flex-1", showActivityLog && "max-w-[60%]")}>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Bot className="h-5 w-5" />
+              AI 设计助手
+              {activeAgent && (
+                <Badge variant="secondary">{getAgentName(activeAgent)}</Badge>
+              )}
+            </CardTitle>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowActivityLog(!showActivityLog)}
+            >
+              <FileText className="h-4 w-4 mr-1" />
+              {showActivityLog ? '隐藏日志' : '活动日志'}
+            </Button>
+          </div>
+        </CardHeader>
 
       <CardContent className="flex-1 flex flex-col p-0 overflow-hidden">
         {/* 快捷指令 */}
@@ -594,6 +609,14 @@ export function AgentChatPanel({
         </form>
       </CardContent>
     </Card>
+
+    {/* 活动日志面板 */}
+    {showActivityLog && (
+      <Card className="flex-1 max-w-[40%] h-full">
+        <ActivityLogList />
+      </Card>
+    )}
+  </div>
   );
 }
 

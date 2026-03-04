@@ -1,5 +1,3 @@
-import packageJson from "../../package.json";
-
 function normalizeVersion(value?: string | null): string | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -16,14 +14,6 @@ export function resolveAppVersion(
     if (normalized) {
       return normalized;
     }
-  }
-
-  const packageVersion = normalizeVersion(
-    typeof packageJson.version === "string" ? packageJson.version : null,
-  );
-
-  if (packageVersion) {
-    return packageVersion;
   }
 
   return "unknown";

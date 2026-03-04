@@ -25,7 +25,6 @@ import {
 import {
   CREATION_MODE_OPTIONS,
   MIN_CREATION_INTENT_LENGTH,
-  getWorkflowStepStatusLabel,
   useWorkbenchController,
 } from "@/components/workspace/hooks/useWorkbenchController";
 
@@ -54,10 +53,9 @@ export function WorkbenchPage({
     setActiveRightDrawer,
     showChatPanel,
     setShowChatPanel,
-    workflowProgress,
     setWorkflowProgress,
-    showWorkflowRail,
-    setShowWorkflowRail,
+    currentChatSessionId,
+    setCurrentChatSessionId,
     workspaceMode,
     activeWorkspaceView,
     setCreateProjectDialogOpen,
@@ -99,9 +97,7 @@ export function WorkbenchPage({
     isCreateWorkspaceView,
     shouldRenderWorkspaceRightRail,
     activeWorkspaceViewLabel,
-    hasWorkflowWorkspaceView,
     currentContentTitle,
-    nonCreateQuickActions,
     ActivePanelRenderer,
     PrimaryWorkspaceRenderer,
     handleEnterWorkspace,
@@ -118,7 +114,6 @@ export function WorkbenchPage({
     handleQuickCreateNovelEntry,
     handleOpenProjectWriting,
     consumePendingInitialPrompt,
-    handleQuickSaveCurrent,
     handleBackHome,
     handleOpenCreateHome,
     handleBackToProjectManagement,
@@ -208,6 +203,7 @@ export function WorkbenchPage({
             contentCreationModes={contentCreationModes}
             showChatPanel={showChatPanel}
             onWorkflowProgressChange={setWorkflowProgress}
+            onChatSessionChange={setCurrentChatSessionId}
             activePanelRenderer={ActivePanelRenderer}
           />
         }
@@ -218,27 +214,14 @@ export function WorkbenchPage({
             activeRightDrawer={activeRightDrawer}
             showChatPanel={showChatPanel}
             onToggleChatPanel={() => setShowChatPanel((visible) => !visible)}
-            onToggleToolsDrawer={() =>
+            onToggleActivityLogDrawer={() =>
               setActiveRightDrawer((previous) =>
-                previous === "tools" ? null : "tools",
+                previous === "activity-log" ? null : "activity-log",
               )
             }
-            onCloseToolsDrawer={() => setActiveRightDrawer(null)}
-            workflowProgress={workflowProgress}
-            showWorkflowRail={showWorkflowRail}
-            onToggleWorkflowRail={() => setShowWorkflowRail((previous) => !previous)}
-            onQuickSaveCurrent={() => {
-              void handleQuickSaveCurrent();
-            }}
-            selectedContentId={selectedContentId}
-            onOpenWorkflowView={handleOpenWorkflowView}
-            selectedProjectId={selectedProjectId}
-            hasWorkflowWorkspaceView={hasWorkflowWorkspaceView}
-            activeWorkspaceViewLabel={activeWorkspaceViewLabel}
-            currentContentTitle={currentContentTitle}
-            nonCreateQuickActions={nonCreateQuickActions}
             onBackToCreateView={() => handleSwitchWorkspaceView("create")}
-            getWorkflowStepStatusLabel={getWorkflowStepStatusLabel}
+            activityLogWorkspaceId={selectedProjectId}
+            activityLogSessionId={currentChatSessionId}
           />
         }
       />

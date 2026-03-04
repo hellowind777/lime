@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import styled, { keyframes, css } from "styled-components";
 import {
   ArrowRight,
+  Paperclip,
+  Lightbulb,
   ImageIcon,
   Video,
   FileText,
@@ -52,6 +54,7 @@ import { SkillBadge } from "./Inputbar/components/SkillBadge";
 import { useActiveSkill } from "./Inputbar/hooks/useActiveSkill";
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
+import type { MessageImage } from "../types";
 
 // Import Assets
 import iconXhs from "@/assets/platforms/xhs.png";
@@ -364,6 +367,7 @@ interface EmptyStateProps {
   onSend: (
     value: string,
     executionStrategy?: "react" | "code_orchestrated" | "auto",
+    images?: MessageImage[],
   ) => void;
   /** 创作模式 */
   creationMode?: CreationMode;
@@ -386,6 +390,10 @@ interface EmptyStateProps {
     strategy: "react" | "code_orchestrated" | "auto",
   ) => void;
   onManageProviders?: () => void;
+  webSearchEnabled?: boolean;
+  onWebSearchEnabledChange?: (enabled: boolean) => void;
+  thinkingEnabled?: boolean;
+  onThinkingEnabledChange?: (enabled: boolean) => void;
   hasCanvasContent?: boolean;
   hasContentId?: boolean;
   selectedText?: string;
@@ -514,6 +522,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   executionStrategy = "react",
   setExecutionStrategy,
   onManageProviders,
+  webSearchEnabled = false,
+  onWebSearchEnabledChange,
+  thinkingEnabled = false,
+  onThinkingEnabledChange,
   hasCanvasContent = false,
   hasContentId = false,
   selectedText = "",
@@ -588,10 +600,12 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   const [ratio, setRatio] = useState("3:4");
   const [style, setStyle] = useState("minimal");
   const [depth, setDepth] = useState("deep");
+  const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
   const [entryTaskType, setEntryTaskType] = useState<EntryTaskType>("direct");
   const [entrySlotValues, setEntrySlotValues] = useState<EntryTaskSlotValues>(
     () => createDefaultEntrySlotValues("direct"),
   );
+  const imageInputRef = useRef<HTMLInputElement>(null);
   // Popover 打开状态
   const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false);
   const [stylePopoverOpen, setStylePopoverOpen] = useState(false);
@@ -669,8 +683,36 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     }));
   };
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith("image/")) {
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        const base64Data = base64.split(",")[1];
+        setPendingImages((prev) => [
+          ...prev,
+          {
+            data: base64Data,
+            mediaType: file.type,
+          },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    });
+
+    e.target.value = "";
+  };
+
   const handleSend = () => {
-    if (!input.trim() && !isEntryTheme) return;
+    if (!input.trim() && !isEntryTheme && pendingImages.length === 0) return;
+    const imagesToSend = pendingImages.length > 0 ? pendingImages : undefined;
 
     if (isEntryTheme) {
       const validation = validateEntryTaskSlots(entryTaskType, entrySlotValues);
@@ -696,7 +738,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         },
       });
 
-      onSend(wrapTextWithSkill(composedPrompt), executionStrategy);
+      onSend(wrapTextWithSkill(composedPrompt), executionStrategy, imagesToSend);
+      setPendingImages([]);
       clearActiveSkill();
       return;
     }
@@ -712,7 +755,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       prefix = `[知识探索: ${depth === "deep" ? "深度" : "快速"}] `;
     if (activeTheme === "planning") prefix = `[计划规划] `;
 
-    onSend(wrapTextWithSkill(prefix + input), executionStrategy);
+    onSend(wrapTextWithSkill(prefix + input), executionStrategy, imagesToSend);
+    setPendingImages([]);
     clearActiveSkill();
   };
 
@@ -727,7 +771,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     executionStrategy === "auto"
       ? "Auto"
       : executionStrategy === "code_orchestrated"
-        ? "编排"
+        ? "Plan"
         : "ReAct";
 
   // Dynamic Placeholder
@@ -883,6 +927,19 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             onSelectSkill={setActiveSkill}
             onNavigateToSettings={onNavigateToSettings}
           />
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={handleFileSelect}
+          />
+          {pendingImages.length > 0 && (
+            <div className="px-6 pb-2 text-xs text-muted-foreground">
+              已添加图片 {pendingImages.length} 张
+            </div>
+          )}
 
           <Toolbar>
             <ToolLoginLeft>
@@ -1159,10 +1216,49 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                 </>
               )}
 
+              {activeTheme === "general" && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 rounded-full ml-1 bg-background shadow-sm hover:bg-muted"
+                    onClick={() => imageInputRef.current?.click()}
+                    title="上传文件"
+                  >
+                    <Paperclip className="w-4 h-4 opacity-70" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className={`h-8 w-8 rounded-full ml-1 bg-background shadow-sm hover:bg-muted ${
+                      thinkingEnabled
+                        ? "border-yellow-500 text-yellow-600 bg-yellow-50 dark:bg-yellow-950/30"
+                        : ""
+                    }`}
+                    onClick={() =>
+                      onThinkingEnabledChange?.(!thinkingEnabled)
+                    }
+                    aria-pressed={thinkingEnabled}
+                    title={thinkingEnabled ? "关闭深度思考" : "开启深度思考"}
+                  >
+                    <Lightbulb className="w-4 h-4 opacity-70" />
+                  </Button>
+                </>
+              )}
+
               <Button
                 variant="outline"
                 size="icon"
-                className="h-8 w-8 rounded-full ml-1 bg-background shadow-sm hover:bg-muted"
+                className={`h-8 w-8 rounded-full ml-1 bg-background shadow-sm hover:bg-muted ${
+                  webSearchEnabled
+                    ? "border-blue-500 text-blue-600 bg-blue-50 dark:bg-blue-950/30"
+                    : ""
+                }`}
+                onClick={() =>
+                  onWebSearchEnabledChange?.(!webSearchEnabled)
+                }
+                aria-pressed={webSearchEnabled}
+                title={webSearchEnabled ? "关闭联网搜索" : "开启联网搜索"}
               >
                 <Globe className="w-4 h-4 opacity-70" />
               </Button>
@@ -1188,19 +1284,19 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                     <SelectItem value="react">
                       <div className="flex items-center gap-2 whitespace-nowrap">
                         <Code2 className="w-3.5 h-3.5" />
-                        ReAct · 需确认
+                        ReAct
                       </div>
                     </SelectItem>
                     <SelectItem value="code_orchestrated">
                       <div className="flex items-center gap-2 whitespace-nowrap">
                         <Code2 className="w-3.5 h-3.5" />
-                        编排 · 需确认
+                        Plan
                       </div>
                     </SelectItem>
                     <SelectItem value="auto">
                       <div className="flex items-center gap-2 whitespace-nowrap">
                         <Code2 className="w-3.5 h-3.5" />
-                        Auto · 自动确认
+                        Auto
                       </div>
                     </SelectItem>
                   </SelectContent>
@@ -1211,7 +1307,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             <Button
               size="sm"
               onClick={handleSend}
-              disabled={!input.trim() && !isEntryTheme}
+              disabled={
+                !input.trim() && !isEntryTheme && pendingImages.length === 0
+              }
               className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-5 rounded-xl shadow-lg shadow-primary/20 transition-all hover:scale-105 active:scale-95 whitespace-nowrap"
             >
               开始生成

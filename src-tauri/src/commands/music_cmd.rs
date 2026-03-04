@@ -56,34 +56,64 @@ pub struct PythonEnvInfo {
     pub missing_packages: Vec<String>,
 }
 
+fn python_candidates() -> &'static [&'static str] {
+    #[cfg(target_os = "windows")]
+    {
+        &["python", "py", "python3"]
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        &["python3", "python"]
+    }
+}
+
+fn detect_python_command() -> Option<String> {
+    for candidate in python_candidates() {
+        if let Ok(output) = Command::new(candidate).arg("--version").output() {
+            if output.status.success() {
+                return Some((*candidate).to_string());
+            }
+        }
+    }
+    None
+}
+
+fn extract_python_version(output: &std::process::Output) -> String {
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    String::from_utf8_lossy(&output.stderr).trim().to_string()
+}
+
 /// 检查 Python 环境
 #[tauri::command]
 pub async fn check_python_env() -> Result<PythonEnvInfo, String> {
-    // 检查 Python 是否安装
-    let python_check = Command::new("python3").arg("--version").output();
-
-    let (python_installed, python_version) = match python_check {
-        Ok(output) => {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            (true, Some(version))
+    let python_command = detect_python_command();
+    let (python_installed, python_version, python_cmd) = match python_command {
+        Some(cmd) => {
+            let output = Command::new(&cmd).arg("--version").output();
+            match output {
+                Ok(output) => (true, Some(extract_python_version(&output)), cmd),
+                Err(_) => (true, None, cmd),
+            }
         }
-        Err(_) => (false, None),
+        None => {
+            return Ok(PythonEnvInfo {
+                python_installed: false,
+                python_version: None,
+                missing_packages: vec![],
+            });
+        }
     };
-
-    if !python_installed {
-        return Ok(PythonEnvInfo {
-            python_installed: false,
-            python_version: None,
-            missing_packages: vec![],
-        });
-    }
 
     // 检查必需的 Python 包
     let required_packages = vec!["mido", "music21", "numpy", "demucs", "basic-pitch"];
     let mut missing_packages = Vec::new();
 
     for package in required_packages {
-        let check = Command::new("python3")
+        let check = Command::new(&python_cmd)
             .arg("-c")
             .arg(format!("import {}", package.replace("-", "_")))
             .output();
@@ -105,9 +135,11 @@ pub async fn check_python_env() -> Result<PythonEnvInfo, String> {
 pub async fn analyze_midi(midi_path: String) -> Result<MidiAnalysisResult, String> {
     // 获取 Python 脚本路径
     let script_path = get_resource_path("scripts/midi_analyzer.py")?;
+    let python_cmd = detect_python_command()
+        .ok_or_else(|| "Python is not installed or not found in PATH".to_string())?;
 
     // 调用 Python 脚本
-    let output = Command::new("python3")
+    let output = Command::new(&python_cmd)
         .arg(&script_path)
         .arg(&midi_path)
         .output()
@@ -128,9 +160,11 @@ pub async fn analyze_midi(midi_path: String) -> Result<MidiAnalysisResult, Strin
 pub async fn convert_mp3_to_midi(mp3_path: String, output_path: String) -> Result<String, String> {
     // 获取 Python 脚本路径
     let script_path = get_resource_path("scripts/audio_to_midi.py")?;
+    let python_cmd = detect_python_command()
+        .ok_or_else(|| "Python is not installed or not found in PATH".to_string())?;
 
     // 调用 Python 脚本
-    let output = Command::new("python3")
+    let output = Command::new(&python_cmd)
         .arg(&script_path)
         .arg(&mp3_path)
         .arg(&output_path)
@@ -194,8 +228,12 @@ fn get_resource_path(relative_path: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 pub async fn install_python_dependencies() -> Result<String, String> {
     let packages = vec!["mido", "music21", "numpy", "demucs", "basic-pitch"];
+    let python_cmd = detect_python_command()
+        .ok_or_else(|| "Python is not installed or not found in PATH".to_string())?;
 
-    let output = Command::new("pip3")
+    let output = Command::new(&python_cmd)
+        .arg("-m")
+        .arg("pip")
         .arg("install")
         .args(&packages)
         .output()
@@ -207,4 +245,26 @@ pub async fn install_python_dependencies() -> Result<String, String> {
     }
 
     Ok("Dependencies installed successfully".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::python_candidates;
+
+    #[test]
+    fn python_candidates_should_not_be_empty() {
+        assert!(!python_candidates().is_empty());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_python_candidates_should_prioritize_python() {
+        assert_eq!(python_candidates().first().copied(), Some("python"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn unix_python_candidates_should_prioritize_python3() {
+        assert_eq!(python_candidates().first().copied(), Some("python3"));
+    }
 }

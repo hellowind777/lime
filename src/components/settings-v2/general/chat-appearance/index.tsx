@@ -36,15 +36,53 @@ const ALL_NAV_ITEMS = [
   { id: "video", label: "视频" },
   { id: "image-gen", label: "插图" },
   { id: "batch", label: "批量任务" },
+  { id: "terminal", label: "终端" },
   { id: "plugins", label: "插件中心" },
+  { id: "tools", label: "工具箱" },
 ] as const;
 
 const DEFAULT_ENABLED_NAV_ITEMS = [
   "home-general",
   "video",
   "image-gen",
-  "plugins",
 ];
+
+const ALL_NAV_ITEM_ID_SET = new Set<string>(
+  ALL_NAV_ITEMS.map((item) => item.id),
+);
+
+const LEGACY_DEFAULT_NAV_ITEM_SETS: string[][] = [
+  ["home-general", "video", "image-gen", "plugins"],
+  ["home-general", "video", "image-gen", "terminal", "plugins"],
+];
+
+const normalizeEnabledNavItems = (items: string[]): string[] => {
+  const unique = Array.from(new Set(items));
+  return unique.filter((item) => ALL_NAV_ITEM_ID_SET.has(item));
+};
+
+const hasSameMembers = (left: string[], right: string[]): boolean => {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((item) => rightSet.has(item));
+};
+
+const isLegacyDefaultEnabledItems = (items: string[]): boolean => {
+  return LEGACY_DEFAULT_NAV_ITEM_SETS.some((legacyItems) =>
+    hasSameMembers(items, legacyItems),
+  );
+};
+
+const resolveEnabledNavItems = (savedItems?: string[]): string[] => {
+  if (!savedItems || savedItems.length === 0) {
+    return [...DEFAULT_ENABLED_NAV_ITEMS];
+  }
+  const normalized = normalizeEnabledNavItems(savedItems);
+  if (isLegacyDefaultEnabledItems(normalized)) {
+    return [...DEFAULT_ENABLED_NAV_ITEMS];
+  }
+  return normalized;
+};
 
 const Container = styled.div`
   display: flex;
@@ -173,9 +211,7 @@ export function ChatAppearanceSettings() {
       setEnabledThemes(
         c.content_creator?.enabled_themes || DEFAULT_ENABLED_THEMES,
       );
-      setEnabledNavItems(
-        c.navigation?.enabled_items || DEFAULT_ENABLED_NAV_ITEMS,
-      );
+      setEnabledNavItems(resolveEnabledNavItems(c.navigation?.enabled_items));
       setAppendSelectedTextToRecommendation(
         c.chat_appearance?.append_selected_text_to_recommendation ?? true,
       );

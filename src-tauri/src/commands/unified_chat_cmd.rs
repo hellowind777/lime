@@ -20,6 +20,10 @@ use crate::config::GlobalConfigManagerState;
 use crate::database::dao::chat::{ChatDao, ChatMessage, ChatMode, ChatSession};
 use crate::database::DbConnection;
 use crate::services::memory_profile_prompt_service::merge_system_prompt_with_memory_profile;
+use crate::services::request_tool_policy_prompt_service::{
+    execute_web_search_preflight_if_needed, merge_system_prompt_with_request_tool_policy,
+    resolve_request_tool_policy, RequestToolPolicy, WebSearchExecutionTracker,
+};
 use crate::services::web_search_prompt_service::merge_system_prompt_with_web_search;
 use crate::services::web_search_runtime_service::apply_web_search_runtime_env;
 use aster::agents::extension::ExtensionConfig;
@@ -56,14 +60,19 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     /// 会话 ID
+    #[serde(alias = "sessionId")]
     pub session_id: String,
     /// 消息内容
     pub message: String,
     /// 事件名称（用于前端监听）
+    #[serde(alias = "eventName")]
     pub event_name: String,
     /// 图片输入（可选，用于多模态对话）
     /// TODO: 实现图片处理逻辑，将图片转换为 Aster Message 的 ImageContent
     pub images: Option<Vec<ImageInput>>,
+    /// 请求级联网搜索开关
+    #[serde(default, alias = "webSearch")]
+    pub web_search: Option<bool>,
 }
 
 /// 图片输入
@@ -361,46 +370,30 @@ pub async fn chat_send_message(
         &config,
     );
 
-    let prefer_web_search_tools = matches!(session.mode, ChatMode::General);
+    let mode_default_web_search = matches!(session.mode, ChatMode::General);
+    let request_tool_policy =
+        resolve_request_tool_policy(request.web_search, mode_default_web_search);
     tracing::info!(
-        "[UnifiedChat][WebSearchGuard] session={}, mode={:?}, prefer_web_search_tools={}",
+        "[UnifiedChat][WebSearchGuard] session={}, mode={:?}, request_web_search={:?}, mode_default_web_search={}, effective_web_search={}",
         request.session_id,
         session.mode,
-        prefer_web_search_tools
+        request.web_search,
+        mode_default_web_search,
+        request_tool_policy.effective_web_search
     );
 
-    let result = match session.mode {
-        ChatMode::Agent | ChatMode::Creator => {
-            // 使用 Aster Agent 处理
-            send_message_with_aster(
-                &app,
-                &db,
-                &agent_state,
-                &request.session_id,
-                &request.message,
-                &request.event_name,
-                merged_system_prompt.as_deref(),
-                config.memory.enabled,
-                false,
-            )
-            .await
-        }
-        ChatMode::General => {
-            // 通用模式：也使用 Aster Agent，但不启用工具
-            send_message_with_aster(
-                &app,
-                &db,
-                &agent_state,
-                &request.session_id,
-                &request.message,
-                &request.event_name,
-                merged_system_prompt.as_deref(),
-                config.memory.enabled,
-                true,
-            )
-            .await
-        }
-    };
+    let result = send_message_with_aster(
+        &app,
+        &db,
+        &agent_state,
+        &request.session_id,
+        &request.message,
+        &request.event_name,
+        merged_system_prompt.as_deref(),
+        config.memory.enabled,
+        &request_tool_policy,
+    )
+    .await;
 
     let total_elapsed = start_time.elapsed();
     tracing::info!(
@@ -422,13 +415,13 @@ async fn send_message_with_aster(
     event_name: &str,
     system_prompt: Option<&str>,
     include_context_trace: bool,
-    prefer_web_search_tools: bool,
+    request_tool_policy: &RequestToolPolicy,
 ) -> Result<(), String> {
     let start_time = std::time::Instant::now();
     tracing::info!(
-        "[UnifiedChat][WebSearchGuard] session={}, prefer_web_search_tools={}",
+        "[UnifiedChat][WebSearchGuard] session={}, effective_web_search={}",
         session_id,
-        prefer_web_search_tools
+        request_tool_policy.effective_web_search
     );
 
     // 确保 Agent 已初始化
@@ -454,26 +447,17 @@ async fn send_message_with_aster(
     // 创建取消令牌
     let cancel_token = agent_state.create_cancel_token(session_id).await;
 
-    let guarded_user_message = if prefer_web_search_tools {
-        format!(
-            "[执行约束]\n\
-本次请求必须优先使用 WebSearch / WebFetch 工具获取联网结果。\n\
-不要调用 code_execution_execute_code / code_execution_read_module / code_execution_search_modules 这类代码执行模块来替代联网搜索。\n\n{}",
-            message
-        )
-    } else {
-        message.to_string()
-    };
+    let effective_system_prompt = merge_system_prompt_with_request_tool_policy(
+        system_prompt.map(|prompt| prompt.to_string()),
+        request_tool_policy,
+    );
 
-    // 构建消息（如果有 system_prompt 且是第一条消息，注入到消息前面）
-    let final_message = if let Some(prompt) = system_prompt {
-        format!("{prompt}\n\n{guarded_user_message}")
-    } else {
-        guarded_user_message
-    };
-
-    let user_message = Message::user().with_text(&final_message);
-    let session_config = SessionConfigBuilder::new(session_id)
+    let user_message = Message::user().with_text(message);
+    let mut session_config_builder = SessionConfigBuilder::new(session_id);
+    if let Some(prompt) = effective_system_prompt {
+        session_config_builder = session_config_builder.system_prompt(prompt);
+    }
+    let session_config = session_config_builder
         .include_context_trace(include_context_trace)
         .build();
 
@@ -483,7 +467,7 @@ async fn send_message_with_aster(
     let agent = guard.as_ref().ok_or("Agent 未初始化")?;
 
     let mut removed_extension: Option<ExtensionConfig> = None;
-    if prefer_web_search_tools {
+    if request_tool_policy.effective_web_search {
         let extension_configs = agent.get_extension_configs().await;
         if let Some(extension) = extension_configs
             .into_iter()
@@ -516,6 +500,47 @@ async fn send_message_with_aster(
 
     // 调用 Agent
     let reply_start = std::time::Instant::now();
+    let mut web_search_tracker = WebSearchExecutionTracker::default();
+    let preflight = execute_web_search_preflight_if_needed(
+        agent,
+        session_id,
+        message,
+        None,
+        Some(cancel_token.clone()),
+        request_tool_policy,
+        &mut web_search_tracker,
+    )
+    .await;
+    match preflight {
+        Ok(preflight_execution) => {
+            for event in preflight_execution.events {
+                if let Err(error) = app.emit(event_name, &event) {
+                    tracing::error!("[UnifiedChat] 发送预调用事件失败: {}", error);
+                }
+            }
+        }
+        Err(error) => {
+            let error_event = TauriAgentEvent::Error {
+                message: format!(
+                    "{error}\n尝试记录: {}",
+                    web_search_tracker.format_attempts()
+                ),
+            };
+            let _ = app.emit(event_name, &error_event);
+            agent_state.remove_cancel_token(session_id).await;
+            if let Some(extension) = removed_extension {
+                if let Err(restore_error) = agent.add_extension(extension).await {
+                    tracing::warn!(
+                        "[UnifiedChat] 预调用失败后恢复 {} 扩展失败: {}",
+                        CODE_EXECUTION_EXTENSION_NAME,
+                        restore_error
+                    );
+                }
+            }
+            return Err(error);
+        }
+    }
+
     let stream_result = agent
         .reply(user_message, session_config, Some(cancel_token.clone()))
         .await;
@@ -539,6 +564,24 @@ async fn send_message_with_aster(
 
                         let tauri_events = convert_agent_event(agent_event);
                         for tauri_event in tauri_events {
+                            match &tauri_event {
+                                TauriAgentEvent::ToolStart {
+                                    tool_name, tool_id, ..
+                                } => web_search_tracker.record_tool_start(
+                                    request_tool_policy,
+                                    tool_id,
+                                    tool_name,
+                                ),
+                                TauriAgentEvent::ToolEnd { tool_id, result } => {
+                                    web_search_tracker.record_tool_end(
+                                        request_tool_policy,
+                                        tool_id,
+                                        result.success,
+                                        result.error.as_deref(),
+                                    );
+                                }
+                                _ => {}
+                            }
                             if let Err(e) = app.emit(event_name, &tauri_event) {
                                 tracing::error!("[UnifiedChat] 发送事件失败: {}", e);
                             }
@@ -555,9 +598,23 @@ async fn send_message_with_aster(
                 }
             }
 
-            // 发送完成事件
-            let done_event = TauriAgentEvent::FinalDone { usage: None };
-            let _ = app.emit(event_name, &done_event);
+            if stream_error.is_none() {
+                if let Err(validation_error) =
+                    web_search_tracker.validate_web_search_requirement(request_tool_policy)
+                {
+                    let error_event = TauriAgentEvent::Error {
+                        message: validation_error.clone(),
+                    };
+                    let _ = app.emit(event_name, &error_event);
+                    stream_error = Some(validation_error);
+                }
+            }
+
+            if stream_error.is_none() {
+                // 发送完成事件
+                let done_event = TauriAgentEvent::FinalDone { usage: None };
+                let _ = app.emit(event_name, &done_event);
+            }
 
             let stream_elapsed = start_time.elapsed();
             tracing::info!(
@@ -632,4 +689,45 @@ pub async fn chat_configure_provider(
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::request_tool_policy_prompt_service::resolve_request_tool_policy;
+
+    #[test]
+    fn test_send_message_request_deserialize_web_search_camel_case() {
+        let payload = serde_json::json!({
+            "sessionId": "session-1",
+            "message": "hello",
+            "eventName": "event-1",
+            "webSearch": true
+        });
+        let request: SendMessageRequest =
+            serde_json::from_value(payload).expect("deserialize request");
+        assert_eq!(request.web_search, Some(true));
+        assert_eq!(request.session_id, "session-1");
+        assert_eq!(request.event_name, "event-1");
+    }
+
+    #[test]
+    fn test_send_message_request_deserialize_web_search_snake_case() {
+        let payload = serde_json::json!({
+            "session_id": "session-1",
+            "message": "hello",
+            "event_name": "event-1",
+            "web_search": false
+        });
+        let request: SendMessageRequest =
+            serde_json::from_value(payload).expect("deserialize request");
+        assert_eq!(request.web_search, Some(false));
+    }
+
+    #[test]
+    fn test_unified_effective_web_search_uses_request_override() {
+        let mode_default = true;
+        let policy = resolve_request_tool_policy(Some(false), mode_default);
+        assert!(!policy.effective_web_search);
+    }
 }

@@ -167,6 +167,13 @@ impl BlockMeta {
             _ => String::new(),
         }
     }
+
+    /// 获取清洗后的工作目录（去除 `\0`、首尾空白）
+    pub fn sanitized_cmd_cwd(&self) -> Option<String> {
+        let cwd = self.cmd_cwd.as_deref()?;
+        let cleaned = cwd.split('\0').next().unwrap_or_default().trim();
+        (!cleaned.is_empty()).then_some(cleaned.to_string())
+    }
 }
 
 /// 运行时选项
@@ -293,5 +300,20 @@ mod tests {
         assert_eq!(meta.get_string("connection"), "ssh://user@host");
         assert_eq!(meta.get_string("cmd"), "");
         assert_eq!(meta.get_string("term_mode"), "term");
+    }
+
+    #[test]
+    fn test_block_meta_sanitized_cmd_cwd() {
+        let meta = BlockMeta {
+            cmd_cwd: Some(" /tmp/demo\0ignored ".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(meta.sanitized_cmd_cwd(), Some("/tmp/demo".to_string()));
+
+        let empty = BlockMeta {
+            cmd_cwd: Some(" \0 ".to_string()),
+            ..Default::default()
+        };
+        assert!(empty.sanitized_cmd_cwd().is_none());
     }
 }

@@ -8,6 +8,7 @@
 
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { Settings, AlertTriangle, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { useGeneralChatStore } from "../store/useGeneralChatStore";
 import { useProvider } from "../hooks/useProvider";
 import type { CanvasState, ContentBlock } from "../types";
@@ -17,11 +18,26 @@ import { Inputbar } from "@/components/agent/chat/components/Inputbar";
 import { CompactModelSelector } from "./CompactModelSelector";
 import { WorkflowStatusPanel } from "../components/WorkflowStatusPanel";
 import { useConfiguredProviders } from "@/hooks/useConfiguredProviders";
+import { useProviderModels } from "@/hooks/useProviderModels";
 import type { MessageImage } from "@/components/agent/chat/types";
 import { createGeneralInputAdapter } from "@/components/input-kit";
 import { skillsApi, type Skill } from "@/lib/api/skills";
 import type { Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
+import {
+  loadChatToolPreferences,
+  saveChatToolPreferences,
+  type ChatToolPreferences,
+} from "@/components/agent/chat/utils/chatToolPreferences";
+import {
+  isReasoningModel,
+  resolveBaseModelOnThinkingOff,
+  resolveThinkingModel,
+} from "@/lib/model/thinkingModelResolver";
+import {
+  loadRememberedBaseModel,
+  saveRememberedBaseModel,
+} from "@/lib/model/thinkingBaseModelMemory";
 
 interface ChatPanelProps {
   /** 当前会话 ID */
@@ -114,6 +130,13 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     null,
   );
   const [skills, setSkills] = useState<Skill[]>([]);
+  const [chatToolPreferences, setChatToolPreferences] =
+    useState<ChatToolPreferences>(() => loadChatToolPreferences());
+  const thinkingVariantWarnedRef = React.useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    saveChatToolPreferences(chatToolPreferences);
+  }, [chatToolPreferences]);
 
   // 加载技能列表
   useEffect(() => {
@@ -162,6 +185,9 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
     isLoading: providerSelectionLoading,
     error: providerSelectionError,
   } = useProvider();
+  const { models: providerModels } = useProviderModels(selectedProvider, {
+    returnFullMetadata: true,
+  });
 
   // 从 streaming 对象中解构状态
   const { isStreaming, partialContent } = streaming;
@@ -217,12 +243,61 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
   const handleSend = useCallback(
     async (
       images?: MessageImage[],
-      _webSearch?: boolean,
-      _thinking?: boolean,
+      webSearch?: boolean,
+      thinking?: boolean,
       textOverride?: string,
     ) => {
       if (!sessionId || (!input.trim() && (!images || images.length === 0)))
         return;
+      const effectiveWebSearch = webSearch ?? chatToolPreferences.webSearch;
+      const effectiveThinking = thinking ?? chatToolPreferences.thinking;
+      const currentModelId = selectedModelId || "";
+      const providerKey = selectedProvider?.key || "";
+
+      if (providerKey && currentModelId) {
+        const memoryParams = {
+          scope: "general" as const,
+          workspaceId: "general-chat",
+          sessionId,
+          providerKey,
+        };
+        const rememberedBaseModel = loadRememberedBaseModel(memoryParams);
+
+        if (effectiveThinking) {
+          if (!isReasoningModel(currentModelId, providerModels)) {
+            saveRememberedBaseModel({
+              ...memoryParams,
+              modelId: currentModelId,
+            });
+          }
+
+          const thinkingResult = resolveThinkingModel({
+            currentModelId,
+            models: providerModels,
+          });
+          if (thinkingResult.switched) {
+            selectModel(thinkingResult.targetModelId);
+          } else if (
+            thinkingResult.reason === "no_variant" &&
+            providerModels.length > 0
+          ) {
+            const warnKey = `${providerKey}:${currentModelId}`;
+            if (!thinkingVariantWarnedRef.current.has(warnKey)) {
+              thinkingVariantWarnedRef.current.add(warnKey);
+              toast.warning("当前 Provider 没有可用的 Thinking 模型，已保持原模型");
+            }
+          }
+        } else {
+          const restoreResult = resolveBaseModelOnThinkingOff({
+            currentModelId,
+            models: providerModels,
+            rememberedBaseModel,
+          });
+          if (restoreResult.switched) {
+            selectModel(restoreResult.targetModelId);
+          }
+        }
+      }
 
       const content = (textOverride || input).trim();
       setInput("");
@@ -247,9 +322,19 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
         });
       }
 
-      await sendMessage(content || "请分析这张图片", files);
+      await sendMessage(content || "请分析这张图片", files, effectiveWebSearch);
     },
-    [sessionId, input, sendMessage],
+    [
+      chatToolPreferences.thinking,
+      chatToolPreferences.webSearch,
+      input,
+      providerModels,
+      selectedModelId,
+      selectedProvider?.key,
+      selectModel,
+      sendMessage,
+      sessionId,
+    ],
   );
 
   // 处理停止生成
@@ -412,6 +497,8 @@ export const ChatPanel: React.FC<ChatPanelProps> = ({
             isLoading={inputAdapter.state.isSending}
             disabled={inputAdapter.state.disabled}
             skills={skills}
+            toolStates={chatToolPreferences}
+            onToolStatesChange={setChatToolPreferences}
           />
         </div>
       </div>

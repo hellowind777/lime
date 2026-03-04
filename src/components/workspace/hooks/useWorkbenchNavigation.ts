@@ -53,9 +53,9 @@ export function useWorkbenchNavigation({
   isAgentChatWorkspace,
   hasPrimaryWorkspaceRenderer,
 }: UseWorkbenchNavigationParams) {
-  const [activeRightDrawer, setActiveRightDrawer] = useState<"tools" | null>(
-    null,
-  );
+  const [activeRightDrawer, setActiveRightDrawer] = useState<
+    "activity-log" | null
+  >(null);
   const [showChatPanel, setShowChatPanel] = useState(true);
   const [workflowProgress, setWorkflowProgress] =
     useState<WorkflowProgressSnapshot | null>(null);

@@ -6,6 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentConfig, AgentInput, AgentOutput } from "./types";
+import { activityLogger } from "../../utils/activityLogger";
 
 /**
  * Agent 基类
@@ -63,6 +64,17 @@ export abstract class BaseAgent {
    * @returns LLM 响应
    */
   protected async callLLM(prompt: string): Promise<Record<string, unknown>> {
+    // 记录Agent调用开始
+    const logId = activityLogger.log({
+      eventType: 'agent_call_start',
+      status: 'pending',
+      title: `调用 ${this.config.name}`,
+      description: `提示词长度: ${prompt.length} 字符`,
+      metadata: { agentId: this.config.id },
+    });
+
+    const startTime = Date.now();
+
     try {
       // 调用后端 LLM 服务
       const response = await invoke<string>("agent_chat", {
@@ -72,9 +84,27 @@ export abstract class BaseAgent {
         temperature: this.config.temperature,
       });
 
+      const duration = Date.now() - startTime;
+
+      // 记录Agent调用成功
+      activityLogger.updateLog(logId, {
+        status: 'success',
+        duration,
+        description: `响应长度: ${response.length} 字符，耗时: ${(duration / 1000).toFixed(1)}s`,
+      });
+
       // 尝试解析 JSON 响应
       return this.parseResponse(response);
     } catch (error) {
+      const duration = Date.now() - startTime;
+
+      // 记录Agent调用失败
+      activityLogger.updateLog(logId, {
+        status: 'error',
+        duration,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
       console.error(`[${this.config.id}] LLM 调用失败:`, error);
       throw error;
     }

@@ -4,15 +4,17 @@ import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
 import path from "path";
 import { fileURLToPath } from "url";
-import { readFileSync } from "fs";
+import { readWorkspaceAppVersion } from "./scripts/app-version.mjs";
 
 // ES 模块中获取 __dirname 的方式
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const packageJson = JSON.parse(
-  readFileSync(path.resolve(__dirname, "./package.json"), "utf-8"),
-) as { version?: string };
+const cargoWorkspaceVersion = readWorkspaceAppVersion(__dirname);
 const appVersion =
-  process.env.VITE_APP_VERSION?.trim() || packageJson.version || "unknown";
+  process.env.VITE_APP_VERSION?.trim() || cargoWorkspaceVersion || "unknown";
+
+if (!process.env.VITE_APP_VERSION && cargoWorkspaceVersion) {
+  process.env.VITE_APP_VERSION = cargoWorkspaceVersion;
+}
 
 // 获取 Tauri mock 目录路径
 const tauriMockDir = path.resolve(__dirname, "./src/lib/tauri-mock");

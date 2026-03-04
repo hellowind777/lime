@@ -131,6 +131,16 @@ interface HintRouteItem {
   model: string;
 }
 
+export interface InputbarToolStates {
+  webSearch: boolean;
+  thinking: boolean;
+}
+
+const DEFAULT_INPUTBAR_TOOL_STATES: InputbarToolStates = {
+  webSearch: false,
+  thinking: false,
+};
+
 interface InputbarProps {
   input: string;
   setInput: (value: string) => void;
@@ -176,6 +186,8 @@ interface InputbarProps {
   setExecutionStrategy?: (
     strategy: "react" | "code_orchestrated" | "auto",
   ) => void;
+  toolStates?: Partial<InputbarToolStates>;
+  onToolStatesChange?: (states: InputbarToolStates) => void;
   activeTheme?: string;
   onManageProviders?: () => void;
 }
@@ -205,10 +217,17 @@ export const Inputbar: React.FC<InputbarProps> = ({
   setModel,
   executionStrategy,
   setExecutionStrategy,
+  toolStates,
+  onToolStatesChange,
   activeTheme,
   onManageProviders,
 }) => {
-  const [activeTools, setActiveTools] = useState<Record<string, boolean>>({});
+  const [localActiveTools, setLocalActiveTools] = useState<
+    Record<string, boolean>
+  >({});
+  const [localToolStates, setLocalToolStates] = useState<InputbarToolStates>(
+    DEFAULT_INPUTBAR_TOOL_STATES,
+  );
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const { activeSkill, setActiveSkill, clearActiveSkill } = useActiveSkill();
@@ -219,6 +238,31 @@ export const Inputbar: React.FC<InputbarProps> = ({
   const [showHintPopup, setShowHintPopup] = useState(false);
   const [hintRoutes, setHintRoutes] = useState<HintRouteItem[]>([]);
   const [hintIndex, setHintIndex] = useState(0);
+
+  const webSearchEnabled =
+    toolStates?.webSearch ?? localToolStates.webSearch;
+  const thinkingEnabled = toolStates?.thinking ?? localToolStates.thinking;
+
+  const activeTools = useMemo<Record<string, boolean>>(
+    () => ({
+      ...localActiveTools,
+      web_search: webSearchEnabled,
+      thinking: thinkingEnabled,
+    }),
+    [localActiveTools, thinkingEnabled, webSearchEnabled],
+  );
+
+  const updateToolStates = useCallback(
+    (next: InputbarToolStates) => {
+      setLocalToolStates((prev) => ({
+        webSearch: toolStates?.webSearch ?? next.webSearch ?? prev.webSearch,
+        thinking: toolStates?.thinking ?? next.thinking ?? prev.thinking,
+      }));
+      onToolStatesChange?.(next);
+      return next;
+    },
+    [onToolStatesChange, toolStates?.thinking, toolStates?.webSearch],
+  );
 
   useEffect(() => {
     safeInvoke<HintRouteItem[]>("get_hint_routes")
@@ -275,16 +319,24 @@ export const Inputbar: React.FC<InputbarProps> = ({
   const handleToolClick = useCallback(
     (tool: string) => {
       switch (tool) {
-        case "thinking":
-        case "web_search":
-          setActiveTools((prev) => {
-            const newState = { ...prev, [tool]: !prev[tool] };
-            toast.info(
-              `${tool === "thinking" ? "深度思考" : "联网搜索"}${newState[tool] ? "已开启" : "已关闭"}`,
-            );
-            return newState;
+        case "thinking": {
+          const nextThinking = !thinkingEnabled;
+          updateToolStates({
+            webSearch: webSearchEnabled,
+            thinking: nextThinking,
           });
+          toast.info(`深度思考${nextThinking ? "已开启" : "已关闭"}`);
           break;
+        }
+        case "web_search": {
+          const nextWebSearch = !webSearchEnabled;
+          updateToolStates({
+            webSearch: nextWebSearch,
+            thinking: thinkingEnabled,
+          });
+          toast.info(`联网搜索${nextWebSearch ? "已开启" : "已关闭"}`);
+          break;
+        }
         case "execution_strategy":
           if (setExecutionStrategy) {
             const strategyOrder: Array<
@@ -298,16 +350,16 @@ export const Inputbar: React.FC<InputbarProps> = ({
             setExecutionStrategy(nextStrategy);
             toast.info(
               nextStrategy === "react"
-                ? "执行模式：ReAct（需确认）"
+                ? "执行模式：ReAct"
                 : nextStrategy === "code_orchestrated"
-                  ? "执行模式：编排（需确认）"
-                  : "执行模式：Auto（工具自动确认）",
+                  ? "执行模式：Plan"
+                  : "执行模式：Auto",
             );
             break;
           }
-          setActiveTools((prev) => {
+          setLocalActiveTools((prev) => {
             const enabled = !prev["execution_strategy"];
-            toast.info(`编排模式${enabled ? "已开启" : "已关闭"}`);
+            toast.info(`Plan 模式${enabled ? "已开启" : "已关闭"}`);
             return { ...prev, execution_strategy: enabled };
           });
           break;
@@ -341,10 +393,13 @@ export const Inputbar: React.FC<InputbarProps> = ({
     },
     [
       executionStrategy,
+      thinkingEnabled,
       onClearMessages,
       onToggleCanvas,
       setExecutionStrategy,
       setInput,
+      updateToolStates,
+      webSearchEnabled,
       isFullscreen,
     ],
   );
@@ -450,8 +505,8 @@ export const Inputbar: React.FC<InputbarProps> = ({
 
   const handleSend = useCallback(() => {
     if (!input.trim() && pendingImages.length === 0) return;
-    const webSearch = activeTools["web_search"] || false;
-    const thinking = activeTools["thinking"] || false;
+    const webSearch = webSearchEnabled;
+    const thinking = thinkingEnabled;
     let strategy =
       executionStrategy ||
       (activeTools["execution_strategy"] ? "code_orchestrated" : "react");
@@ -474,7 +529,17 @@ export const Inputbar: React.FC<InputbarProps> = ({
     );
     setPendingImages([]);
     clearActiveSkill();
-  }, [activeSkill, activeTools, clearActiveSkill, executionStrategy, input, onSend, pendingImages]);
+  }, [
+    activeSkill,
+    activeTools,
+    clearActiveSkill,
+    executionStrategy,
+    input,
+    onSend,
+    pendingImages,
+    thinkingEnabled,
+    webSearchEnabled,
+  ]);
 
   const handleToggleTaskFiles = useCallback(() => {
     onToggleTaskFiles?.();
@@ -485,7 +550,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
     resolvedExecutionStrategy === "auto"
       ? "Auto"
       : resolvedExecutionStrategy === "code_orchestrated"
-        ? "编排"
+        ? "Plan"
         : "ReAct";
 
   const inputAdapter = useMemo(
@@ -667,19 +732,19 @@ export const Inputbar: React.FC<InputbarProps> = ({
                 <SelectItem value="react">
                   <div className="flex items-center gap-2 whitespace-nowrap">
                     <Code2 className="w-3.5 h-3.5" />
-                    ReAct · 需确认
+                    ReAct
                   </div>
                 </SelectItem>
                 <SelectItem value="code_orchestrated">
                   <div className="flex items-center gap-2 whitespace-nowrap">
                     <Code2 className="w-3.5 h-3.5" />
-                    编排 · 需确认
+                    Plan
                   </div>
                 </SelectItem>
                 <SelectItem value="auto">
                   <div className="flex items-center gap-2 whitespace-nowrap">
                     <Code2 className="w-3.5 h-3.5" />
-                    Auto · 自动确认
+                    Auto
                   </div>
                 </SelectItem>
               </SelectContent>

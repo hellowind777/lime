@@ -227,8 +227,8 @@ impl SSHShellProc {
         let mut full_cmd = String::new();
 
         // 如果指定了工作目录，先 cd 到该目录
-        if let Some(cwd) = &block_meta.cmd_cwd {
-            full_cmd.push_str(&format!("cd {} && ", shell_escape(cwd)));
+        if let Some(cwd) = block_meta.sanitized_cmd_cwd() {
+            full_cmd.push_str(&format!("cd {} && ", shell_escape(&cwd)));
         }
 
         // 设置环境变量

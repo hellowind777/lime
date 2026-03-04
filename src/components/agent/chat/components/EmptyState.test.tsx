@@ -56,12 +56,14 @@ vi.mock("@/components/ui/button", () => ({
     children,
     onClick,
     disabled,
+    ...rest
   }: {
     children: React.ReactNode;
     onClick?: () => void;
     disabled?: boolean;
+    [key: string]: unknown;
   }) => (
-    <button type="button" onClick={onClick} disabled={disabled}>
+    <button type="button" onClick={onClick} disabled={disabled} {...rest}>
       {children}
     </button>
   ),
@@ -226,7 +228,11 @@ describe("EmptyState", () => {
 
   it("选择技能后发送应自动附加 skill 前缀，且发送后清除激活技能", async () => {
     const onSend = vi.fn<
-      (value: string, executionStrategy?: "react" | "code_orchestrated" | "auto") => void
+      (
+        value: string,
+        executionStrategy?: "react" | "code_orchestrated" | "auto",
+        images?: unknown[],
+      ) => void
     >();
     const skill: Skill = {
       key: "canvas-design",
@@ -261,11 +267,65 @@ describe("EmptyState", () => {
     act(() => {
       sendButton?.click();
     });
-    expect(onSend).toHaveBeenCalledWith("/canvas-design 帮我设计封面", "react");
+    expect(onSend).toHaveBeenCalledWith(
+      "/canvas-design 帮我设计封面",
+      "react",
+      undefined,
+    );
 
     act(() => {
       sendButton?.click();
     });
-    expect(onSend).toHaveBeenCalledWith("帮我设计封面", "react");
+    expect(onSend).toHaveBeenCalledWith("帮我设计封面", "react", undefined);
+  });
+
+  it("点击地球按钮应切换联网搜索开关", async () => {
+    const onWebSearchEnabledChange = vi.fn<(enabled: boolean) => void>();
+    const container = renderEmptyState({
+      webSearchEnabled: false,
+      onWebSearchEnabledChange,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const globeToggle = container.querySelector(
+      'button[title="开启联网搜索"]',
+    ) as HTMLButtonElement | null;
+    expect(globeToggle).toBeTruthy();
+
+    act(() => {
+      globeToggle?.click();
+    });
+
+    expect(onWebSearchEnabledChange).toHaveBeenCalledWith(true);
+  });
+
+  it("通用主题工具栏应包含附件和深度思考开关", async () => {
+    const onThinkingEnabledChange = vi.fn<(enabled: boolean) => void>();
+    const container = renderEmptyState({
+      activeTheme: "general",
+      thinkingEnabled: false,
+      onThinkingEnabledChange,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const attachButton = container.querySelector(
+      'button[title="上传文件"]',
+    ) as HTMLButtonElement | null;
+    expect(attachButton).toBeTruthy();
+
+    const thinkingButton = container.querySelector(
+      'button[title="开启深度思考"]',
+    ) as HTMLButtonElement | null;
+    expect(thinkingButton).toBeTruthy();
+
+    act(() => {
+      thinkingButton?.click();
+    });
+
+    expect(onThinkingEnabledChange).toHaveBeenCalledWith(true);
   });
 });

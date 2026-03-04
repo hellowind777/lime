@@ -37,9 +37,11 @@ import {
   RotateCcw,
   Play,
   AlertCircle,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePosterWorkflow } from "@/hooks/usePosterWorkflow";
+import { ActivityLogList } from "@/components/content-creator/components/ActivityLog";
 import type {
   WorkflowTemplate,
   WorkflowStep,
@@ -382,6 +384,8 @@ export function PosterWorkflowPanel({
 
   // 表单数据
   const [formData, setFormData] = useState<Record<string, unknown>>({});
+  // 活动日志面板展开状态
+  const [showActivityLog, setShowActivityLog] = useState(false);
 
   // 处理表单变更
   const handleFormChange = useCallback((key: string, value: unknown) => {
@@ -490,56 +494,83 @@ export function PosterWorkflowPanel({
             <Progress value={progress} className="h-2" />
           </div>
           <span className="text-sm text-muted-foreground">{progress}%</span>
+          {/* 活动日志切换按钮 */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowActivityLog(!showActivityLog)}
+          >
+            <FileText className="h-4 w-4 mr-1" />
+            {showActivityLog ? '隐藏日志' : '活动日志'}
+          </Button>
         </div>
       </div>
 
-      {/* 步骤导航 */}
-      <ScrollArea className="w-full">
-        <StepNavigation
-          steps={currentWorkflow.steps}
-          currentIndex={currentStepIndex}
-          getStatus={getStepStatus}
-          onStepClick={goToStep}
-        />
-      </ScrollArea>
+      {/* 主内容区域 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* 工作流内容 */}
+        <div className={cn(
+          "space-y-4",
+          showActivityLog ? "lg:col-span-2" : "lg:col-span-3"
+        )}>
+          {/* 步骤导航 */}
+          <ScrollArea className="w-full">
+            <StepNavigation
+              steps={currentWorkflow.steps}
+              currentIndex={currentStepIndex}
+              getStatus={getStepStatus}
+              onStepClick={goToStep}
+            />
+          </ScrollArea>
 
-      {/* 当前步骤内容 */}
-      {currentStep && (
-        <StepContentPanel
-          step={currentStep}
-          formData={formData}
-          onFormChange={handleFormChange}
-          onExecute={handleExecute}
-          onSkip={handleSkip}
-          isExecuting={isExecuting}
-        />
-      )}
+          {/* 当前步骤内容 */}
+          {currentStep && (
+            <StepContentPanel
+              step={currentStep}
+              formData={formData}
+              onFormChange={handleFormChange}
+              onExecute={handleExecute}
+              onSkip={handleSkip}
+              isExecuting={isExecuting}
+            />
+          )}
 
-      {/* 导航按钮 */}
-      <div className="flex items-center justify-between">
-        <Button
-          variant="outline"
-          onClick={goToPreviousStep}
-          disabled={currentStepIndex === 0}
-        >
-          <ChevronLeft className="h-4 w-4 mr-1" />
-          上一步
-        </Button>
-        <Button variant="ghost" onClick={resetWorkflow}>
-          <RotateCcw className="h-4 w-4 mr-1" />
-          重置
-        </Button>
-        <Button
-          variant="outline"
-          onClick={goToNextStep}
-          disabled={
-            getStepStatus(currentStep?.id || "") !== "completed" &&
-            getStepStatus(currentStep?.id || "") !== "skipped"
-          }
-        >
-          下一步
-          <ChevronRight className="h-4 w-4 ml-1" />
-        </Button>
+          {/* 导航按钮 */}
+          <div className="flex items-center justify-between">
+            <Button
+              variant="outline"
+              onClick={goToPreviousStep}
+              disabled={currentStepIndex === 0}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" />
+              上一步
+            </Button>
+            <Button variant="ghost" onClick={resetWorkflow}>
+              <RotateCcw className="h-4 w-4 mr-1" />
+              重置
+            </Button>
+            <Button
+              variant="outline"
+              onClick={goToNextStep}
+              disabled={
+                getStepStatus(currentStep?.id || "") !== "completed" &&
+                getStepStatus(currentStep?.id || "") !== "skipped"
+              }
+            >
+              下一步
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+        </div>
+
+        {/* 活动日志面板 */}
+        {showActivityLog && (
+          <div className="lg:col-span-1">
+            <Card className="h-[600px]">
+              <ActivityLogList />
+            </Card>
+          </div>
+        )}
       </div>
     </div>
   );

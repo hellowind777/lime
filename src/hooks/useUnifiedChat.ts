@@ -271,7 +271,11 @@ export function useUnifiedChat(
 
   /** 发送消息 */
   const sendMessage = useCallback(
-    async (content: string, images?: ImageInput[]): Promise<void> => {
+    async (
+      content: string,
+      images?: ImageInput[],
+      webSearch?: boolean,
+    ): Promise<void> => {
       if (!content.trim() && (!images || images.length === 0)) return;
 
       let activeSessionId = session?.id;
@@ -327,21 +331,12 @@ export function useUnifiedChat(
 
         unlistenRef.current = unlisten;
 
-        // 构建发送的消息内容
-        let messageToSend = content.trim();
-
-        // 如果有 systemPrompt 且是第一条消息，注入到消息前面
-        const isFirstMessage =
-          messages.filter((m) => m.role === "user").length === 0;
-        if (systemPrompt && isFirstMessage) {
-          messageToSend = `${systemPrompt}\n\n---\n\n用户请求：${messageToSend}`;
-        }
-
         // 发送消息
         await chatApi.sendMessage({
           sessionId: activeSessionId,
-          message: messageToSend,
+          message: content.trim(),
           eventName,
+          webSearch,
           images: images?.map((img) => ({
             data: img.data,
             media_type: img.mediaType,
@@ -374,7 +369,7 @@ export function useUnifiedChat(
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [session?.id, messages, systemPrompt, createSession, onError],
+    [session?.id, createSession, onError],
   );
 
   /** 处理流式事件 */

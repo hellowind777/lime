@@ -11,6 +11,7 @@ import type {
   AgentProgressCallback,
   PosterAgentId,
 } from "./base/types";
+import { activityLogger } from "../utils/activityLogger";
 
 /**
  * 海报 Agent 调度器
@@ -31,6 +32,15 @@ export class PosterAgentScheduler {
     initialInput: AgentInput,
     onProgress?: AgentProgressCallback,
   ): Promise<Map<PosterAgentId, AgentOutput>> {
+    // 记录工作流开始
+    activityLogger.log({
+      eventType: 'workflow_start',
+      status: 'success',
+      title: '开始执行工作流',
+      description: `共 ${stages.length} 个阶段`,
+      metadata: { stages },
+    });
+
     const results = new Map<PosterAgentId, AgentOutput>();
     let currentInput = initialInput;
 
@@ -68,6 +78,14 @@ export class PosterAgentScheduler {
         onProgress?.(agentId, -1);
       }
     }
+
+    // 记录工作流完成
+    activityLogger.log({
+      eventType: 'workflow_complete',
+      status: 'success',
+      title: '工作流执行完成',
+      description: `所有 ${stages.length} 个阶段已完成`,
+    });
 
     return results;
   }

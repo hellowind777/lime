@@ -757,7 +757,7 @@ impl WSLShellProc {
         if let Some(ref path) = opts.initial_path {
             cmd.arg("--cd");
             cmd.arg(path);
-        } else if let Some(ref cwd) = block_meta.cmd_cwd {
+        } else if let Some(cwd) = block_meta.sanitized_cmd_cwd() {
             cmd.arg("--cd");
             cmd.arg(cwd);
         }

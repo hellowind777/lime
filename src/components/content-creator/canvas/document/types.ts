@@ -86,7 +86,7 @@ export interface DocumentToolbarProps {
   onEditToggle: () => void;
   /** 保存回调 */
   onSave: () => void;
-  /** 取消编辑回调 */
+  /** 切换到预览回调（不保存） */
   onCancel: () => void;
   /** 导出回调 */
   onExport: (format: ExportFormat) => void;
@@ -199,6 +199,6 @@ export function createInitialDocumentState(
     platform: "markdown",
     versions: [initialVersion],
     currentVersionId: initialVersion.id,
-    isEditing: false,
+    isEditing: true,
   };
 }

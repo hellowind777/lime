@@ -21,6 +21,7 @@
 //! - 17.10: fish 使用 -C 参数 source 集成脚本
 
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::Arc;
 
@@ -37,6 +38,102 @@ use crate::error::TerminalError;
 use crate::events::{event_names, SessionStatus, TerminalOutputEvent, TerminalStatusEvent};
 use crate::integration::{ShellLaunchBuilder, ShellType};
 use crate::persistence::BlockFile;
+
+fn resolve_default_shell() -> String {
+    let shell_from_env = std::env::var("SHELL").ok().and_then(|value| {
+        let cleaned = value
+            .split('\0')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        (!cleaned.is_empty()).then_some(cleaned)
+    });
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(shell) = shell_from_env {
+            let path = Path::new(&shell);
+            if path.is_absolute() && path.exists() {
+                return shell;
+            }
+        }
+
+        if let Ok(comspec) = std::env::var("COMSPEC") {
+            let cleaned = comspec
+                .split('\0')
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            if !cleaned.is_empty() && Path::new(&cleaned).exists() {
+                return cleaned;
+            }
+        }
+
+        "cmd.exe".to_string()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(shell) = shell_from_env {
+            let path = Path::new(&shell);
+            if path.exists() {
+                return shell;
+            }
+        }
+
+        if Path::new("/bin/bash").exists() {
+            "/bin/bash".to_string()
+        } else {
+            "/bin/sh".to_string()
+        }
+    }
+}
+
+fn resolve_working_dir(cwd: Option<&str>) -> Option<PathBuf> {
+    let dir = cwd?;
+    let cleaned = dir
+        .split('\0')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    let expanded = if cleaned.starts_with("~/") {
+        if let Some(home) = dirs::home_dir() {
+            home.join(&cleaned[2..])
+        } else {
+            PathBuf::from(&cleaned)
+        }
+    } else if cleaned == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from(&cleaned))
+    } else {
+        PathBuf::from(&cleaned)
+    };
+
+    (expanded.exists() && expanded.is_dir()).then_some(expanded)
+}
+
+fn shell_command_flag(shell: &str) -> &'static str {
+    let executable = Path::new(shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(shell)
+        .to_ascii_lowercase();
+
+    if executable == "cmd" || executable == "cmd.exe" {
+        "/C"
+    } else if executable.contains("powershell") || executable == "pwsh" || executable == "pwsh.exe"
+    {
+        "-Command"
+    } else {
+        "-c"
+    }
+}
 
 /// Shell 进程封装
 ///
@@ -199,8 +296,17 @@ impl<E: TerminalEventEmitter> ShellProc<E> {
         };
 
         // 设置工作目录
-        if let Some(cwd) = &block_meta.cmd_cwd {
-            cmd.cwd(cwd);
+        let sanitized_cwd = block_meta.sanitized_cmd_cwd();
+        if let Some(resolved_cwd) = resolve_working_dir(sanitized_cwd.as_deref()) {
+            cmd.cwd(resolved_cwd);
+        } else if let Some(raw_cwd) = block_meta.cmd_cwd.as_deref() {
+            tracing::warn!(
+                "[ShellProc] 工作目录无效或不存在: {:?}, 使用主目录",
+                raw_cwd
+            );
+            if let Some(home) = dirs::home_dir() {
+                cmd.cwd(home);
+            }
         } else if let Some(home) = dirs::home_dir() {
             cmd.cwd(home);
         }
@@ -219,7 +325,7 @@ impl<E: TerminalEventEmitter> ShellProc<E> {
         block_id: &str,
     ) -> Result<CommandBuilder, TerminalError> {
         // 获取用户默认 shell
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let shell = resolve_default_shell();
         tracing::info!("[ShellProc] 使用 shell: {}", shell);
 
         // 获取应用数据目录
@@ -267,9 +373,9 @@ impl<E: TerminalEventEmitter> ShellProc<E> {
         tracing::info!("[ShellProc] 执行命令: {}", cmd_str);
 
         // 使用 shell 执行命令
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+        let shell = resolve_default_shell();
         let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-c");
+        cmd.arg(shell_command_flag(&shell));
 
         // 构建完整命令字符串
         let full_cmd = if let Some(args) = &block_meta.cmd_args {
@@ -554,5 +660,39 @@ impl<E: TerminalEventEmitter> Drop for ShellProc<E> {
         // 确保关闭标志被设置
         self.shutdown_flag.store(true, Ordering::SeqCst);
         tracing::debug!("[ShellProc] 进程已销毁: block_id={}", self.block_id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_default_shell, resolve_working_dir, shell_command_flag};
+
+    #[test]
+    fn resolve_working_dir_should_strip_nul_suffix() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let raw = format!("{}\0", temp_dir.path().to_string_lossy());
+
+        let resolved = resolve_working_dir(Some(&raw));
+
+        assert_eq!(resolved.as_deref(), Some(temp_dir.path()));
+    }
+
+    #[test]
+    fn resolve_working_dir_should_reject_invalid_path() {
+        let resolved = resolve_working_dir(Some("/path/not-exists\0"));
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn resolve_default_shell_should_not_be_empty() {
+        let shell = resolve_default_shell();
+        assert!(!shell.trim().is_empty());
+    }
+
+    #[test]
+    fn shell_command_flag_should_match_common_shells() {
+        assert_eq!(shell_command_flag("cmd.exe"), "/C");
+        assert_eq!(shell_command_flag("pwsh"), "-Command");
+        assert_eq!(shell_command_flag("/bin/bash"), "-c");
     }
 }

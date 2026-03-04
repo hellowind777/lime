@@ -187,7 +187,12 @@ export const DocumentToolbar: React.FC<DocumentToolbarProps> = memo(
         <RightSection>
           {isEditing ? (
             <>
-              <ToolButton onClick={onCancel}>取消</ToolButton>
+              <ToolButton
+                onClick={onCancel}
+                title="放弃未保存修改并切换到预览"
+              >
+                预览
+              </ToolButton>
               <PrimaryButton onClick={onSave}>💾 保存</PrimaryButton>
             </>
           ) : (

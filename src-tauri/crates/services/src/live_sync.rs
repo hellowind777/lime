@@ -86,35 +86,136 @@ fn should_create_backup() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+enum ShellConfigSyntax {
+    Posix,
+    PowerShell,
+}
+
 /// 获取当前 shell 配置文件路径
 /// 优先级：zsh > bash
-fn get_shell_config_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+fn get_shell_config_target(
+) -> Result<(PathBuf, ShellConfigSyntax), Box<dyn std::error::Error + Send + Sync>> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
 
-    // 检查 SHELL 环境变量
-    if let Ok(shell) = std::env::var("SHELL") {
-        if shell.contains("zsh") {
-            let zshrc = home.join(".zshrc");
-            return Ok(zshrc);
-        } else if shell.contains("bash") {
-            let bashrc = home.join(".bashrc");
-            return Ok(bashrc);
+    #[cfg(target_os = "windows")]
+    {
+        let documents = dirs::document_dir().unwrap_or_else(|| home.join("Documents"));
+        let ps7_profile = documents
+            .join("PowerShell")
+            .join("Microsoft.PowerShell_profile.ps1");
+        let winps_profile = documents
+            .join("WindowsPowerShell")
+            .join("Microsoft.PowerShell_profile.ps1");
+
+        if ps7_profile.exists() {
+            return Ok((ps7_profile, ShellConfigSyntax::PowerShell));
         }
+        if winps_profile.exists() {
+            return Ok((winps_profile, ShellConfigSyntax::PowerShell));
+        }
+
+        return Ok((ps7_profile, ShellConfigSyntax::PowerShell));
     }
 
-    // 默认检查文件是否存在
-    let zshrc = home.join(".zshrc");
-    if zshrc.exists() {
-        return Ok(zshrc);
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 检查 SHELL 环境变量
+        if let Ok(shell) = std::env::var("SHELL") {
+            if shell.contains("zsh") {
+                let zshrc = home.join(".zshrc");
+                return Ok((zshrc, ShellConfigSyntax::Posix));
+            } else if shell.contains("bash") {
+                let bashrc = home.join(".bashrc");
+                return Ok((bashrc, ShellConfigSyntax::Posix));
+            }
+        }
+
+        // 默认检查文件是否存在
+        let zshrc = home.join(".zshrc");
+        if zshrc.exists() {
+            return Ok((zshrc, ShellConfigSyntax::Posix));
+        }
+
+        let bashrc = home.join(".bashrc");
+        if bashrc.exists() {
+            return Ok((bashrc, ShellConfigSyntax::Posix));
+        }
+
+        // 如果都不存在，默认使用 .zshrc（macOS 默认）
+        Ok((zshrc, ShellConfigSyntax::Posix))
+    }
+}
+
+fn get_shell_config_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
+    Ok(get_shell_config_target()?.0)
+}
+
+fn escape_shell_env_value(value: &str, syntax: ShellConfigSyntax) -> String {
+    match syntax {
+        ShellConfigSyntax::Posix => value.replace('\\', "\\\\").replace('"', "\\\""),
+        ShellConfigSyntax::PowerShell => value.replace('`', "``").replace('"', "`\""),
+    }
+}
+
+fn format_shell_env_line(key: &str, value: &str, syntax: ShellConfigSyntax) -> String {
+    let escaped_value = escape_shell_env_value(value, syntax);
+    match syntax {
+        ShellConfigSyntax::Posix => format!("export {key}=\"{escaped_value}\""),
+        ShellConfigSyntax::PowerShell => format!("$env:{key} = \"{escaped_value}\""),
+    }
+}
+
+fn parse_key_value(expr: &str) -> Option<(String, String)> {
+    let eq_pos = expr.find('=')?;
+    let key = expr[..eq_pos].trim();
+    if key.is_empty() {
+        return None;
+    }
+    let value = expr[eq_pos + 1..].trim().to_string();
+    Some((key.to_string(), value))
+}
+
+fn unquote_shell_value(raw: &str) -> String {
+    let value = if (raw.starts_with('"') && raw.ends_with('"'))
+        || (raw.starts_with('\'') && raw.ends_with('\''))
+    {
+        raw[1..raw.len() - 1].to_string()
+    } else {
+        raw.to_string()
+    };
+    value.replace("\\\"", "\"").replace("\\\\", "\\")
+}
+
+fn unquote_powershell_value(raw: &str) -> String {
+    let value = if (raw.starts_with('"') && raw.ends_with('"'))
+        || (raw.starts_with('\'') && raw.ends_with('\''))
+    {
+        raw[1..raw.len() - 1].to_string()
+    } else {
+        raw.to_string()
+    };
+    value.replace("`\"", "\"").replace("``", "`")
+}
+
+fn parse_shell_env_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim();
+
+    if let Some(export_line) = trimmed.strip_prefix("export ") {
+        let (key, value) = parse_key_value(export_line)?;
+        return Some((key, unquote_shell_value(&value)));
     }
 
-    let bashrc = home.join(".bashrc");
-    if bashrc.exists() {
-        return Ok(bashrc);
+    if let Some(env_line) = trimmed
+        .strip_prefix("$env:")
+        .or_else(|| trimmed.strip_prefix("$Env:"))
+    {
+        let (key, value) = parse_key_value(env_line)?;
+        return Some((key, unquote_powershell_value(&value)));
     }
 
-    // 如果都不存在，默认使用 .zshrc（macOS 默认）
-    Ok(zshrc)
+    None
 }
 
 /// 将环境变量写入 shell 配置文件
@@ -124,12 +225,16 @@ fn get_shell_config_path() -> Result<PathBuf, Box<dyn std::error::Error + Send +
 pub fn write_env_to_shell_config(
     env_vars: &[(String, String)],
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config_path = get_shell_config_path()?;
+    let (config_path, syntax) = get_shell_config_target()?;
 
     tracing::info!(
         "Writing environment variables to: {}",
         config_path.display()
     );
+
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
 
     // 读取现有配置
     let existing_content = if config_path.exists() {
@@ -170,9 +275,9 @@ pub fn write_env_to_shell_config(
         new_content.push_str("# Do not edit this block manually\n");
 
         for (key, value) in env_vars {
-            // 转义值中的特殊字符
-            let escaped_value = value.replace('\\', "\\\\").replace('"', "\\\"");
-            new_content.push_str(&format!("export {key}=\"{escaped_value}\"\n"));
+            let line = format_shell_env_line(key, value, syntax);
+            new_content.push_str(&line);
+            new_content.push('\n');
         }
 
         new_content.push_str(ENV_BLOCK_END);
@@ -222,22 +327,8 @@ fn read_env_from_shell_config(
             continue;
         }
 
-        if in_proxycast_block && trimmed.starts_with("export ") {
-            // 解析 export KEY="VALUE" 格式
-            let export_line = trimmed.strip_prefix("export ").unwrap_or(trimmed);
-            if let Some(eq_pos) = export_line.find('=') {
-                let key = export_line[..eq_pos].trim().to_string();
-                let value_part = export_line[eq_pos + 1..].trim();
-
-                // 移除引号
-                let value = if (value_part.starts_with('"') && value_part.ends_with('"'))
-                    || (value_part.starts_with('\'') && value_part.ends_with('\''))
-                {
-                    value_part[1..value_part.len() - 1].to_string()
-                } else {
-                    value_part.to_string()
-                };
-
+        if in_proxycast_block {
+            if let Some((key, value)) = parse_shell_env_line(trimmed) {
                 env_vars.push((key, value));
             }
         }
@@ -758,7 +849,16 @@ pub fn read_live_settings_for_display(
             // 获取 shell 配置文件路径
             let shell_config_path = get_shell_config_path()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|_| "~/.zshrc or ~/.bashrc".to_string());
+                .unwrap_or_else(|_| {
+                    #[cfg(target_os = "windows")]
+                    {
+                        "Documents/PowerShell/Microsoft.PowerShell_profile.ps1".to_string()
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        "~/.zshrc or ~/.bashrc".to_string()
+                    }
+                });
 
             // 返回包含两部分的结构
             Ok(json!({

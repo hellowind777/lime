@@ -509,6 +509,7 @@ export async function sendAgentMessageStream(
       images,
       provider_config: provider
         ? {
+            provider_id: provider,
             provider_name: provider,
             model_name: model || "claude-sonnet-4-20250514",
           }
@@ -731,6 +732,7 @@ export interface AsterAgentStatus {
  * Aster Provider 配置
  */
 export interface AsterProviderConfig {
+  provider_id?: string;
   provider_name: string;
   model_name: string;
   api_key?: string;
@@ -824,6 +826,7 @@ export async function sendAsterMessageStream(
   images?: ImageInput[],
   providerConfig?: AsterProviderConfig,
   executionStrategy?: AsterExecutionStrategy,
+  webSearch?: boolean,
 ): Promise<void> {
   const resolvedWorkspaceId = requireWorkspaceId(workspaceId);
 
@@ -836,6 +839,7 @@ export async function sendAsterMessageStream(
       provider_config: providerConfig,
       workspace_id: resolvedWorkspaceId,
       execution_strategy: executionStrategy,
+      web_search: webSearch,
     },
   });
 }

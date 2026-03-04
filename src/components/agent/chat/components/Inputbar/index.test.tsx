@@ -12,9 +12,31 @@ const mockCharacterMention = vi.fn<
     skills?: Skill[];
   }) => React.ReactNode
 >();
+const mockInputbarCore = vi.fn(
+  (props: {
+    onToolClick?: (tool: string) => void;
+    activeTools?: Record<string, boolean>;
+  }) => (
+    <div data-testid="inputbar-core">
+      <button
+        type="button"
+        data-testid="toggle-web-search"
+        onClick={() => props.onToolClick?.("web_search")}
+      >
+        切换联网
+      </button>
+      <span data-testid="web-search-state">
+        {props.activeTools?.web_search ? "on" : "off"}
+      </span>
+    </div>
+  ),
+);
 
 vi.mock("./components/InputbarCore", () => ({
-  InputbarCore: () => <div data-testid="inputbar-core" />,
+  InputbarCore: (props: {
+    onToolClick?: (tool: string) => void;
+    activeTools?: Record<string, boolean>;
+  }) => mockInputbarCore(props),
 }));
 
 vi.mock("./components/CharacterMention", () => ({
@@ -161,5 +183,43 @@ describe("Inputbar", () => {
     expect(mockCharacterMention).toHaveBeenCalledTimes(1);
     expect(mockCharacterMention.mock.calls[0][0].characters).toEqual([]);
     expect(mockCharacterMention.mock.calls[0][0].skills).toEqual([]);
+  });
+
+  it("受控模式下点击联网搜索应透传状态变更", () => {
+    const onToolStatesChange = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <Inputbar
+          input=""
+          setInput={vi.fn()}
+          onSend={vi.fn()}
+          isLoading={false}
+          characters={[]}
+          skills={[]}
+          toolStates={{ webSearch: false, thinking: false }}
+          onToolStatesChange={onToolStatesChange}
+        />,
+      );
+    });
+
+    mountedRoots.push({ root, container });
+
+    const toggleButton = container.querySelector(
+      '[data-testid="toggle-web-search"]',
+    ) as HTMLButtonElement | null;
+    expect(toggleButton).toBeTruthy();
+
+    act(() => {
+      toggleButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onToolStatesChange).toHaveBeenCalledWith({
+      webSearch: true,
+      thinking: false,
+    });
   });
 });

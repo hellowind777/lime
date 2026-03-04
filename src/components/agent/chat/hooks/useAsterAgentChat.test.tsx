@@ -1564,6 +1564,34 @@ describe("useAsterAgentChat 兼容接口", () => {
     }
   });
 
+  it("发送请求时应透传 provider_id，避免 custom provider 类型丢失", async () => {
+    const harness = mountHook("ws-provider-id");
+    const providerId = "custom-a32774c6-6fd0-433b-8b81-e95340e08793";
+    const model = "gpt-5.3-codex";
+
+    try {
+      await flushEffects();
+      act(() => {
+        harness.getValue().setProviderType(providerId);
+        harness.getValue().setModel(model);
+      });
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().triggerAIGuide("检查 provider_id 透传");
+      });
+
+      expect(mockSendAsterMessageStream).toHaveBeenCalledTimes(1);
+      expect(mockSendAsterMessageStream.mock.calls[0]?.[5]).toMatchObject({
+        provider_id: providerId,
+        provider_name: providerId,
+        model_name: model,
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
   it("renameTopic 应调用后端并刷新话题标题", async () => {
     const createdAt = Math.floor(Date.now() / 1000);
     mockListAsterSessions

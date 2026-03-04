@@ -3,7 +3,6 @@ import {
   Paperclip,
   Lightbulb,
   Globe,
-  MessageSquareDiff,
   Code2,
 } from "lucide-react";
 import { ToolButton } from "../styles";
@@ -31,9 +30,9 @@ export const InputbarTools: React.FC<InputbarToolsProps> = ({
 }) => {
   const modeLabel =
     executionStrategy === "auto"
-      ? "Auto（自动确认）"
+      ? "Auto"
       : executionStrategy === "code_orchestrated"
-        ? "编排"
+        ? "Plan"
         : "ReAct";
   const strategyEnabled =
     executionStrategy !== "react" || activeTools["execution_strategy"];
@@ -41,15 +40,6 @@ export const InputbarTools: React.FC<InputbarToolsProps> = ({
   return (
     <TooltipProvider>
       <div className="flex items-center">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <ToolButton onClick={() => onToolClick?.("new_topic")}>
-              <MessageSquareDiff />
-            </ToolButton>
-          </TooltipTrigger>
-          <TooltipContent side="top">新建话题</TooltipContent>
-        </Tooltip>
-
         <Tooltip>
           <TooltipTrigger asChild>
             <ToolButton onClick={() => onToolClick?.("attach")}>

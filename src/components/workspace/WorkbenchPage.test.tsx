@@ -4,7 +4,6 @@ import { useWorkbenchStore } from "@/stores/useWorkbenchStore";
 import {
   clickButtonByText,
   clickButtonByTitle,
-  clickElement,
   cleanupMountedRoots,
   findAsideByClassFragment,
   findButtonByText,
@@ -330,15 +329,6 @@ describe("WorkbenchPage 左侧栏模式行为", () => {
     expect(container.textContent).toContain("当前文稿：文稿A");
     expect(container.textContent).toContain("返回创作视图");
     expect(findInputByPlaceholder(container, "搜索文稿...")).toBeNull();
-
-    const openViewActionsButton = findButtonByTitle(container, "展开视图动作");
-    expect(openViewActionsButton).not.toBeNull();
-
-    clickElement(openViewActionsButton);
-    await flushEffects();
-
-    expect(container.textContent).toContain("视图动作");
-    expect(container.textContent).toContain("前往设置视图");
 
     const backToCreateButton = findButtonByText(container, "返回创作视图", {
       exact: true,

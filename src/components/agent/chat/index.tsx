@@ -74,6 +74,17 @@ import { buildHomeAgentParams } from "@/lib/workspace/navigation";
 import { LatestRunStatusBadge } from "@/components/execution/LatestRunStatusBadge";
 import { setActiveContentTarget } from "@/lib/activeContentTarget";
 import { recordWorkspaceRepair } from "@/lib/workspaceHealthTelemetry";
+import { useConfiguredProviders } from "@/hooks/useConfiguredProviders";
+import { useProviderModels } from "@/hooks/useProviderModels";
+import {
+  isReasoningModel,
+  resolveBaseModelOnThinkingOff,
+  resolveThinkingModel,
+} from "@/lib/model/thinkingModelResolver";
+import {
+  loadRememberedBaseModel,
+  saveRememberedBaseModel,
+} from "@/lib/model/thinkingBaseModelMemory";
 
 import type { MessageImage } from "./types";
 import type {
@@ -86,6 +97,11 @@ import { getFileToStepMap } from "./utils/workflowMapping";
 import { normalizeProjectId } from "./utils/topicProjectResolution";
 import { resolveTopicSwitchProject } from "./utils/topicProjectSwitch";
 import { getDefaultGuidePromptByTheme } from "./utils/defaultGuidePrompt";
+import {
+  loadChatToolPreferences,
+  saveChatToolPreferences,
+  type ChatToolPreferences,
+} from "./utils/chatToolPreferences";
 
 const SUPPORTED_ENTRY_THEMES: ThemeType[] = [
   "general",
@@ -264,6 +280,7 @@ export function AgentChatPage({
   newChatAt,
   onRecommendationClick: _onRecommendationClick,
   onHasMessagesChange,
+  onSessionChange,
 }: {
   onNavigate?: (page: Page, params?: PageParams) => void;
   projectId?: string;
@@ -285,10 +302,13 @@ export function AgentChatPage({
   newChatAt?: number;
   onRecommendationClick?: (shortLabel: string, fullPrompt: string) => void;
   onHasMessagesChange?: (hasMessages: boolean) => void;
+  onSessionChange?: (sessionId: string | null) => void;
 }) {
   const [showSidebar, setShowSidebar] = useState(true);
   const [input, setInput] = useState("");
   const [selectedText, setSelectedText] = useState("");
+  const [chatToolPreferences, setChatToolPreferences] =
+    useState<ChatToolPreferences>(() => loadChatToolPreferences());
 
   // 内容创作相关状态
   const [activeTheme, setActiveTheme] = useState<string>(
@@ -308,6 +328,10 @@ export function AgentChatPage({
     if (!initialCreationMode) return;
     setCreationMode(initialCreationMode);
   }, [initialCreationMode]);
+
+  useEffect(() => {
+    saveChatToolPreferences(chatToolPreferences);
+  }, [chatToolPreferences]);
 
   // 内部 projectId 状态（当外部未提供时使用）
   const [internalProjectId, setInternalProjectId] = useState<string | null>(
@@ -567,6 +591,19 @@ export function AgentChatPage({
     },
     workspaceId: projectId ?? "",
   });
+  const { providers: configuredProviders } = useConfiguredProviders();
+  const selectedProvider = useMemo(
+    () => configuredProviders.find((provider) => provider.key === providerType),
+    [configuredProviders, providerType],
+  );
+  const { models: providerModels } = useProviderModels(selectedProvider, {
+    returnFullMetadata: true,
+  });
+  const thinkingVariantWarnedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    onSessionChange?.(sessionId ?? null);
+  }, [onSessionChange, sessionId]);
 
   // 会话文件持久化 hook
   const {
@@ -1015,6 +1052,8 @@ export function AgentChatPage({
     ) => {
       const sourceText = textOverride ?? input;
       if (!sourceText.trim() && (!images || images.length === 0)) return;
+      const effectiveWebSearch = webSearch ?? chatToolPreferences.webSearch;
+      const effectiveThinking = thinking ?? chatToolPreferences.thinking;
 
       if (!projectId) {
         toast.error("请先选择项目后再开始对话");
@@ -1042,13 +1081,62 @@ export function AgentChatPage({
       setMentionedCharacters([]); // 清空引用的角色
 
       try {
+        const memoryParams = {
+          scope: "aster" as const,
+          workspaceId: projectId,
+          sessionId,
+          providerKey: providerType,
+        };
+        const rememberedBaseModel = loadRememberedBaseModel(memoryParams);
+        let effectiveModel = model;
+
+        if (effectiveThinking) {
+          if (!isReasoningModel(model, providerModels)) {
+            saveRememberedBaseModel({
+              ...memoryParams,
+              modelId: model,
+            });
+          }
+
+          const thinkingResult = resolveThinkingModel({
+            currentModelId: model,
+            models: providerModels,
+          });
+          effectiveModel = thinkingResult.targetModelId;
+
+          if (thinkingResult.switched) {
+            setModel(thinkingResult.targetModelId);
+          } else if (
+            thinkingResult.reason === "no_variant" &&
+            providerModels.length > 0
+          ) {
+            const warnKey = `${providerType}:${model}`;
+            if (!thinkingVariantWarnedRef.current.has(warnKey)) {
+              thinkingVariantWarnedRef.current.add(warnKey);
+              toast.warning("当前 Provider 没有可用的 Thinking 模型，已保持原模型");
+            }
+          }
+        } else {
+          const restoreResult = resolveBaseModelOnThinkingOff({
+            currentModelId: model,
+            models: providerModels,
+            rememberedBaseModel,
+          });
+          effectiveModel = restoreResult.targetModelId;
+
+          if (restoreResult.switched) {
+            setModel(restoreResult.targetModelId);
+          }
+        }
+
         await sendMessage(
           text,
           images || [],
-          webSearch,
-          thinking,
+          effectiveWebSearch,
+          effectiveThinking,
           false,
           sendExecutionStrategy,
+          effectiveModel,
         );
       } catch (error) {
         console.error("[AgentChat] 发送消息失败:", error);
@@ -1057,7 +1145,18 @@ export function AgentChatPage({
         setInput(sourceText);
       }
     },
-    [input, mentionedCharacters, projectId, sendMessage],
+    [
+      chatToolPreferences,
+      input,
+      mentionedCharacters,
+      model,
+      projectId,
+      providerModels,
+      providerType,
+      sendMessage,
+      sessionId,
+      setModel,
+    ],
   );
 
   const handleClearMessages = useCallback(() => {
@@ -1809,7 +1908,12 @@ export function AgentChatPage({
       if (pendingInitialPrompt) {
         console.log("[AgentChatPage] 自动发送首条创作意图消息");
         void (async () => {
-          await handleSend([], false, false, pendingInitialPrompt);
+          await handleSend(
+            [],
+            chatToolPreferences.webSearch,
+            chatToolPreferences.thinking,
+            pendingInitialPrompt,
+          );
           onInitialUserPromptConsumed?.();
         })();
         return;
@@ -1840,6 +1944,7 @@ export function AgentChatPage({
     canvasState,
     initialUserPrompt,
     handleSend,
+    chatToolPreferences,
     onInitialUserPromptConsumed,
   ]);
 
@@ -1969,8 +2074,14 @@ export function AgentChatPage({
           <EmptyState
             input={input}
             setInput={setInput}
-            onSend={(text, sendExecutionStrategy) => {
-              handleSend([], false, false, text, sendExecutionStrategy);
+            onSend={(text, sendExecutionStrategy, images) => {
+              handleSend(
+                images || [],
+                chatToolPreferences.webSearch,
+                chatToolPreferences.thinking,
+                text,
+                sendExecutionStrategy,
+              );
             }}
             providerType={providerType}
             setProviderType={setProviderType}
@@ -1979,6 +2090,20 @@ export function AgentChatPage({
             executionStrategy={executionStrategy}
             setExecutionStrategy={setExecutionStrategy}
             onManageProviders={handleManageProviders}
+            webSearchEnabled={chatToolPreferences.webSearch}
+            onWebSearchEnabledChange={(enabled) =>
+              setChatToolPreferences((prev) => ({
+                ...prev,
+                webSearch: enabled,
+              }))
+            }
+            thinkingEnabled={chatToolPreferences.thinking}
+            onThinkingEnabledChange={(enabled) =>
+              setChatToolPreferences((prev) => ({
+                ...prev,
+                thinking: enabled,
+              }))
+            }
             creationMode={creationMode}
             onCreationModeChange={setCreationMode}
             activeTheme={activeTheme}
@@ -2055,6 +2180,8 @@ export function AgentChatPage({
               onTaskFileClick={handleTaskFileClick}
               characters={projectMemory?.characters || []}
               skills={skills}
+              toolStates={chatToolPreferences}
+              onToolStatesChange={setChatToolPreferences}
               onSelectCharacter={(character) => {
                 setMentionedCharacters((prev) => {
                   // 避免重复添加

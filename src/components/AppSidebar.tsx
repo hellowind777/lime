@@ -27,6 +27,7 @@ import {
   ChevronDown,
   Activity,
   Layers,
+  Terminal,
   LucideIcon,
 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
@@ -276,6 +277,7 @@ const MAIN_MENU_ITEMS: SidebarNavItem[] = [
   },
   { id: "image-gen", label: "插图", icon: Image, page: "image-gen" },
   { id: "batch", label: "批量任务", icon: Layers, page: "batch" },
+  { id: "terminal", label: "终端", icon: Terminal, page: "terminal" },
   { id: "plugins", label: "插件中心", icon: Compass, page: "plugins" },
 ];
 
@@ -377,8 +379,51 @@ const DEFAULT_ENABLED_NAV_ITEMS = [
   "home-general",
   "video",
   "image-gen",
-  "plugins",
 ];
+
+const ALL_NAV_ITEM_IDS = [
+  ...MAIN_MENU_ITEMS.map((item) => item.id),
+  ...FOOTER_MENU_ITEMS.map((item) => item.id),
+];
+
+const LEGACY_DEFAULT_NAV_ITEM_SETS: string[][] = [
+  ["home-general", "video", "image-gen", "plugins"],
+  ["home-general", "video", "image-gen", "terminal", "plugins"],
+];
+
+const normalizeEnabledNavItems = (items: string[]): string[] => {
+  const unique = Array.from(new Set(items));
+  return unique.filter((item) => ALL_NAV_ITEM_IDS.includes(item));
+};
+
+const hasSameMembers = (left: string[], right: string[]): boolean => {
+  if (left.length !== right.length) return false;
+  const rightSet = new Set(right);
+  return left.every((item) => rightSet.has(item));
+};
+
+const isLegacyDefaultEnabledItems = (items: string[]): boolean => {
+  return LEGACY_DEFAULT_NAV_ITEM_SETS.some((legacyItems) =>
+    hasSameMembers(items, legacyItems),
+  );
+};
+
+const resolveEnabledNavItems = (savedItems?: string[]): string[] => {
+  if (!savedItems || savedItems.length === 0) {
+    return [...DEFAULT_ENABLED_NAV_ITEMS];
+  }
+  const normalized = normalizeEnabledNavItems(savedItems);
+  if (isLegacyDefaultEnabledItems(normalized)) {
+    return [...DEFAULT_ENABLED_NAV_ITEMS];
+  }
+  const merged = [...normalized];
+  for (const item of DEFAULT_ENABLED_NAV_ITEMS) {
+    if (!merged.includes(item)) {
+      merged.push(item);
+    }
+  }
+  return merged;
+};
 
 function getIconByName(iconName: string): LucideIcon {
   const IconComponent = (
@@ -423,17 +468,7 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
       try {
         const config = await getConfig();
         const saved = config.navigation?.enabled_items;
-        if (saved && saved.length > 0) {
-          const merged = [...saved];
-          for (const item of DEFAULT_ENABLED_NAV_ITEMS) {
-            if (!merged.includes(item)) {
-              merged.push(item);
-            }
-          }
-          setEnabledNavItems(merged);
-        } else {
-          setEnabledNavItems(DEFAULT_ENABLED_NAV_ITEMS);
-        }
+        setEnabledNavItems(resolveEnabledNavItems(saved));
 
         const savedThemes = config.content_creator?.enabled_themes;
         if (savedThemes && savedThemes.length > 0) {
@@ -461,6 +496,15 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
 
   const filteredMainMenuItems = useMemo(() => {
     return MAIN_MENU_ITEMS.filter((item) => enabledNavItems.includes(item.id));
+  }, [enabledNavItems]);
+
+  const filteredFooterMenuItems = useMemo(() => {
+    return FOOTER_MENU_ITEMS.filter((item) => {
+      if (item.id === "tools") {
+        return enabledNavItems.includes("tools");
+      }
+      return true;
+    });
   }, [enabledNavItems]);
 
   const filteredThemeMenuItems = useMemo(() => {
@@ -638,7 +682,7 @@ export function AppSidebar({ currentPage, onNavigate }: AppSidebarProps) {
 
       <FooterArea>
         <Section>
-          {FOOTER_MENU_ITEMS.map((item) => (
+          {filteredFooterMenuItems.map((item) => (
             <NavButton
               key={item.id}
               $active={isActive(item)}

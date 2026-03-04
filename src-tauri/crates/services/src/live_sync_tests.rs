@@ -288,6 +288,7 @@ mod tests {
 
     #[cfg(test)]
     mod shell_config_write_tests {
+        use super::*;
 
         /// **Feature: shell-write, Property 1: 特殊字符转义**
         #[test]
@@ -314,13 +315,39 @@ mod tests {
                 );
             }
         }
+
+        #[test]
+        fn test_parse_shell_env_line_supports_posix_export() {
+            let parsed = parse_shell_env_line(r#"export OPENAI_API_KEY="abc123""#)
+                .expect("Should parse posix export line");
+            assert_eq!(parsed.0, "OPENAI_API_KEY");
+            assert_eq!(parsed.1, "abc123");
+        }
+
+        #[test]
+        fn test_parse_shell_env_line_supports_powershell_env() {
+            let parsed = parse_shell_env_line(r#"$env:OPENAI_BASE_URL = "https://example.com""#)
+                .expect("Should parse PowerShell env line");
+            assert_eq!(parsed.0, "OPENAI_BASE_URL");
+            assert_eq!(parsed.1, "https://example.com");
+        }
+
+        #[test]
+        fn test_format_shell_env_line_powershell_style() {
+            let line = format_shell_env_line(
+                "TEST_KEY",
+                r#"value with "quotes""#,
+                ShellConfigSyntax::PowerShell,
+            );
+            assert_eq!(line, "$env:TEST_KEY = \"value with `\"quotes`\"\"");
+        }
     }
 
     // ============================================================================
     // 总结
     // ============================================================================
     //
-    // 本测试模块包含 3 个子模块，共 10 个单元测试：
+    // 本测试模块包含 3 个子模块，共 13 个单元测试：
     //
     // 1. **原子写入测试** (3 个测试)
     //    - 正常写入、备份创建、JSON 往返
@@ -328,8 +355,11 @@ mod tests {
     // 2. **认证冲突清理测试** (5 个测试)
     //    - 单独 TOKEN、单独 KEY、冲突处理、都为空、空值处理
     //
-    // 3. **Shell 配置写入测试** (1 个测试)
+    // 3. **Shell 配置写入测试** (4 个测试)
     //    - 特殊字符转义验证
+    //    - POSIX export 解析
+    //    - PowerShell 环境变量解析
+    //    - PowerShell 写入格式验证
     //
     // **注意**：由于 `sync_claude_settings`、`write_env_to_shell_config` 等函数
     // 依赖于真实的文件系统路径（如 ~/.claude、~/.zshrc），完整的集成测试

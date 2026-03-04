@@ -21,6 +21,7 @@ import {
   type AgentInput,
   type AgentOutput,
 } from "@/components/content-creator/agents";
+import { activityLogger } from "@/components/content-creator/utils/activityLogger";
 
 /**
  * 工作流 Hook 返回值
@@ -144,6 +145,17 @@ export function usePosterWorkflow(): UsePosterWorkflowReturn {
     async (context: WorkflowContext): Promise<AgentOutput | null> => {
       if (!currentStep || !currentWorkflow) return null;
 
+      // 记录步骤开始
+      const logId = activityLogger.log({
+        eventType: 'step_start',
+        status: 'pending',
+        title: `执行步骤: ${currentStep.name}`,
+        description: currentStep.description,
+        metadata: { stepId: currentStep.id },
+      });
+
+      const startTime = Date.now();
+
       setIsExecuting(true);
       updateStepState(currentStep.id, {
         status: "active",
@@ -174,6 +186,8 @@ export function usePosterWorkflow(): UsePosterWorkflowReturn {
           agentInput,
         );
 
+        const duration = Date.now() - startTime;
+
         if (output) {
           // 更新结果
           setResults((prev) => {
@@ -189,14 +203,30 @@ export function usePosterWorkflow(): UsePosterWorkflowReturn {
             result: output,
           });
 
+          // 记录步骤完成
+          activityLogger.updateLog(logId, {
+            status: 'success',
+            duration,
+            description: `步骤完成，耗时: ${(duration / 1000).toFixed(1)}s`,
+          });
+
           callbacks.onStepComplete?.(currentStep, output);
           callbacks.onProgressUpdate?.(progress, currentStep);
         }
 
         return output;
       } catch (error) {
+        const duration = Date.now() - startTime;
         const errorMessage =
           error instanceof Error ? error.message : "Unknown error";
+
+        // 记录步骤失败
+        activityLogger.updateLog(logId, {
+          status: 'error',
+          duration,
+          error: errorMessage,
+        });
+
         updateStepState(currentStep.id, {
           status: "error",
           error: errorMessage,
@@ -220,6 +250,15 @@ export function usePosterWorkflow(): UsePosterWorkflowReturn {
   // 跳过当前步骤
   const skipCurrentStep = useCallback(() => {
     if (!currentStep || !currentStep.optional) return;
+
+    // 记录步骤跳过
+    activityLogger.log({
+      eventType: 'step_skip',
+      status: 'success',
+      title: `跳过步骤: ${currentStep.name}`,
+      description: currentStep.description,
+      metadata: { stepId: currentStep.id },
+    });
 
     updateStepState(currentStep.id, {
       status: "skipped",

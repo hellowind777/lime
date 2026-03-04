@@ -12,6 +12,11 @@ import type {
   StyleRecommendation,
   FabricObject,
 } from "../base/types";
+import {
+  generateTechArticleLayout,
+  generateIndustryInsightLayout,
+  generateDataDrivenLayout,
+} from "./ProfessionalLayoutMethods";
 
 /**
  * 布局生成 Agent
@@ -125,6 +130,39 @@ export class LayoutAgent extends BaseAgent {
 
       case "grid":
         this.generateGridLayout(
+          objects,
+          width,
+          height,
+          layout,
+          colorPalette,
+          typography,
+        );
+        break;
+
+      case "tech-article":
+        generateTechArticleLayout(
+          objects,
+          width,
+          height,
+          layout,
+          colorPalette,
+          typography,
+        );
+        break;
+
+      case "industry-insight":
+        generateIndustryInsightLayout(
+          objects,
+          width,
+          height,
+          layout,
+          colorPalette,
+          typography,
+        );
+        break;
+
+      case "data-driven":
+        generateDataDrivenLayout(
           objects,
           width,
           height,
@@ -325,26 +363,57 @@ export class LayoutAgent extends BaseAgent {
   }
 
   protected buildPrompt(input: AgentInput): string {
-    const { requirement, style, canvasSize } = input.context as {
+    const { requirement, style, canvasSize, contentType } = input.context as {
       requirement?: Record<string, unknown>;
       style?: StyleRecommendation;
       canvasSize?: { width: number; height: number };
+      contentType?: string;
     };
 
     const size = canvasSize || { width: 1080, height: 1440 };
+
+    // 根据内容类型推荐布局
+    const layoutRecommendations: Record<string, string> = {
+      技术分享: `
+推荐布局：
+1. tech-article: 技术文章型（深色背景 + 大标题 + 要点列表）
+2. data-driven: 数据驱动型（数据卡片 + 图表展示）
+3. text-dominant: 文字主导型（强调信息传达）`,
+      行业洞察: `
+推荐布局：
+1. industry-insight: 行业洞察型（年份标签 + 关键词标签 + 数据展示）
+2. data-driven: 数据驱动型（数据卡片 + 图表展示）
+3. tech-article: 技术文章型（深色背景 + 要点列表）`,
+      产品发布: `
+推荐布局：
+1. hero-image: 大图展示型（产品图 + 标题 + 行动号召）
+2. text-dominant: 文字主导型（功能亮点 + 行动号召）
+3. grid: 九宫格型（多功能展示）`,
+      热点借势: `
+推荐布局：
+1. tech-article: 技术文章型（深色背景 + 大标题 + 要点列表）
+2. text-dominant: 文字主导型（强调信息传达）
+3. hero-image: 大图展示型（视觉冲击）`,
+    };
+
+    const layoutGuide =
+      layoutRecommendations[contentType || ""] ||
+      `
+推荐布局：
+1. hero-image: 大图+标题型（突出产品/主视觉）
+2. text-dominant: 文字主导型（强调信息传达）
+3. grid: 九宫格型（展示多个元素）`;
 
     return `你是一个专业的海报设计师。请基于以下需求生成 3 个不同的布局方案：
 
 设计需求:
 ${JSON.stringify(requirement, null, 2)}
 
+内容类型: ${contentType || "未指定"}
 设计风格: ${style?.name || "简约现代"}
 画布尺寸: ${size.width}×${size.height}
 
-请生成 3 个不同类型的布局：
-1. hero-image: 大图+标题型（突出产品/主视觉）
-2. text-dominant: 文字主导型（强调信息传达）
-3. grid: 九宫格型（展示多个元素）
+${layoutGuide}
 
 每个布局包含：
 - 布局类型和名称
@@ -352,21 +421,43 @@ ${JSON.stringify(requirement, null, 2)}
 - 视觉层次顺序
 - 图片/文字/留白占比
 
+## 专业布局类型说明
+
+**tech-article**: 技术文章型
+- 深色背景（#0a1929）
+- 大标题 + 副标题
+- 要点列表（带序号）
+- 科技感装饰元素
+- 适合：技术分享、热点分析
+
+**industry-insight**: 行业洞察型
+- 深色背景（#1a1a2e）
+- 年份标签
+- 关键词标签（如"泡沫"、"落地"、"现状"）
+- 数据展示区域
+- 适合：行业分析、趋势预测
+
+**data-driven**: 数据驱动型
+- 浅色背景 + 顶部色块
+- 数据卡片（用户增长、市场份额等）
+- 图表占位区域
+- 适合：数据报告、成果展示
+
 输出 JSON 格式:
 \`\`\`json
 {
   "layouts": [
     {
-      "type": "hero-image",
-      "name": "大图展示",
-      "description": "以产品大图为主，文字为辅，视觉冲击强",
+      "type": "tech-article",
+      "name": "技术文章型",
+      "description": "深色背景，大标题，要点列表，科技感强",
       "primaryText": "主标题",
       "secondaryText": "副标题",
-      "callToAction": "立即购买",
-      "imageRatio": 0.5,
-      "textRatio": 0.3,
+      "callToAction": "了解更多",
+      "imageRatio": 0.2,
+      "textRatio": 0.6,
       "whiteSpace": 0.2,
-      "hierarchy": ["产品图", "主标题", "副标题", "行动按钮"]
+      "hierarchy": ["主标题", "副标题", "要点列表"]
     }
   ]
 }

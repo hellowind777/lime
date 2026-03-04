@@ -191,6 +191,7 @@ vi.mock("@/components/content-creator/canvas/document", () => ({
     content: "",
     versions: [],
     currentVersionId: "",
+    isEditing: true,
   })),
 }));
 
@@ -565,6 +566,7 @@ describe("AgentChatPage 自动引导", () => {
       false,
       false,
       undefined,
+      expect.any(String),
     );
     expect(onInitialUserPromptConsumed).toHaveBeenCalledTimes(1);
     expect(sharedTriggerAIGuideMock).not.toHaveBeenCalled();

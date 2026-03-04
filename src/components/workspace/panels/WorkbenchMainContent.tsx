@@ -47,6 +47,7 @@ export interface WorkbenchMainContentProps {
   contentCreationModes: Record<string, CreationMode>;
   showChatPanel: boolean;
   onWorkflowProgressChange: (progress: WorkflowProgressSnapshot | null) => void;
+  onChatSessionChange?: (sessionId: string | null) => void;
   activePanelRenderer?: ThemeWorkspaceRenderer;
 }
 
@@ -74,6 +75,7 @@ export function WorkbenchMainContent({
   contentCreationModes,
   showChatPanel,
   onWorkflowProgressChange,
+  onChatSessionChange,
   activePanelRenderer: ActivePanelRenderer,
 }: WorkbenchMainContentProps) {
   if (workspaceMode === "project-management") {
@@ -231,6 +233,7 @@ export function WorkbenchMainContent({
             showChatPanel={showChatPanel}
             hideInlineStepProgress={true}
             onWorkflowProgressChange={onWorkflowProgressChange}
+            onSessionChange={onChatSessionChange}
           />
         </div>
       </div>

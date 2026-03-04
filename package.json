@@ -1,7 +1,7 @@
 {
   "name": "proxycast",
   "private": true,
-  "version": "0.78.0",
+  "version": "0.79.0",
   "type": "module",
   "repository": {
     "type": "git",
@@ -9,9 +9,9 @@
   },
   "homepage": "https://github.com/aiclientproxy/proxycast",
   "scripts": {
-    "predev": "node scripts/ensure-dev-port.mjs",
+    "predev": "npm run verify:app-version && node scripts/ensure-dev-port.mjs",
     "dev": "npx vite",
-    "build": "tsc && vite build",
+    "build": "npm run verify:app-version && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "CARGO_TARGET_DIR=target tauri dev",
@@ -25,6 +25,7 @@
     "detect-translations": "tsx scripts/detect-missing-translations.ts",
     "detect-translations:fix": "tsx scripts/detect-missing-translations.ts --fix",
     "detect-translations:verbose": "tsx scripts/detect-missing-translations.ts --verbose",
+    "verify:app-version": "node scripts/check-app-version-consistency.mjs",
     "ai-verify": "tsx scripts/ai-code-verify.ts",
     "ai-verify:level1": "tsx scripts/ai-code-verify.ts --level 1",
     "ai-verify:level2": "tsx scripts/ai-code-verify.ts --level 2",

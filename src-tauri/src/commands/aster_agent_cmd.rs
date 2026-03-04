@@ -19,6 +19,12 @@ use crate::mcp::{McpManagerState, McpServerConfig};
 use crate::services::execution_tracker_service::{ExecutionTracker, RunFinalizeOptions, RunSource};
 use crate::services::heartbeat_service::HeartbeatServiceState;
 use crate::services::memory_profile_prompt_service::merge_system_prompt_with_memory_profile;
+#[cfg(test)]
+use crate::services::request_tool_policy_prompt_service::REQUEST_TOOL_POLICY_MARKER;
+use crate::services::request_tool_policy_prompt_service::{
+    execute_web_search_preflight_if_needed, merge_system_prompt_with_request_tool_policy,
+    resolve_request_tool_policy, RequestToolPolicy, WebSearchExecutionTracker,
+};
 use crate::services::web_search_prompt_service::merge_system_prompt_with_web_search;
 use crate::services::web_search_runtime_service::apply_web_search_runtime_env;
 use crate::services::workspace_health_service::ensure_workspace_ready_with_auto_relocate;
@@ -46,7 +52,7 @@ use proxycast_agent::event_converter::convert_agent_event;
 use proxycast_services::mcp_service::McpService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -158,6 +164,8 @@ pub struct AsterAgentStatus {
 /// Provider 配置请求
 #[derive(Debug, Deserialize)]
 pub struct ConfigureProviderRequest {
+    #[serde(default)]
+    pub provider_id: Option<String>,
     pub provider_name: String,
     pub model_name: String,
     #[serde(default)]
@@ -310,21 +318,27 @@ pub async fn aster_agent_reset(
 #[derive(Debug, Deserialize)]
 pub struct AsterChatRequest {
     pub message: String,
+    #[serde(alias = "sessionId")]
     pub session_id: String,
+    #[serde(alias = "eventName")]
     pub event_name: String,
     #[serde(default)]
     #[allow(dead_code)]
     pub images: Option<Vec<ImageInput>>,
     /// Provider 配置（可选，如果未配置则使用当前配置）
-    #[serde(default)]
+    #[serde(default, alias = "providerConfig")]
     pub provider_config: Option<ConfigureProviderRequest>,
     /// 项目 ID（可选，用于注入项目上下文到 System Prompt）
-    #[serde(default)]
+    #[serde(default, alias = "projectId")]
     pub project_id: Option<String>,
     /// Workspace ID（必填，用于校验会话与工作区一致性）
+    #[serde(alias = "workspaceId")]
     pub workspace_id: String,
+    /// 是否强制开启联网搜索工具策略
+    #[serde(default, alias = "webSearch")]
+    pub web_search: Option<bool>,
     /// 执行策略（react / code_orchestrated / auto）
-    #[serde(default)]
+    #[serde(default, alias = "executionStrategy")]
     pub execution_strategy: Option<AsterExecutionStrategy>,
 }
 
@@ -395,14 +409,6 @@ fn should_force_react_for_message(message: &str) -> bool {
         "webfetch",
         "web fetch",
         "web_fetch",
-        "联网搜索",
-        "网络搜索",
-        "实时新闻",
-        "最新新闻",
-        "今日要闻",
-        "时事新闻",
-        "breaking news",
-        "news today",
     ];
     resolve_intent_hints("PROXYCAST_FORCE_REACT_HINTS", &default_hints)
         .iter()
@@ -499,9 +505,41 @@ async fn stream_reply_once(
     app: &AppHandle,
     event_name: &str,
     message_text: &str,
+    working_directory: Option<&Path>,
     session_config: aster::agents::SessionConfig,
     cancel_token: CancellationToken,
+    request_tool_policy: &RequestToolPolicy,
 ) -> Result<(), ReplyAttemptError> {
+    let mut web_search_tracker = WebSearchExecutionTracker::default();
+    let preflight = execute_web_search_preflight_if_needed(
+        agent,
+        &session_config.id,
+        message_text,
+        working_directory,
+        Some(cancel_token.clone()),
+        request_tool_policy,
+        &mut web_search_tracker,
+    )
+    .await;
+    match preflight {
+        Ok(preflight_execution) => {
+            for event in preflight_execution.events {
+                if let Err(error) = app.emit(event_name, &event) {
+                    tracing::error!("[AsterAgent] 发送预调用事件失败: {}", error);
+                }
+            }
+        }
+        Err(error) => {
+            return Err(ReplyAttemptError {
+                message: format!(
+                    "{error}\n尝试记录: {}",
+                    web_search_tracker.format_attempts()
+                ),
+                emitted_any: false,
+            });
+        }
+    }
+
     let user_message = Message::user().with_text(message_text);
     let mut stream = agent
         .reply(user_message, session_config, Some(cancel_token))
@@ -522,6 +560,23 @@ async fn stream_reply_once(
                 };
                 let tauri_events = convert_agent_event(agent_event);
                 for tauri_event in tauri_events {
+                    match &tauri_event {
+                        TauriAgentEvent::ToolStart {
+                            tool_name, tool_id, ..
+                        } => web_search_tracker.record_tool_start(
+                            request_tool_policy,
+                            tool_id,
+                            tool_name,
+                        ),
+                        TauriAgentEvent::ToolEnd { tool_id, result } => web_search_tracker
+                            .record_tool_end(
+                                request_tool_policy,
+                                tool_id,
+                                result.success,
+                                result.error.as_deref(),
+                            ),
+                        _ => {}
+                    }
                     if let Err(e) = app.emit(event_name, &tauri_event) {
                         tracing::error!("[AsterAgent] 发送事件失败: {}", e);
                     }
@@ -541,6 +596,15 @@ async fn stream_reply_once(
                 });
             }
         }
+    }
+
+    if let Err(validation_error) =
+        web_search_tracker.validate_web_search_requirement(request_tool_policy)
+    {
+        return Err(ReplyAttemptError {
+            message: validation_error,
+            emitted_any,
+        });
     }
 
     Ok(())
@@ -2082,6 +2146,15 @@ pub async fn aster_agent_chat_stream(
         );
     }
 
+    // 构建请求级工具策略：effective_web_search = request.web_search ?? mode_default(false)
+    let request_tool_policy = resolve_request_tool_policy(request.web_search, false);
+    tracing::info!(
+        "[AsterAgent][WebSearchGuard] session={}, request_web_search={:?}, mode_default_web_search=false, effective_web_search={}",
+        session_id,
+        request.web_search,
+        request_tool_policy.effective_web_search
+    );
+
     // 构建 system_prompt：优先使用项目上下文，其次使用 session 的 system_prompt
     // 同时读取会话已持久化的 execution_strategy
     let (system_prompt, persisted_strategy) = {
@@ -2138,9 +2211,12 @@ pub async fn aster_agent_chat_stream(
             }
         };
 
-        let merged_prompt = merge_system_prompt_with_web_search(
-            merge_system_prompt_with_memory_profile(resolved_prompt, &runtime_config),
-            &runtime_config,
+        let merged_prompt = merge_system_prompt_with_request_tool_policy(
+            merge_system_prompt_with_web_search(
+                merge_system_prompt_with_memory_profile(resolved_prompt, &runtime_config),
+                &runtime_config,
+            ),
+            &request_tool_policy,
         );
 
         (merged_prompt, persisted)
@@ -2176,7 +2252,8 @@ pub async fn aster_agent_chat_stream(
     // 如果提供了 Provider 配置，则配置 Provider
     if let Some(provider_config) = &request.provider_config {
         tracing::info!(
-            "[AsterAgent] 收到 provider_config: provider_name={}, model_name={}, has_api_key={}, base_url={:?}",
+            "[AsterAgent] 收到 provider_config: provider_id={:?}, provider_name={}, model_name={}, has_api_key={}, base_url={:?}",
+            provider_config.provider_id,
             provider_config.provider_name,
             provider_config.model_name,
             provider_config.api_key.is_some(),
@@ -2193,11 +2270,15 @@ pub async fn aster_agent_chat_stream(
         if provider_config.api_key.is_some() {
             state.configure_provider(config, session_id, &db).await?;
         } else {
-            // 没有 api_key，使用凭证池（provider_name 作为 provider_type）
+            // 没有 api_key，使用凭证池（优先 provider_id，其次 provider_name）
+            let provider_selector = provider_config
+                .provider_id
+                .as_deref()
+                .unwrap_or(&provider_config.provider_name);
             state
                 .configure_provider_from_pool(
                     &db,
-                    &provider_config.provider_name,
+                    provider_selector,
                     &provider_config.model_name,
                     session_id,
                 )
@@ -2287,16 +2368,19 @@ pub async fn aster_agent_chat_stream(
                 "event_name": request.event_name.clone(),
                 "execution_strategy": format!("{:?}", effective_strategy).to_lowercase(),
                 "message_length": request.message.chars().count(),
+                "web_search_enabled": request_tool_policy.effective_web_search,
             })),
             RunFinalizeOptions {
                 success_metadata: Some(serde_json::json!({
                     "execution_strategy": format!("{:?}", effective_strategy).to_lowercase(),
                     "workspace_id": workspace_id.clone(),
+                    "web_search_enabled": request_tool_policy.effective_web_search,
                 })),
                 error_code: Some("chat_stream_failed".to_string()),
                 error_metadata: Some(serde_json::json!({
                     "execution_strategy": format!("{:?}", effective_strategy).to_lowercase(),
                     "workspace_id": workspace_id.clone(),
+                    "web_search_enabled": request_tool_policy.effective_web_search,
                 })),
             },
             async {
@@ -2310,8 +2394,10 @@ pub async fn aster_agent_chat_stream(
                     &app,
                     &request.event_name,
                     &request.message,
+                    Some(Path::new(&workspace_root)),
                     build_session_config(),
                     cancel_token.clone(),
+                    &request_tool_policy,
                 )
                 .await;
 
@@ -2341,8 +2427,10 @@ pub async fn aster_agent_chat_stream(
                             &app,
                             &request.event_name,
                             &request.message,
+                            Some(Path::new(&workspace_root)),
                             build_session_config(),
                             cancel_token.clone(),
+                            &request_tool_policy,
                         )
                         .await
                         .map_err(|fallback_err| fallback_err.message)
@@ -2700,6 +2788,20 @@ mod tests {
     }
 
     #[test]
+    fn test_aster_chat_request_deserialize_with_web_search_flag() {
+        let json = r#"{
+            "message": "Hello",
+            "session_id": "test-session",
+            "event_name": "agent_stream",
+            "workspace_id": "workspace-test",
+            "web_search": true
+        }"#;
+
+        let request: AsterChatRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.web_search, Some(true));
+    }
+
+    #[test]
     fn test_aster_execution_strategy_default_is_auto() {
         assert_eq!(
             AsterExecutionStrategy::default(),
@@ -2747,7 +2849,7 @@ mod tests {
     #[test]
     fn test_aster_execution_strategy_code_orchestrated_still_prefers_react_for_web_search() {
         let strategy = AsterExecutionStrategy::CodeOrchestrated
-            .effective_for_message("请联网搜索今天的 AI 新闻并给出来源");
+            .effective_for_message("请使用 WebSearch 工具检索并给出来源");
         assert_eq!(strategy, AsterExecutionStrategy::React);
     }
 
@@ -2756,6 +2858,32 @@ mod tests {
         let strategy = AsterExecutionStrategy::CodeOrchestrated
             .effective_for_message("请必须使用 WebSearch 工具检索，不要用已有知识回答");
         assert_eq!(strategy, AsterExecutionStrategy::React);
+    }
+
+    #[test]
+    fn test_merge_system_prompt_with_request_tool_policy_adds_policy_when_enabled() {
+        let policy = resolve_request_tool_policy(Some(true), false);
+        let merged =
+            merge_system_prompt_with_request_tool_policy(Some("你是助手".to_string()), &policy)
+                .expect("should have merged prompt");
+        assert!(merged.contains(REQUEST_TOOL_POLICY_MARKER));
+        assert!(merged.contains("WebSearch"));
+    }
+
+    #[test]
+    fn test_merge_system_prompt_with_request_tool_policy_keeps_original_when_disabled() {
+        let base = Some("你好".to_string());
+        let policy = resolve_request_tool_policy(Some(false), false);
+        let merged = merge_system_prompt_with_request_tool_policy(base.clone(), &policy);
+        assert_eq!(merged, base);
+    }
+
+    #[test]
+    fn test_merge_system_prompt_with_request_tool_policy_no_duplicate_marker() {
+        let base = Some(format!("{REQUEST_TOOL_POLICY_MARKER}\n已有策略"));
+        let policy = resolve_request_tool_policy(Some(true), false);
+        let merged = merge_system_prompt_with_request_tool_policy(base.clone(), &policy);
+        assert_eq!(merged, base);
     }
 
     #[test]

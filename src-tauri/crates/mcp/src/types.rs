@@ -10,6 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 // ============================================================================
 // 服务器配置和状态
@@ -35,6 +36,29 @@ pub struct McpServerConfig {
 
 fn default_timeout() -> u64 {
     30
+}
+
+impl McpServerConfig {
+    /// 获取清洗后的工作目录（去除 `\0`、首尾空白，并展开 `~`）
+    pub fn sanitized_cwd(&self) -> Option<PathBuf> {
+        let cwd = self.cwd.as_deref()?;
+        let cleaned = cwd.split('\0').next().unwrap_or_default().trim();
+        if cleaned.is_empty() {
+            return None;
+        }
+
+        if cleaned == "~" {
+            return Some(dirs::home_dir().unwrap_or_else(|| PathBuf::from(cleaned)));
+        }
+
+        if cleaned.starts_with("~/") || cleaned.starts_with("~\\") {
+            if let Some(home) = dirs::home_dir() {
+                return Some(home.join(&cleaned[2..]));
+            }
+        }
+
+        Some(PathBuf::from(cleaned))
+    }
 }
 
 /// MCP 服务器信息（包含运行状态）
@@ -257,3 +281,32 @@ use tokio::sync::Mutex;
 ///
 /// 使用 Arc<Mutex<McpClientManager>> 包装，支持跨线程共享和异步访问。
 pub type McpManagerState = Arc<Mutex<super::manager::McpClientManager>>;
+
+#[cfg(test)]
+mod tests {
+    use super::McpServerConfig;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn sample_config(cwd: Option<String>) -> McpServerConfig {
+        McpServerConfig {
+            command: "npx".to_string(),
+            args: vec!["-y".to_string(), "some-server".to_string()],
+            env: HashMap::new(),
+            cwd,
+            timeout: 30,
+        }
+    }
+
+    #[test]
+    fn sanitized_cwd_should_strip_nul_suffix() {
+        let config = sample_config(Some(" /tmp/demo\0ignored ".to_string()));
+        assert_eq!(config.sanitized_cwd(), Some(PathBuf::from("/tmp/demo")));
+    }
+
+    #[test]
+    fn sanitized_cwd_should_reject_empty_value() {
+        let config = sample_config(Some(" \0 ".to_string()));
+        assert!(config.sanitized_cwd().is_none());
+    }
+}

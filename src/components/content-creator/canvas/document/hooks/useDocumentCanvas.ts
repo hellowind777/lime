@@ -4,7 +4,7 @@
  * @module components/content-creator/canvas/document/hooks/useDocumentCanvas
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import type {
   DocumentCanvasState,
   DocumentVersion,
@@ -22,7 +22,13 @@ export function useDocumentCanvas(initialContent: string = "") {
   );
 
   // 编辑中的内容（未保存）
-  const [editingContent, setEditingContent] = useState<string>("");
+  const [editingContent, setEditingContent] = useState<string>(initialContent);
+
+  useEffect(() => {
+    if (state.isEditing) {
+      setEditingContent(state.content);
+    }
+  }, [state.content, state.currentVersionId, state.isEditing]);
 
   /**
    * 当前版本
@@ -70,6 +76,9 @@ export function useDocumentCanvas(initialContent: string = "") {
     (versionId: string) => {
       const version = state.versions.find((v) => v.id === versionId);
       if (version) {
+        if (state.isEditing) {
+          setEditingContent(version.content);
+        }
         setState((prev) => ({
           ...prev,
           content: version.content,
@@ -77,7 +86,7 @@ export function useDocumentCanvas(initialContent: string = "") {
         }));
       }
     },
-    [state.versions],
+    [state.isEditing, state.versions],
   );
 
   /**
@@ -92,10 +101,9 @@ export function useDocumentCanvas(initialContent: string = "") {
   }, [state.content]);
 
   /**
-   * 退出编辑模式（不保存）
+   * 切换到预览模式（不保存）
    */
   const cancelEditing = useCallback(() => {
-    setEditingContent("");
     setState((prev) => ({
       ...prev,
       isEditing: false,
@@ -109,11 +117,11 @@ export function useDocumentCanvas(initialContent: string = "") {
     if (editingContent !== state.content) {
       updateContent(editingContent, "手动编辑");
     }
-    setEditingContent("");
     setState((prev) => ({
       ...prev,
-      isEditing: false,
+      isEditing: true,
     }));
+    setEditingContent(editingContent);
   }, [editingContent, state.content, updateContent]);
 
   /**

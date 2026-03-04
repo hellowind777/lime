@@ -44,6 +44,38 @@ pub struct ConnectionTestResult {
 mod tests {
     use super::ApiKeyProviderService;
     use proxycast_core::database::dao::api_key_provider::ApiProviderType;
+    use proxycast_core::database::init_database;
+    use rusqlite::OptionalExtension;
+
+    fn resolve_real_codex_provider_id(
+        db: &proxycast_core::database::DbConnection,
+    ) -> Result<String, String> {
+        if let Ok(explicit) = std::env::var("PROXYCAST_REAL_PROVIDER_ID") {
+            let trimmed = explicit.trim();
+            if !trimmed.is_empty() {
+                return Ok(trimmed.to_string());
+            }
+        }
+
+        let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+        conn.query_row(
+            r#"
+            SELECT p.id
+            FROM api_key_providers p
+            JOIN api_keys k ON k.provider_id = p.id
+            WHERE p.enabled = 1
+              AND k.enabled = 1
+              AND p.type = 'codex'
+            ORDER BY p.updated_at DESC
+            LIMIT 1
+            "#,
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|e| format!("查询 Codex Provider 失败: {e}"))?
+        .ok_or_else(|| "未找到可用的 Codex Provider，请先在设置中配置并启用".to_string())
+    }
 
     #[test]
     fn test_build_codex_responses_request_input_list() {
@@ -100,6 +132,38 @@ data: [DONE]\n";
 
         let none = ApiKeyProviderService::pick_test_model(None, &[], &[]);
         assert!(none.is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "真实联网测试：设置 PROXYCAST_REAL_API_TEST=1 后执行"]
+    async fn test_real_codex_provider_chat_gpt_5_3_codex() {
+        if std::env::var("PROXYCAST_REAL_API_TEST").ok().as_deref() != Some("1") {
+            return;
+        }
+
+        let db = init_database().expect("初始化数据库失败");
+        let service = ApiKeyProviderService::new();
+        let provider_id = resolve_real_codex_provider_id(&db).expect("解析 Codex Provider 失败");
+        let model =
+            std::env::var("PROXYCAST_REAL_MODEL").unwrap_or_else(|_| "gpt-5.3-codex".to_string());
+        let prompt = std::env::var("PROXYCAST_REAL_PROMPT")
+            .unwrap_or_else(|_| "请仅回复 REAL_OK".to_string());
+
+        let result = service
+            .test_chat(&db, &provider_id, Some(model.clone()), prompt)
+            .await
+            .expect("真实调用失败");
+
+        assert!(
+            result.success,
+            "真实调用未成功: provider_id={provider_id}, model={model}, error={:?}, raw={:?}",
+            result.error, result.raw
+        );
+        assert!(
+            result.error.is_none(),
+            "真实调用返回错误: {:?}",
+            result.error
+        );
     }
 }
 

@@ -4,7 +4,13 @@
  * @module components/content-creator/canvas/document/DocumentCanvas
  */
 
-import React, { memo, useMemo, useCallback, useState, useEffect } from "react";
+import React, {
+  memo,
+  useMemo,
+  useCallback,
+  useState,
+  useEffect,
+} from "react";
 import styled from "styled-components";
 import { invoke } from "@tauri-apps/api/core";
 import type { DocumentCanvasProps, ExportFormat, PlatformType } from "./types";
@@ -118,7 +124,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
     contentId,
     autoImageTopic,
   }) => {
-    const [editingContent, setEditingContent] = useState("");
+    const [editingContent, setEditingContent] = useState(state.content);
     const [toastMessage, setToastMessage] = useState("");
     const [showToast, setShowToast] = useState(false);
     const [autoInsertLoading, setAutoInsertLoading] = useState(false);
@@ -126,6 +132,9 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
       requestId: string;
       image: InsertableImage;
     } | null>(null);
+    const [allowPreview, setAllowPreview] = useState(false);
+    const currentDocumentId = state.versions[0]?.id || state.currentVersionId;
+    const isEditing = state.isEditing || !allowPreview;
 
     // 当前版本
     const currentVersion = useMemo(() => {
@@ -136,7 +145,24 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
 
     useEffect(() => {
       onSelectionTextChange?.("");
-    }, [state.currentVersionId, state.isEditing, onSelectionTextChange]);
+    }, [state.currentVersionId, isEditing, onSelectionTextChange]);
+
+    useEffect(() => {
+      if (!allowPreview && !state.isEditing) {
+        setEditingContent(state.content);
+        onStateChange({ ...state, isEditing: true });
+      }
+    }, [allowPreview, onStateChange, state]);
+
+    useEffect(() => {
+      setAllowPreview(false);
+    }, [currentDocumentId]);
+
+    useEffect(() => {
+      if (isEditing) {
+        setEditingContent(state.content);
+      }
+    }, [state.content, state.currentVersionId, isEditing]);
 
     // 显示提示
     const showMessage = useCallback((message: string) => {
@@ -187,7 +213,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
           return;
         }
 
-        if (state.isEditing) {
+        if (isEditing) {
           setPendingEditorInsert({
             requestId: request.requestId,
             image: request.image,
@@ -208,7 +234,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
         });
         ackCanvasImageInsertRequest(request.requestId);
       },
-      [appendImageIntoDocument, matchesRequestTarget, showMessage, state.isEditing],
+      [appendImageIntoDocument, isEditing, matchesRequestTarget, showMessage],
     );
 
     useEffect(() => {
@@ -320,8 +346,8 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
       if (autoInsertLoading) {
         return;
       }
-      if (state.isEditing) {
-        showMessage("ℹ️ 请先保存当前编辑，再执行主题配图");
+      if (isEditing) {
+        showMessage("ℹ️ 请先切换到预览模式，再执行主题配图");
         return;
       }
 
@@ -388,6 +414,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
     }, [
       autoImageTopic,
       autoInsertLoading,
+      isEditing,
       onStateChange,
       searchImageWithFallback,
       showMessage,
@@ -399,6 +426,9 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
       (versionId: string) => {
         const version = state.versions.find((v) => v.id === versionId);
         if (version) {
+          if (isEditing) {
+            setEditingContent(version.content);
+          }
           onStateChange({
             ...state,
             content: version.content,
@@ -406,11 +436,12 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
           });
         }
       },
-      [state, onStateChange],
+      [isEditing, state, onStateChange],
     );
 
     // 进入编辑模式
     const handleEditToggle = useCallback(() => {
+      setAllowPreview(false);
       setEditingContent(state.content);
       onStateChange({ ...state, isEditing: true });
     }, [state, onStateChange]);
@@ -429,20 +460,21 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
           content: editingContent,
           versions: [...state.versions, newVersion],
           currentVersionId: newVersion.id,
-          isEditing: false,
+          isEditing: true,
         });
         showMessage("✅ 保存成功");
-      } else {
-        onStateChange({ ...state, isEditing: false });
       }
-      setEditingContent("");
+      setEditingContent(editingContent);
     }, [editingContent, state, onStateChange, showMessage]);
 
-    // 取消编辑
+    // 切换到预览
     const handleCancel = useCallback(() => {
-      setEditingContent("");
+      setAllowPreview(true);
+      if (editingContent !== state.content) {
+        showMessage("ℹ️ 已切换到预览，未保存修改已丢弃");
+      }
       onStateChange({ ...state, isEditing: false });
-    }, [state, onStateChange]);
+    }, [editingContent, onStateChange, showMessage, state]);
 
     // 导出文档
     const handleExport = useCallback(
@@ -504,7 +536,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
           <DocumentToolbar
             currentVersion={currentVersion}
             versions={state.versions}
-            isEditing={state.isEditing}
+            isEditing={isEditing}
             onVersionChange={handleVersionChange}
             onEditToggle={handleEditToggle}
             onSave={handleSave}
@@ -516,7 +548,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
           />
 
           <ContentArea>
-            {state.isEditing ? (
+            {isEditing ? (
               <NotionEditor
                 content={editingContent}
                 onChange={setEditingContent}
@@ -561,7 +593,7 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
             )}
           </ContentArea>
 
-          {!state.isEditing && (
+          {!isEditing && (
             <PlatformTabs
               currentPlatform={state.platform}
               onPlatformChange={handlePlatformChange}

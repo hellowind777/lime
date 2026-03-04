@@ -220,6 +220,7 @@ export interface SendMessageRequest {
   message: string;
   eventName: string;
   images?: Array<{ data: string; media_type: string }>;
+  webSearch?: boolean;
 }
 
 /** 会话响应 */
@@ -372,7 +373,11 @@ export interface UseUnifiedChatReturn {
 
   // 消息操作
   /** 发送消息 */
-  sendMessage: (content: string, images?: ImageInput[]) => Promise<void>;
+  sendMessage: (
+    content: string,
+    images?: ImageInput[],
+    webSearch?: boolean,
+  ) => Promise<void>;
   /** 停止生成 */
   stopGeneration: () => Promise<void>;
   /** 清空消息 */

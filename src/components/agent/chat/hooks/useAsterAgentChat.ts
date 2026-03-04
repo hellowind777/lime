@@ -37,6 +37,7 @@ import {
   type ConfirmResponse,
   type Question,
 } from "../types";
+import { activityLogger } from "@/components/content-creator/utils/activityLogger";
 
 /** 话题信息 */
 export interface Topic {
@@ -642,6 +643,13 @@ const resolveActionPromptKey = (action: ActionRequired): string | null => {
   return null;
 };
 
+const truncateForLog = (text: string, maxLength = 80): string => {
+  const normalized = text.trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength)}...`;
+};
+
 // 音效相关（复用）
 let toolcallAudio: HTMLAudioElement | null = null;
 let typewriterAudio: HTMLAudioElement | null = null;
@@ -895,6 +903,8 @@ const mapProviderName = (providerType: string): string => {
     "deepseek-reasoner": "deepseek",
     // Ollama
     ollama: "ollama",
+    // Codex
+    codex: "codex",
     // OpenRouter
     openrouter: "openrouter",
     // 其他（OpenAI 兼容）
@@ -1365,13 +1375,16 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     async (
       content: string,
       images: MessageImage[],
-      _webSearch?: boolean,
+      webSearch?: boolean,
       _thinking?: boolean,
       skipUserMessage = false,
       executionStrategyOverride?: AsterExecutionStrategy,
+      modelOverride?: string,
     ) => {
       const effectiveExecutionStrategy =
         executionStrategyOverride || executionStrategy;
+      const effectiveProviderType = providerTypeRef.current;
+      const effectiveModel = modelOverride?.trim() || modelRef.current;
       // 助手消息占位符
       const assistantMsgId = crypto.randomUUID();
       const assistantMsg: Message = {
@@ -1402,13 +1415,38 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
       let accumulatedContent = "";
       let unlisten: UnlistenFn | null = null;
+      let requestLogId: string | null = null;
+      let requestStartedAt = 0;
+      let requestFinished = false;
+      const toolLogIdByToolId = new Map<string, string>();
+      const toolStartedAtByToolId = new Map<string, number>();
+      const toolNameByToolId = new Map<string, string>();
+      const actionLoggedKeys = new Set<string>();
 
       try {
         const activeSessionId = await ensureSession();
         if (!activeSessionId) throw new Error("无法创建会话");
         currentStreamingSessionIdRef.current = activeSessionId;
+        const resolvedWorkspaceId = getRequiredWorkspaceId();
 
         const eventName = `aster_stream_${assistantMsgId}`;
+        requestStartedAt = Date.now();
+        requestLogId = activityLogger.log({
+          eventType: "chat_request_start",
+          status: "pending",
+          title: skipUserMessage ? "系统引导请求" : "发送请求",
+          description: `模型: ${effectiveModel} · 策略: ${effectiveExecutionStrategy}`,
+          workspaceId: resolvedWorkspaceId,
+          sessionId: activeSessionId,
+          source: "aster-chat",
+          metadata: {
+            provider: mapProviderName(effectiveProviderType),
+            model: effectiveModel,
+            executionStrategy: effectiveExecutionStrategy,
+            contentLength: content.trim().length,
+            skipUserMessage,
+          },
+        });
 
         const upsertActionRequest = (
           actionData: ActionRequired,
@@ -1510,6 +1548,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
             case "tool_start": {
               playToolcallSound();
+              const startedAt = Date.now();
               const newToolCall = {
                 id: data.tool_id,
                 name: data.tool_name,
@@ -1517,6 +1556,25 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 status: "running" as const,
                 startTime: new Date(),
               };
+              if (!toolLogIdByToolId.has(data.tool_id)) {
+                const toolLogId = activityLogger.log({
+                  eventType: "tool_start",
+                  status: "pending",
+                  title: `调用工具 ${data.tool_name}`,
+                  description: truncateForLog(data.arguments || "等待工具结果"),
+                  workspaceId: resolvedWorkspaceId,
+                  sessionId: activeSessionId,
+                  source: "aster-chat",
+                  correlationId: data.tool_id,
+                  metadata: {
+                    toolId: data.tool_id,
+                    toolName: data.tool_name,
+                  },
+                });
+                toolLogIdByToolId.set(data.tool_id, toolLogId);
+                toolStartedAtByToolId.set(data.tool_id, startedAt);
+                toolNameByToolId.set(data.tool_id, data.tool_name);
+              }
 
               const toolArgs = parseJsonObject(data.arguments);
 
@@ -1588,7 +1646,45 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               break;
             }
 
-            case "tool_end":
+            case "tool_end": {
+              const isSuccess = data.result.success;
+              const eventType = isSuccess ? "tool_complete" : "tool_error";
+              const startedAt = toolStartedAtByToolId.get(data.tool_id);
+              const toolName = toolNameByToolId.get(data.tool_id) || "未知工具";
+              const duration =
+                typeof startedAt === "number"
+                  ? Date.now() - startedAt
+                  : undefined;
+              const toolLogId = toolLogIdByToolId.get(data.tool_id);
+              const outputText =
+                typeof data.result?.output === "string"
+                  ? truncateForLog(data.result.output, 120)
+                  : "";
+
+              if (toolLogId) {
+                activityLogger.updateLog(toolLogId, {
+                  eventType,
+                  status: isSuccess ? "success" : "error",
+                  duration,
+                  description: outputText || (isSuccess ? "工具执行完成" : "工具执行失败"),
+                  error: isSuccess
+                    ? undefined
+                    : outputText || "工具返回失败状态",
+                });
+              } else {
+                activityLogger.log({
+                  eventType,
+                  status: isSuccess ? "success" : "error",
+                  title: `工具 ${toolName}`,
+                  description: outputText || (isSuccess ? "工具执行完成" : "工具执行失败"),
+                  duration,
+                  workspaceId: resolvedWorkspaceId,
+                  sessionId: activeSessionId,
+                  source: "aster-chat",
+                  correlationId: data.tool_id,
+                });
+              }
+
               setMessages((prev) =>
                 prev.map((msg) => {
                   if (msg.id !== assistantMsgId) return msg;
@@ -1640,6 +1736,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 }),
               );
               break;
+            }
 
             case "action_required": {
               const actionType = normalizeActionType(data.action_type);
@@ -1660,6 +1757,29 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 requestedSchema: data.requested_schema,
                 isFallback: false,
               };
+              const actionKey =
+                actionData.requestId ||
+                `${actionData.actionType}:${actionData.prompt || actionData.toolName || ""}`;
+              if (!actionLoggedKeys.has(actionKey)) {
+                actionLoggedKeys.add(actionKey);
+                activityLogger.log({
+                  eventType: "action_required",
+                  status: "success",
+                  title: "等待用户确认",
+                  description:
+                    truncateForLog(actionData.prompt || "", 120) ||
+                    `类型: ${actionData.actionType}`,
+                  workspaceId: resolvedWorkspaceId,
+                  sessionId: activeSessionId,
+                  source: "aster-chat",
+                  correlationId: actionData.requestId,
+                  metadata: {
+                    actionType: actionData.actionType,
+                    toolName: actionData.toolName,
+                    requestId: actionData.requestId,
+                  },
+                });
+              }
 
               if (
                 effectiveExecutionStrategy === "auto" &&
@@ -1718,6 +1838,15 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               break;
 
             case "final_done":
+              if (requestLogId && !requestFinished) {
+                requestFinished = true;
+                activityLogger.updateLog(requestLogId, {
+                  eventType: "chat_request_complete",
+                  status: "success",
+                  duration: Date.now() - requestStartedAt,
+                  description: `请求完成，工具调用 ${toolLogIdByToolId.size} 次`,
+                });
+              }
               setMessages((prev) =>
                 prev.map((msg) =>
                   msg.id === assistantMsgId
@@ -1740,6 +1869,15 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               break;
 
             case "error":
+              if (requestLogId && !requestFinished) {
+                requestFinished = true;
+                activityLogger.updateLog(requestLogId, {
+                  eventType: "chat_request_error",
+                  status: "error",
+                  duration: Date.now() - requestStartedAt,
+                  error: data.message,
+                });
+              }
               if (data.message.includes("429") || data.message.toLowerCase().includes("rate limit")) {
                 toast.warning("请求过于频繁，请稍后重试");
               } else {
@@ -1793,11 +1931,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
         // 构建 Provider 配置
         const providerConfig = {
-          provider_name: mapProviderName(providerType),
-          model_name: model,
+          provider_id: effectiveProviderType,
+          provider_name: mapProviderName(effectiveProviderType),
+          model_name: effectiveModel,
         };
-
-        const resolvedWorkspaceId = getRequiredWorkspaceId();
 
         await sendAsterMessageStream(
           content,
@@ -1807,8 +1944,18 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
           imagesToSend,
           providerConfig,
           effectiveExecutionStrategy,
+          webSearch,
         );
       } catch (error) {
+        if (requestLogId && !requestFinished) {
+          requestFinished = true;
+          activityLogger.updateLog(requestLogId, {
+            eventType: "chat_request_error",
+            status: "error",
+            duration: Date.now() - requestStartedAt,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         console.error("[AsterChat] 发送失败:", error);
         const errMsg =
           error instanceof Error ? error.message : String(error);
@@ -1830,8 +1977,6 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       executionStrategy,
       getRequiredWorkspaceId,
       onWriteFile,
-      providerType,
-      model,
     ],
   );
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useWorkbenchStore } from "@/stores/useWorkbenchStore";
 import {
@@ -251,6 +251,9 @@ export function useWorkbenchController({
     isAgentChatWorkspace,
     hasPrimaryWorkspaceRenderer: Boolean(PrimaryWorkspaceRenderer),
   });
+  const [currentChatSessionId, setCurrentChatSessionId] = useState<string | null>(
+    null,
+  );
 
   const handleEnterWorkspace = useCallback(
     (
@@ -260,6 +263,7 @@ export function useWorkbenchController({
       },
     ) => {
       setSelectedContentId(contentId);
+      setCurrentChatSessionId(null);
       setWorkspaceMode("workspace");
       setActiveWorkspaceView("create");
       setShowChatPanel(options?.showChatPanel ?? true);
@@ -269,6 +273,7 @@ export function useWorkbenchController({
     [
       setActiveRightDrawer,
       setActiveWorkspaceView,
+      setCurrentChatSessionId,
       setLeftSidebarCollapsed,
       setSelectedContentId,
       setShowChatPanel,
@@ -280,6 +285,7 @@ export function useWorkbenchController({
     (projectId: string) => {
       setSelectedProjectId(projectId);
       setContentQuery("");
+      setCurrentChatSessionId(null);
       setWorkspaceMode("workspace");
       setActiveWorkspaceView(themeModule.navigation.defaultView);
       setActiveRightDrawer(null);
@@ -289,6 +295,7 @@ export function useWorkbenchController({
       setActiveRightDrawer,
       setActiveWorkspaceView,
       setContentQuery,
+      setCurrentChatSessionId,
       setLeftSidebarCollapsed,
       setSelectedProjectId,
       setWorkspaceMode,
@@ -420,6 +427,7 @@ export function useWorkbenchController({
     setWorkspaceMode("workspace");
     setActiveWorkspaceView("create");
     setSelectedContentId(null);
+    setCurrentChatSessionId(null);
     setShowChatPanel(true);
     setActiveRightDrawer(null);
     setShowWorkflowRail(false);
@@ -428,6 +436,7 @@ export function useWorkbenchController({
     setActiveWorkspaceView,
     setSelectedContentId,
     setShowChatPanel,
+    setCurrentChatSessionId,
     setShowWorkflowRail,
     setWorkspaceMode,
   ]);
@@ -470,6 +479,8 @@ export function useWorkbenchController({
     setWorkflowProgress,
     showWorkflowRail,
     setShowWorkflowRail,
+    currentChatSessionId,
+    setCurrentChatSessionId,
 
     workspaceMode,
     activeWorkspaceView,

@@ -150,7 +150,11 @@ export interface GeneralChatState {
 
   // ========== 消息操作 ==========
   /** 发送消息 */
-  sendMessage: (content: string, images?: File[]) => Promise<void>;
+  sendMessage: (
+    content: string,
+    images?: File[],
+    webSearch?: boolean,
+  ) => Promise<void>;
   /** 停止生成 */
   stopGeneration: () => void;
   /** 追加流式内容 */
@@ -424,7 +428,11 @@ export const useGeneralChatStore = create<GeneralChatState>()(
 
       // ========== 消息操作实现 ==========
 
-      sendMessage: async (content: string, images?: File[]) => {
+      sendMessage: async (
+        content: string,
+        images?: File[],
+        webSearch?: boolean,
+      ) => {
         const { currentSessionId, messages } = get();
 
         // 验证：空白消息且无图片不发送
@@ -570,6 +578,7 @@ export const useGeneralChatStore = create<GeneralChatState>()(
               toolParameters: {
                 message: content.trim() || "请分析这张图片",
                 hasImages: imageData ? "true" : "false",
+                webSearch: webSearch ? "true" : "false",
               },
               messageCount,
             };
@@ -605,6 +614,7 @@ export const useGeneralChatStore = create<GeneralChatState>()(
             message: messageToSend,
             eventName: `general-chat-stream-${currentSessionId}`,
             images: imageData,
+            web_search: webSearch,
           });
 
           // 如果启用了工作流，执行 Action 阶段
