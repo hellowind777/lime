@@ -109,6 +109,18 @@ pub fn init_database() -> Result<DbConnection, String> {
         }
     }
 
+    // 归一化历史 MCP created_at 字段（TEXT -> INTEGER）
+    match migration::migrate_mcp_created_at_to_integer(&conn) {
+        Ok(count) => {
+            if count > 0 {
+                tracing::info!("[数据库] 已归一化 {} 条 MCP created_at 字段", count);
+            }
+        }
+        Err(e) => {
+            tracing::warn!("[数据库] MCP created_at 归一化失败（非致命）: {}", e);
+        }
+    }
+
     // 执行统一内容系统迁移（创建默认项目，迁移话题）
     // _Requirements: 2.1, 2.2, 2.3, 2.4_
     match migration_v2::migrate_unified_content_system(&conn) {

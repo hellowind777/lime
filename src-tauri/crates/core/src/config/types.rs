@@ -447,6 +447,9 @@ pub struct Config {
     /// 心跳引擎配置
     #[serde(default)]
     pub heartbeat: HeartbeatSettings,
+    /// Gateway 全局配置（隧道/公网接入）
+    #[serde(default)]
+    pub gateway: GatewayConfig,
     /// 渠道配置（Telegram / Discord / 飞书 Bot）
     #[serde(default)]
     pub channels: ChannelsConfig,
@@ -1974,6 +1977,7 @@ impl Default for Config {
             hint_router: HintRouterSettings::default(),
             pairing: PairingSettings::default(),
             heartbeat: HeartbeatSettings::default(),
+            gateway: GatewayConfig::default(),
             channels: ChannelsConfig::default(),
         }
     }
@@ -3130,6 +3134,97 @@ pub struct PairingSettings {
     pub enabled: bool,
 }
 
+// ============ Gateway 配置类型 ============
+
+/// Gateway 全局配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct GatewayConfig {
+    #[serde(default)]
+    pub tunnel: GatewayTunnelConfig,
+}
+
+/// Gateway 隧道配置（用于 webhook 公网回调）
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GatewayTunnelConfig {
+    /// 是否启用隧道能力
+    #[serde(default)]
+    pub enabled: bool,
+    /// provider：cloudflare | ngrok | none
+    #[serde(default = "default_gateway_tunnel_provider")]
+    pub provider: String,
+    /// 模式：managed | external
+    #[serde(default = "default_gateway_tunnel_mode")]
+    pub mode: String,
+    /// 隧道二进制路径（为空则走 PATH）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_path: Option<String>,
+    /// 本地回源 host
+    #[serde(default = "default_gateway_tunnel_local_host")]
+    pub local_host: String,
+    /// 本地回源 port
+    #[serde(default = "default_gateway_tunnel_local_port")]
+    pub local_port: u16,
+    /// 固定公网基础地址（例如 https://bot.example.com）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_base_url: Option<String>,
+    #[serde(default)]
+    pub cloudflare: CloudflareTunnelConfig,
+}
+
+impl Default for GatewayTunnelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: default_gateway_tunnel_provider(),
+            mode: default_gateway_tunnel_mode(),
+            binary_path: None,
+            local_host: default_gateway_tunnel_local_host(),
+            local_port: default_gateway_tunnel_local_port(),
+            public_base_url: None,
+            cloudflare: CloudflareTunnelConfig::default(),
+        }
+    }
+}
+
+/// Cloudflare Tunnel 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct CloudflareTunnelConfig {
+    /// Cloudflare account_id（预留给 API 模式）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// tunnel 名称（cloudflared tunnel create 时使用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel_name: Option<String>,
+    /// tunnel UUID
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnel_id: Option<String>,
+    /// cloudflared 运行 token（推荐）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_token: Option<String>,
+    /// tunnel credentials 文件路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credentials_file: Option<String>,
+    /// 绑定域名（例如 bot.example.com）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_name: Option<String>,
+}
+
+fn default_gateway_tunnel_provider() -> String {
+    "cloudflare".to_string()
+}
+
+fn default_gateway_tunnel_mode() -> String {
+    "managed".to_string()
+}
+
+fn default_gateway_tunnel_local_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_gateway_tunnel_local_port() -> u16 {
+    3000
+}
+
 // ============ 渠道配置类型（Telegram / Discord / 飞书 Bot） ============
 
 /// 渠道配置
@@ -3144,33 +3239,732 @@ pub struct ChannelsConfig {
 }
 
 /// Telegram Bot 配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TelegramBotConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// 兼容旧配置：单账号 Token
     #[serde(default)]
     pub bot_token: String,
+    /// 兼容旧配置：允许用户 ID（迁移时可映射到 allow_from）
     #[serde(default)]
     pub allowed_user_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// 默认账号 ID（多账号启用时）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_account: Option<String>,
+    /// 多账号配置
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub accounts: HashMap<String, TelegramAccountConfig>,
+    /// DM 策略：pairing | allowlist | open | disabled
+    #[serde(default = "default_telegram_dm_policy")]
+    pub dm_policy: String,
+    /// DM 允许列表（支持 "*"）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+    /// 群组策略：allowlist | open | disabled
+    #[serde(default = "default_telegram_group_policy")]
+    pub group_policy: String,
+    /// 群组发送者允许列表（为空时回退 allow_from）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_allow_from: Vec<String>,
+    /// 群组配置（key 为 chat_id 或 "*"）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub groups: HashMap<String, TelegramGroupConfig>,
+    /// 流式模式：off | partial | block | progress（兼容 legacy bool）
+    #[serde(
+        default = "default_telegram_streaming_mode",
+        deserialize_with = "deserialize_telegram_streaming_mode"
+    )]
+    pub streaming: String,
+    /// 回复模式：off | first | all
+    #[serde(default = "default_telegram_reply_to_mode")]
+    pub reply_to_mode: String,
+}
+
+impl Default for TelegramBotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_token: String::new(),
+            allowed_user_ids: Vec::new(),
+            default_model: None,
+            default_account: None,
+            accounts: HashMap::new(),
+            dm_policy: default_telegram_dm_policy(),
+            allow_from: Vec::new(),
+            group_policy: default_telegram_group_policy(),
+            group_allow_from: Vec::new(),
+            groups: HashMap::new(),
+            streaming: default_telegram_streaming_mode(),
+            reply_to_mode: default_telegram_reply_to_mode(),
+        }
+    }
+}
+
+/// Telegram 多账号配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TelegramAccountConfig {
+    #[serde(default = "default_telegram_account_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dm_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub groups: HashMap<String, TelegramGroupConfig>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_telegram_streaming_mode"
+    )]
+    pub streaming: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_mode: Option<String>,
+}
+
+impl Default for TelegramAccountConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            name: None,
+            bot_token: None,
+            token_file: None,
+            default_model: None,
+            dm_policy: None,
+            allow_from: Vec::new(),
+            group_policy: None,
+            group_allow_from: Vec::new(),
+            groups: HashMap::new(),
+            streaming: None,
+            reply_to_mode: None,
+        }
+    }
+}
+
+fn default_telegram_account_enabled() -> bool {
+    true
+}
+
+/// Telegram 群组配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct TelegramGroupConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_mention: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(
+        default = "default_feishu_allow_from",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub topics: HashMap<String, TelegramTopicConfig>,
+}
+
+/// Telegram 话题配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct TelegramTopicConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_mention: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+}
+
+fn default_telegram_dm_policy() -> String {
+    "pairing".to_string()
+}
+
+fn default_telegram_group_policy() -> String {
+    "allowlist".to_string()
+}
+
+fn default_telegram_streaming_mode() -> String {
+    "partial".to_string()
+}
+
+fn default_telegram_reply_to_mode() -> String {
+    "off".to_string()
+}
+
+fn normalize_telegram_streaming_mode(mode: &str) -> String {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "off" => "off".to_string(),
+        "block" => "block".to_string(),
+        "progress" => "partial".to_string(),
+        "partial" => "partial".to_string(),
+        _ => default_telegram_streaming_mode(),
+    }
+}
+
+fn deserialize_telegram_streaming_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let mode = match value {
+        serde_json::Value::String(s) => normalize_telegram_streaming_mode(&s),
+        serde_json::Value::Bool(false) => "off".to_string(),
+        serde_json::Value::Bool(true) => "partial".to_string(),
+        serde_json::Value::Null => default_telegram_streaming_mode(),
+        _ => default_telegram_streaming_mode(),
+    };
+    Ok(mode)
+}
+
+fn deserialize_optional_telegram_streaming_mode<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let mode = match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(normalize_telegram_streaming_mode(&s)),
+        Some(serde_json::Value::Bool(false)) => Some("off".to_string()),
+        Some(serde_json::Value::Bool(true)) => Some("partial".to_string()),
+        Some(_) => Some(default_telegram_streaming_mode()),
+    };
+    Ok(mode)
 }
 
 /// Discord Bot 配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DiscordBotConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// 兼容旧配置：单账号 Token
     #[serde(default)]
     pub bot_token: String,
+    /// 兼容旧配置：允许服务器 ID 列表
     #[serde(default)]
     pub allowed_server_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// 默认账号 ID（多账号启用时）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_account: Option<String>,
+    /// 多账号配置
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub accounts: HashMap<String, DiscordAccountConfig>,
+    /// DM 策略：pairing | allowlist | open | disabled
+    #[serde(default = "default_discord_dm_policy")]
+    pub dm_policy: String,
+    /// DM 允许列表（支持 "*"）
+    #[serde(
+        default = "default_discord_allow_from",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub allow_from: Vec<String>,
+    /// 群组策略：allowlist | open | disabled
+    #[serde(default = "default_discord_group_policy")]
+    pub group_policy: String,
+    /// 群组发送者允许列表（为空时回退 allow_from）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_allow_from: Vec<String>,
+    /// 群组配置（key 为 guild_id 或 "*"）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub groups: HashMap<String, DiscordGuildConfig>,
+    /// 流式模式：off | partial | block | progress（兼容 legacy bool）
+    #[serde(
+        default = "default_discord_streaming_mode",
+        deserialize_with = "deserialize_discord_streaming_mode"
+    )]
+    pub streaming: String,
+    /// 回复模式：off | first | all
+    #[serde(default = "default_discord_reply_to_mode")]
+    pub reply_to_mode: String,
+    /// Message 内容意图与特权意图
+    #[serde(default)]
+    pub intents: DiscordIntentsConfig,
+    /// 细粒度动作开关
+    #[serde(default)]
+    pub actions: DiscordActionsConfig,
+    /// 线程绑定配置
+    #[serde(default)]
+    pub thread_bindings: DiscordThreadBindingsConfig,
+    /// 自动在线状态（Presence）
+    #[serde(default)]
+    pub auto_presence: DiscordAutoPresenceConfig,
+    /// 语音配置
+    #[serde(default)]
+    pub voice: DiscordVoiceConfig,
+    /// 交互组件配置
+    #[serde(default)]
+    pub agent_components: DiscordAgentComponentsConfig,
+    /// UI 配置
+    #[serde(default)]
+    pub ui: DiscordUiConfig,
+    /// 执行审批配置
+    #[serde(default)]
+    pub exec_approvals: DiscordExecApprovalsConfig,
+    /// 回复前缀（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_prefix: Option<String>,
+    /// ACK reaction（可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_reaction: Option<String>,
+}
+
+impl Default for DiscordBotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_token: String::new(),
+            allowed_server_ids: Vec::new(),
+            default_model: None,
+            default_account: None,
+            accounts: HashMap::new(),
+            dm_policy: default_discord_dm_policy(),
+            allow_from: default_discord_allow_from(),
+            group_policy: default_discord_group_policy(),
+            group_allow_from: Vec::new(),
+            groups: HashMap::new(),
+            streaming: default_discord_streaming_mode(),
+            reply_to_mode: default_discord_reply_to_mode(),
+            intents: DiscordIntentsConfig::default(),
+            actions: DiscordActionsConfig::default(),
+            thread_bindings: DiscordThreadBindingsConfig::default(),
+            auto_presence: DiscordAutoPresenceConfig::default(),
+            voice: DiscordVoiceConfig::default(),
+            agent_components: DiscordAgentComponentsConfig::default(),
+            ui: DiscordUiConfig::default(),
+            exec_approvals: DiscordExecApprovalsConfig::default(),
+            response_prefix: None,
+            ack_reaction: None,
+        }
+    }
+}
+
+/// Discord 多账号配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordAccountConfig {
+    #[serde(default = "default_discord_account_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bot_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_server_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dm_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub groups: HashMap<String, DiscordGuildConfig>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_discord_streaming_mode"
+    )]
+    pub streaming: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intents: Option<DiscordIntentsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions: Option<DiscordActionsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_bindings: Option<DiscordThreadBindingsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_presence: Option<DiscordAutoPresenceConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice: Option<DiscordVoiceConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_components: Option<DiscordAgentComponentsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<DiscordUiConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec_approvals: Option<DiscordExecApprovalsConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ack_reaction: Option<String>,
+}
+
+impl Default for DiscordAccountConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            name: None,
+            bot_token: None,
+            allowed_server_ids: Vec::new(),
+            default_model: None,
+            dm_policy: None,
+            allow_from: Vec::new(),
+            group_policy: None,
+            group_allow_from: Vec::new(),
+            groups: HashMap::new(),
+            streaming: None,
+            reply_to_mode: None,
+            intents: None,
+            actions: None,
+            thread_bindings: None,
+            auto_presence: None,
+            voice: None,
+            agent_components: None,
+            ui: None,
+            exec_approvals: None,
+            response_prefix: None,
+            ack_reaction: None,
+        }
+    }
+}
+
+fn default_discord_account_enabled() -> bool {
+    true
+}
+
+/// Discord 群组配置（按 guild）
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct DiscordGuildConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_mention: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub channels: HashMap<String, DiscordChannelConfig>,
+}
+
+/// Discord 频道配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct DiscordChannelConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_mention: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+}
+
+/// Discord Intents 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordIntentsConfig {
+    #[serde(default = "default_discord_message_content_intent")]
+    pub message_content: bool,
+    #[serde(default)]
+    pub guild_members: bool,
+    #[serde(default)]
+    pub presence: bool,
+}
+
+impl Default for DiscordIntentsConfig {
+    fn default() -> Self {
+        Self {
+            message_content: default_discord_message_content_intent(),
+            guild_members: false,
+            presence: false,
+        }
+    }
+}
+
+fn default_discord_message_content_intent() -> bool {
+    true
+}
+
+/// Discord Action 开关
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordActionsConfig {
+    #[serde(default = "default_true")]
+    pub reactions: bool,
+    #[serde(default = "default_true")]
+    pub messages: bool,
+    #[serde(default = "default_true")]
+    pub threads: bool,
+    #[serde(default = "default_true")]
+    pub moderation: bool,
+    #[serde(default = "default_true")]
+    pub presence: bool,
+}
+
+impl Default for DiscordActionsConfig {
+    fn default() -> Self {
+        Self {
+            reactions: true,
+            messages: true,
+            threads: true,
+            moderation: true,
+            presence: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Discord 线程绑定配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordThreadBindingsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_discord_thread_idle_hours")]
+    pub idle_hours: u32,
+    #[serde(default)]
+    pub max_age_hours: u32,
+    #[serde(default)]
+    pub spawn_subagent_sessions: bool,
+    #[serde(default)]
+    pub spawn_acp_sessions: bool,
+}
+
+impl Default for DiscordThreadBindingsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            idle_hours: default_discord_thread_idle_hours(),
+            max_age_hours: 0,
+            spawn_subagent_sessions: false,
+            spawn_acp_sessions: false,
+        }
+    }
+}
+
+fn default_discord_thread_idle_hours() -> u32 {
+    24
+}
+
+/// Discord Auto Presence 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordAutoPresenceConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_discord_presence_interval_ms")]
+    pub interval_ms: u64,
+    #[serde(default = "default_discord_presence_min_update_interval_ms")]
+    pub min_update_interval_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub healthy_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exhausted_text: Option<String>,
+}
+
+impl Default for DiscordAutoPresenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_ms: default_discord_presence_interval_ms(),
+            min_update_interval_ms: default_discord_presence_min_update_interval_ms(),
+            healthy_text: None,
+            degraded_text: None,
+            exhausted_text: None,
+        }
+    }
+}
+
+fn default_discord_presence_interval_ms() -> u64 {
+    30_000
+}
+
+fn default_discord_presence_min_update_interval_ms() -> u64 {
+    15_000
+}
+
+/// Discord 语音自动加入
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct DiscordVoiceAutoJoinConfig {
+    pub guild_id: String,
+    pub channel_id: String,
+}
+
+/// Discord 语音配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordVoiceConfig {
+    #[serde(default = "default_discord_voice_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto_join: Vec<DiscordVoiceAutoJoinConfig>,
+    #[serde(default = "default_discord_voice_dave_encryption")]
+    pub dave_encryption: bool,
+    #[serde(default = "default_discord_voice_decryption_failure_tolerance")]
+    pub decryption_failure_tolerance: u32,
+}
+
+impl Default for DiscordVoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_discord_voice_enabled(),
+            auto_join: Vec::new(),
+            dave_encryption: default_discord_voice_dave_encryption(),
+            decryption_failure_tolerance: default_discord_voice_decryption_failure_tolerance(),
+        }
+    }
+}
+
+fn default_discord_voice_enabled() -> bool {
+    true
+}
+
+fn default_discord_voice_dave_encryption() -> bool {
+    true
+}
+
+fn default_discord_voice_decryption_failure_tolerance() -> u32 {
+    24
+}
+
+/// Discord Agent Components 配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordAgentComponentsConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for DiscordAgentComponentsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// Discord UI 组件配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct DiscordUiComponentsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_color: Option<String>,
+}
+
+/// Discord UI 配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct DiscordUiConfig {
+    #[serde(default)]
+    pub components: DiscordUiComponentsConfig,
+}
+
+/// Discord 执行审批配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiscordExecApprovalsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approvers: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_filter: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session_filter: Vec<String>,
+    #[serde(default)]
+    pub cleanup_after_resolve: bool,
+    #[serde(default = "default_discord_exec_approval_target")]
+    pub target: String,
+}
+
+impl Default for DiscordExecApprovalsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            approvers: Vec::new(),
+            agent_filter: Vec::new(),
+            session_filter: Vec::new(),
+            cleanup_after_resolve: false,
+            target: default_discord_exec_approval_target(),
+        }
+    }
+}
+
+fn default_discord_exec_approval_target() -> String {
+    "dm".to_string()
+}
+
+fn default_discord_dm_policy() -> String {
+    "pairing".to_string()
+}
+
+fn default_discord_allow_from() -> Vec<String> {
+    Vec::new()
+}
+
+fn default_discord_group_policy() -> String {
+    "allowlist".to_string()
+}
+
+fn default_discord_streaming_mode() -> String {
+    "partial".to_string()
+}
+
+fn default_discord_reply_to_mode() -> String {
+    "off".to_string()
+}
+
+fn normalize_discord_streaming_mode(mode: &str) -> String {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "off" => "off".to_string(),
+        "block" => "block".to_string(),
+        "progress" => "partial".to_string(),
+        "partial" => "partial".to_string(),
+        _ => default_discord_streaming_mode(),
+    }
+}
+
+fn deserialize_discord_streaming_mode<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let mode = match value {
+        serde_json::Value::String(s) => normalize_discord_streaming_mode(&s),
+        serde_json::Value::Bool(false) => "off".to_string(),
+        serde_json::Value::Bool(true) => "partial".to_string(),
+        serde_json::Value::Null => default_discord_streaming_mode(),
+        _ => default_discord_streaming_mode(),
+    };
+    Ok(mode)
+}
+
+fn deserialize_optional_discord_streaming_mode<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let mode = match value {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(normalize_discord_streaming_mode(&s)),
+        Some(serde_json::Value::Bool(false)) => Some("off".to_string()),
+        Some(serde_json::Value::Bool(true)) => Some("partial".to_string()),
+        Some(_) => Some(default_discord_streaming_mode()),
+    };
+    Ok(mode)
 }
 
 /// 飞书 Bot 配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FeishuBotConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -3184,4 +3978,190 @@ pub struct FeishuBotConfig {
     pub encrypt_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model: Option<String>,
+    /// 默认账号 ID（多账号启用时）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_account: Option<String>,
+    /// 多账号配置
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub accounts: HashMap<String, FeishuAccountConfig>,
+    /// API 域名：feishu | lark
+    #[serde(default = "default_feishu_domain")]
+    pub domain: String,
+    /// 连接模式：websocket | webhook
+    #[serde(default = "default_feishu_connection_mode")]
+    pub connection_mode: String,
+    /// webhook 监听地址
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_host: Option<String>,
+    /// webhook 监听端口
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_port: Option<u16>,
+    /// webhook 路由路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_path: Option<String>,
+    /// DM 策略：pairing | allowlist | open | disabled
+    #[serde(default = "default_feishu_dm_policy")]
+    pub dm_policy: String,
+    /// DM 允许列表（支持 "*"）
+    #[serde(
+        default = "default_feishu_allow_from",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub allow_from: Vec<String>,
+    /// 群组策略：allowlist | open | disabled
+    #[serde(default = "default_feishu_group_policy")]
+    pub group_policy: String,
+    /// 群组发送者允许列表（为空时回退 allow_from）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_allow_from: Vec<String>,
+    /// 群组配置（key 为 chat_id 或 "*"）
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub groups: HashMap<String, FeishuGroupConfig>,
+    /// 流式模式：off | partial | block
+    #[serde(default = "default_feishu_streaming_mode")]
+    pub streaming: String,
+    /// 回复模式：off | first | all
+    #[serde(default = "default_feishu_reply_to_mode")]
+    pub reply_to_mode: String,
+}
+
+impl Default for FeishuBotConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            app_id: String::new(),
+            app_secret: String::new(),
+            verification_token: None,
+            encrypt_key: None,
+            default_model: None,
+            default_account: None,
+            accounts: HashMap::new(),
+            domain: default_feishu_domain(),
+            connection_mode: default_feishu_connection_mode(),
+            webhook_host: None,
+            webhook_port: None,
+            webhook_path: None,
+            dm_policy: default_feishu_dm_policy(),
+            allow_from: default_feishu_allow_from(),
+            group_policy: default_feishu_group_policy(),
+            group_allow_from: Vec::new(),
+            groups: HashMap::new(),
+            streaming: default_feishu_streaming_mode(),
+            reply_to_mode: default_feishu_reply_to_mode(),
+        }
+    }
+}
+
+/// 飞书多账号配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FeishuAccountConfig {
+    #[serde(default = "default_feishu_account_enabled")]
+    pub enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encrypt_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dm_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub group_allow_from: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub groups: HashMap<String, FeishuGroupConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to_mode: Option<String>,
+}
+
+impl Default for FeishuAccountConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            name: None,
+            app_id: None,
+            app_secret: None,
+            verification_token: None,
+            encrypt_key: None,
+            default_model: None,
+            domain: None,
+            connection_mode: None,
+            webhook_host: None,
+            webhook_port: None,
+            webhook_path: None,
+            dm_policy: None,
+            allow_from: Vec::new(),
+            group_policy: None,
+            group_allow_from: Vec::new(),
+            groups: HashMap::new(),
+            streaming: None,
+            reply_to_mode: None,
+        }
+    }
+}
+
+fn default_feishu_account_enabled() -> bool {
+    true
+}
+
+/// 飞书群组配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct FeishuGroupConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub require_mention: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_from: Vec<String>,
+}
+
+fn default_feishu_domain() -> String {
+    "feishu".to_string()
+}
+
+fn default_feishu_connection_mode() -> String {
+    "websocket".to_string()
+}
+
+fn default_feishu_dm_policy() -> String {
+    "open".to_string()
+}
+
+fn default_feishu_allow_from() -> Vec<String> {
+    vec!["*".to_string()]
+}
+
+fn default_feishu_group_policy() -> String {
+    "allowlist".to_string()
+}
+
+fn default_feishu_streaming_mode() -> String {
+    "partial".to_string()
+}
+
+fn default_feishu_reply_to_mode() -> String {
+    "off".to_string()
 }

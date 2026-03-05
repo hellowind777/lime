@@ -12,6 +12,7 @@ pub mod hooks;
 pub mod lsp_bridge;
 pub mod mcp_bridge;
 pub mod prompt;
+pub mod request_tool_policy;
 pub mod session_store;
 pub mod shell_security;
 pub mod subagent_scheduler;
@@ -31,6 +32,11 @@ pub use credential_bridge::{
 pub use event_converter::{convert_agent_event, convert_to_tauri_message, TauriAgentEvent};
 pub use lsp_bridge::create_lsp_callback;
 pub use prompt::SystemPromptBuilder;
+pub use request_tool_policy::{
+    execute_web_search_preflight_if_needed, merge_system_prompt_with_request_tool_policy,
+    resolve_request_tool_policy, stream_reply_with_policy, ReplyAttemptError, RequestToolPolicy,
+    StreamReplyExecution, WebSearchExecutionTracker, REQUEST_TOOL_POLICY_MARKER,
+};
 pub use session_store::{
     create_session_sync, get_session_sync, list_sessions_sync, SessionDetail, SessionInfo,
 };

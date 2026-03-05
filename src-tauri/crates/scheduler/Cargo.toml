@@ -11,6 +11,7 @@ serde_json = { workspace = true }
 # 异步运行时
 tokio = { workspace = true }
 async-trait = { workspace = true }
+futures = { workspace = true }
 
 # 错误处理
 anyhow = { workspace = true }
@@ -29,3 +30,4 @@ uuid = { workspace = true, features = ["v4", "serde"] }
 # 项目内依赖
 proxycast-core = { workspace = true }
 proxycast-agent = { workspace = true }
+aster = { workspace = true }

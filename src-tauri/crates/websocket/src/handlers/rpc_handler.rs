@@ -7,7 +7,7 @@ use chrono::{DateTime, Timelike, Utc};
 use proxycast_core::database::dao::agent_run::{AgentRun, AgentRunDao, AgentRunStatus};
 use proxycast_core::database::dao::chat::{ChatDao, ChatMessage, ChatMode, ChatSession};
 use proxycast_scheduler::{
-    AgentExecutor, ScheduledTask, SchedulerDao, TaskExecutor, TaskFilter,
+    AgentExecutor, AgentScheduler, ScheduledTask, SchedulerDao, TaskExecutor, TaskFilter,
     DEFAULT_TASK_COOLDOWN_SECS, DEFAULT_TASK_FAILURE_THRESHOLD,
 };
 use serde_json::json;
@@ -149,6 +149,7 @@ impl RpcHandler {
             "message": message,
             "stream": params.stream,
             "model": params.model.clone(),
+            "web_search": params.web_search,
         });
         self.create_run_record(
             &db,
@@ -163,20 +164,46 @@ impl RpcHandler {
         let run_id_for_task = run_id.clone();
         let session_id_for_task = session_id.clone();
         let message_for_task = message.clone();
-        let model_for_task = params
+        let raw_model_for_task = params
             .model
             .clone()
             .unwrap_or_else(|| "claude-sonnet-4-5".to_string());
+        let (provider_type_for_task, model_for_task) =
+            resolve_provider_and_model(&raw_model_for_task);
         let active_runs = self.state.active_runs.clone();
+        let logs_for_task = self.state.logs.clone();
         let db_for_task = db.clone();
         let handle = tokio::spawn(async move {
             let started_ms = Utc::now().timestamp_millis();
-            let provider_type = infer_provider_from_model(&model_for_task);
+            logs_for_task.write().await.add(
+                "info",
+                &format!(
+                    "[RPC] agent.run dispatch: run_id={} raw_model={} resolved_model={} provider={} web_search={}",
+                    run_id_for_task,
+                    raw_model_for_task,
+                    model_for_task,
+                    provider_type_for_task,
+                    params.web_search.unwrap_or(false)
+                ),
+            );
+            let mut task_params = json!({
+                "prompt": message_for_task,
+                "session_id": session_id_for_task,
+            });
+            if let Some(web_search) = params.web_search {
+                task_params["web_search"] = serde_json::Value::Bool(web_search);
+            }
+            if let Some(system_prompt) = params.system_prompt.as_deref() {
+                let trimmed = system_prompt.trim();
+                if !trimmed.is_empty() {
+                    task_params["system_prompt"] = serde_json::Value::String(trimmed.to_string());
+                }
+            }
             let mut task = ScheduledTask::new(
                 format!("rpc-agent-run-{}", &run_id_for_task[..8]),
                 "agent_chat".to_string(),
-                json!({ "prompt": message_for_task }),
-                provider_type,
+                task_params,
+                provider_type_for_task,
                 model_for_task,
                 Utc::now(),
             );
@@ -590,6 +617,8 @@ impl RpcHandler {
             .require_db()
             .await
             .map_err(|e| RpcError::internal_error(e.message))?;
+        AgentScheduler::init_tables(&db)
+            .map_err(|e| RpcError::internal_error(format!("init cron tables failed: {e}")))?;
         let conn = proxycast_core::database::lock_db(&db)
             .map_err(|e| RpcError::internal_error(format!("DB lock failed: {e}")))?;
         let tasks = SchedulerDao::list_tasks(&conn, &TaskFilter::default())
@@ -892,7 +921,18 @@ fn resolve_wait_content(run: &AgentRun) -> Option<String> {
 }
 
 fn infer_provider_from_model(model: &str) -> String {
-    let normalized = model.to_ascii_lowercase();
+    let normalized = model.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return "openai".to_string();
+    }
+
+    if let Some((provider_prefix, _)) = normalized.split_once('/') {
+        let provider_prefix = provider_prefix.trim();
+        if !provider_prefix.is_empty() && provider_prefix != "models" {
+            return provider_prefix.to_string();
+        }
+    }
+
     if normalized.contains("claude") {
         return "anthropic".to_string();
     }
@@ -902,10 +942,30 @@ fn infer_provider_from_model(model: &str) -> String {
     if normalized.contains("qwen") {
         return "qwen".to_string();
     }
+    if normalized.contains("glm") || normalized.contains("zhipu") {
+        return "zhipuai".to_string();
+    }
     if normalized.contains("gpt") || normalized.contains("o1") || normalized.contains("o3") {
         return "openai".to_string();
     }
-    "anthropic".to_string()
+    "openai".to_string()
+}
+
+fn resolve_provider_and_model(model: &str) -> (String, String) {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        return ("openai".to_string(), String::new());
+    }
+
+    if let Some((provider_prefix, model_suffix)) = trimmed.split_once('/') {
+        let provider_prefix = provider_prefix.trim().to_ascii_lowercase();
+        let model_suffix = model_suffix.trim();
+        if !provider_prefix.is_empty() && provider_prefix != "models" && !model_suffix.is_empty() {
+            return (provider_prefix, model_suffix.to_string());
+        }
+    }
+
+    (infer_provider_from_model(trimmed), trimmed.to_string())
 }
 
 fn finalize_run(
@@ -1163,6 +1223,9 @@ mod tests {
         };
         let run_response = handler.handle_request(request).await;
         assert!(run_response.error.is_none());
+        let run_result: AgentRunResult =
+            serde_json::from_value(run_response.result.expect("缺少 run result"))
+                .expect("解析 agent.run 失败");
 
         let list_request = GatewayRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -1176,7 +1239,10 @@ mod tests {
             serde_json::from_value(list_response.result.expect("缺少 sessions.list result"))
                 .expect("解析 sessions.list 返回失败");
         assert!(!result.sessions.is_empty());
-        assert!(result.sessions[0].message_count >= 1);
+        assert!(result
+            .sessions
+            .iter()
+            .any(|session| session.session_id == run_result.session_id));
     }
 
     #[tokio::test]
@@ -1400,5 +1466,24 @@ mod tests {
         assert_eq!(result.failure_trend_24h.len(), 24);
         assert!(result.alerts.len() >= 2);
         assert!(!result.top_risky_tasks.is_empty());
+    }
+
+    #[test]
+    fn test_infer_provider_from_model_should_support_provider_prefix_and_glm() {
+        assert_eq!(infer_provider_from_model("zhipuai/glm-4.7"), "zhipuai");
+        assert_eq!(infer_provider_from_model("glm-4-plus"), "zhipuai");
+        assert_eq!(infer_provider_from_model("openai/gpt-4o-mini"), "openai");
+        assert_eq!(infer_provider_from_model(""), "openai");
+    }
+
+    #[test]
+    fn test_resolve_provider_and_model_should_strip_provider_prefix() {
+        let (provider, model) = resolve_provider_and_model("zhipuai/glm-4.7");
+        assert_eq!(provider, "zhipuai");
+        assert_eq!(model, "glm-4.7");
+
+        let (provider, model) = resolve_provider_and_model("glm-4-plus");
+        assert_eq!(provider, "zhipuai");
+        assert_eq!(model, "glm-4-plus");
     }
 }

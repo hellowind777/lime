@@ -5,7 +5,15 @@
 use super::types::ScheduledTask;
 use async_trait::async_trait;
 use proxycast_agent::credential_bridge::CredentialBridge;
+#[cfg(test)]
+use proxycast_agent::request_tool_policy::REQUEST_TOOL_POLICY_MARKER;
+use proxycast_agent::request_tool_policy::{
+    merge_system_prompt_with_request_tool_policy, resolve_request_tool_policy,
+    stream_reply_with_policy,
+};
+use proxycast_agent::{AsterAgentState, SessionConfigBuilder};
 use proxycast_core::database::DbConnection;
+use serde_json::Value;
 use std::sync::Arc;
 
 /// 任务执行器 Trait
@@ -118,11 +126,44 @@ impl TaskExecutor for AgentExecutor {
 }
 
 impl AgentExecutor {
+    fn resolve_agent_session_id(task: &ScheduledTask) -> String {
+        task.params
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| format!("scheduler-agent-chat-{}", task.id))
+    }
+
+    fn resolve_bool_param(task: &ScheduledTask, key: &str) -> Option<bool> {
+        let value = task.params.get(key)?;
+        match value {
+            Value::Bool(flag) => Some(*flag),
+            Value::String(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+                "true" | "1" | "yes" | "on" => Some(true),
+                "false" | "0" | "no" | "off" => Some(false),
+                _ => None,
+            },
+            Value::Number(number) => number.as_i64().map(|v| v != 0),
+            _ => None,
+        }
+    }
+
+    fn resolve_system_prompt(task: &ScheduledTask) -> Option<String> {
+        task.params
+            .get("system_prompt")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.to_string())
+    }
+
     /// 执行 Agent 对话任务
     async fn execute_agent_chat(
         &self,
         task: &ScheduledTask,
-        _db: &DbConnection,
+        db: &DbConnection,
         _aster_config: &proxycast_agent::credential_bridge::AsterProviderConfig,
     ) -> Result<serde_json::Value, String> {
         // 从任务参数中提取对话内容
@@ -134,13 +175,101 @@ impl AgentExecutor {
 
         tracing::info!("[AgentExecutor] 执行 Agent 对话: {}", prompt);
 
-        // TODO: 实际调用 Aster Agent 执行对话
-        // 这里需要集成 AsterAgentState 来执行对话
-        // 暂时返回模拟结果
+        let session_id = Self::resolve_agent_session_id(task);
+        let request_tool_policy =
+            resolve_request_tool_policy(Self::resolve_bool_param(task, "web_search"), false);
+        let merged_system_prompt = merge_system_prompt_with_request_tool_policy(
+            Self::resolve_system_prompt(task),
+            &request_tool_policy,
+        );
+        // 对齐主对话入口：执行前刷新一次 Skills 注册，避免运行期安装/更新后不可见。
+        AsterAgentState::reload_proxycast_skills();
+        tracing::info!(
+            "[AgentExecutor] agent_chat 会话策略: session={} web_search={} system_prompt={}",
+            session_id,
+            request_tool_policy.effective_web_search,
+            if merged_system_prompt.is_some() {
+                "provided"
+            } else {
+                "none"
+            }
+        );
+
+        let state = AsterAgentState::new();
+        state
+            .configure_provider_from_pool(db, &task.provider_type, &task.model, &session_id)
+            .await
+            .map_err(|e| format!("配置 Agent Provider 失败: {e}"))?;
+
+        let agent_arc = state.get_agent_arc();
+        let guard = agent_arc.read().await;
+        let agent = guard.as_ref().ok_or_else(|| "Agent 未初始化".to_string())?;
+        let available_tools = {
+            let registry = agent.tool_registry().read().await;
+            registry
+                .get_definitions()
+                .iter()
+                .map(|definition| definition.name.clone())
+                .collect::<Vec<_>>()
+        };
+        tracing::info!(
+            "[AgentExecutor] 当前可用工具({}): {}",
+            available_tools.len(),
+            available_tools.join(", ")
+        );
+
+        let mut session_builder = SessionConfigBuilder::new(&session_id);
+        if let Some(system_prompt) = merged_system_prompt {
+            session_builder = session_builder.system_prompt(system_prompt);
+        }
+        let session_config = session_builder.build();
+        let execution = stream_reply_with_policy(
+            agent,
+            prompt,
+            None,
+            session_config,
+            None,
+            &request_tool_policy,
+            |event| match event {
+                proxycast_agent::TauriAgentEvent::ToolStart {
+                    tool_name, tool_id, ..
+                } => {
+                    tracing::info!(
+                        "[AgentExecutor] 工具调用开始: {} (tool_id={})",
+                        tool_name,
+                        tool_id
+                    );
+                }
+                proxycast_agent::TauriAgentEvent::ToolEnd { tool_id, result } => {
+                    tracing::info!(
+                        "[AgentExecutor] 工具调用结束: tool_id={} success={}",
+                        tool_id,
+                        result.success
+                    );
+                }
+                _ => {}
+            },
+        )
+        .await
+        .map_err(|error| {
+            format!(
+                "Agent 执行失败: {} (emitted_any={})",
+                error.message, error.emitted_any
+            )
+        })?;
+
+        let response = execution.text_output;
+        if response.trim().is_empty() {
+            if let Some(last_error) = execution.event_errors.last() {
+                return Err(format!("Agent 未返回有效文本输出: {last_error}"));
+            }
+            return Err("Agent 未返回有效文本输出".to_string());
+        }
+
         Ok(serde_json::json!({
             "type": "agent_chat",
             "prompt": prompt,
-            "response": "任务已调度执行",
+            "response": response,
             "status": "success"
         }))
     }
@@ -255,5 +384,40 @@ mod tests {
             "unexpected error: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_resolve_bool_param_supports_string_and_bool() {
+        let task = ScheduledTask::new(
+            "bool-test".to_string(),
+            "agent_chat".to_string(),
+            serde_json::json!({
+                "prompt": "hello",
+                "web_search": "true",
+                "feature_flag": false
+            }),
+            "openai".to_string(),
+            "gpt-4".to_string(),
+            Utc::now(),
+        );
+        assert_eq!(
+            AgentExecutor::resolve_bool_param(&task, "web_search"),
+            Some(true)
+        );
+        assert_eq!(
+            AgentExecutor::resolve_bool_param(&task, "feature_flag"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_merge_system_prompt_with_web_search_policy() {
+        let policy = resolve_request_tool_policy(Some(true), false);
+        let merged =
+            merge_system_prompt_with_request_tool_policy(Some("你是助手".to_string()), &policy)
+                .expect("merged prompt should exist");
+        assert!(merged.contains("你是助手"));
+        assert!(merged.contains(REQUEST_TOOL_POLICY_MARKER));
+        assert!(merged.contains("WebSearch"));
     }
 }

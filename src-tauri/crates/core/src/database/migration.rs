@@ -544,6 +544,61 @@ pub fn migrate_mcp_proxycast_enabled(conn: &Connection) -> Result<usize, String>
     Ok(updated)
 }
 
+/// 归一化 mcp_servers.created_at 字段为 INTEGER 时间戳
+///
+/// 历史版本曾写入 RFC3339 文本，导致下游按 i64 读取时出现类型异常。
+/// 迁移策略：
+/// - 纯数字文本 -> CAST 为 INTEGER
+/// - RFC3339 文本 -> strftime('%s', ...) 转为秒级时间戳
+/// - 其余值保持不变（由 DAO 兼容读取）
+pub fn migrate_mcp_created_at_to_integer(conn: &Connection) -> Result<usize, String> {
+    let migrated: bool = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'migrated_mcp_created_at_to_integer'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    if migrated {
+        tracing::debug!("[迁移] MCP created_at 类型已归一化，跳过");
+        return Ok(0);
+    }
+
+    let updated_numeric = conn
+        .execute(
+            "UPDATE mcp_servers
+             SET created_at = CAST(TRIM(created_at) AS INTEGER)
+             WHERE typeof(created_at) = 'text'
+               AND TRIM(created_at) != ''
+               AND TRIM(created_at) NOT GLOB '*[^0-9]*'",
+            [],
+        )
+        .map_err(|e| format!("归一化 MCP created_at 数字文本失败: {e}"))?;
+
+    let updated_rfc3339 = conn
+        .execute(
+            "UPDATE mcp_servers
+             SET created_at = CAST(strftime('%s', created_at) AS INTEGER)
+             WHERE typeof(created_at) = 'text'
+               AND strftime('%s', created_at) IS NOT NULL",
+            [],
+        )
+        .map_err(|e| format!("归一化 MCP created_at RFC3339 文本失败: {e}"))?;
+
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('migrated_mcp_created_at_to_integer', 'true')",
+        [],
+    )
+    .map_err(|e| format!("标记 MCP created_at 归一化完成失败: {e}"))?;
+
+    let total = updated_numeric + updated_rfc3339;
+    tracing::info!("[迁移] MCP created_at 归一化完成，更新 {} 条记录", total);
+
+    Ok(total)
+}
+
 /// 当前模型注册表版本
 /// 每次更新模型数据结构或添加新 Provider 时，增加此版本号
 const MODEL_REGISTRY_VERSION: &str = "2026.01.16.1";

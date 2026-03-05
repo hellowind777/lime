@@ -245,9 +245,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-ask-fallback");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -283,10 +281,12 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
         .find((msg) => msg.role === "assistant");
 
       expect(assistantMessage).toBeDefined();
-      expect(assistantMessage?.actionRequests?.[0]?.actionType).toBe("ask_user");
-      expect(assistantMessage?.actionRequests?.[0]?.questions?.[0]?.question).toBe(
-        "你希望海报主色调是什么？",
+      expect(assistantMessage?.actionRequests?.[0]?.actionType).toBe(
+        "ask_user",
       );
+      expect(
+        assistantMessage?.actionRequests?.[0]?.questions?.[0]?.question,
+      ).toBe("你希望海报主色调是什么？");
       expect(
         assistantMessage?.actionRequests?.[0]?.questions?.[0]?.options?.map(
           (item) => item.label,
@@ -302,9 +302,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-ask-fallback-id");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -352,9 +350,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-action-required");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -414,9 +410,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-action-required-options");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -469,9 +463,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-ask-submit-keep");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -543,9 +535,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-ask-fallback-pending");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -599,9 +589,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-auto-confirm");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -653,9 +641,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
     seedSession(workspaceId, "session-context-trace");
     const harness = mountHook(workspaceId);
 
-    let streamHandler:
-      | ((event: { payload: unknown }) => void)
-      | null = null;
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
     mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
       streamHandler = handler as (event: { payload: unknown }) => void;
       return () => {
@@ -845,8 +831,7 @@ describe("useAsterAgentChat 偏好持久化", () => {
       ).toBe("gemini-2.5-pro");
       expect(
         JSON.parse(
-          localStorage.getItem(`agent_pref_migrated_${workspaceId}`) ||
-            "false",
+          localStorage.getItem(`agent_pref_migrated_${workspaceId}`) || "false",
         ),
       ).toBe(true);
     } finally {
@@ -899,12 +884,14 @@ describe("useAsterAgentChat 偏好持久化", () => {
       const value = secondMount.getValue();
       expect(value.providerType).toBe("gemini");
       expect(value.model).toBe("gemini-2.5-pro");
-      expect(JSON.parse(localStorage.getItem("agent_pref_provider_global") || "null")).toBe(
-        "gemini",
-      );
-      expect(JSON.parse(localStorage.getItem("agent_pref_model_global") || "null")).toBe(
-        "gemini-2.5-pro",
-      );
+      expect(
+        JSON.parse(
+          localStorage.getItem("agent_pref_provider_global") || "null",
+        ),
+      ).toBe("gemini");
+      expect(
+        JSON.parse(localStorage.getItem("agent_pref_model_global") || "null"),
+      ).toBe("gemini-2.5-pro");
     } finally {
       secondMount.unmount();
     }
@@ -953,6 +940,47 @@ describe("useAsterAgentChat 偏好持久化", () => {
             "null",
         ),
       ).toBe(workspaceId);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("恢复失效会话时不应请求不存在的会话详情", async () => {
+    const workspaceId = "ws-stale-session";
+    const staleSessionId = "session-stale";
+    const activeSessionId = "session-active";
+    const now = Math.floor(Date.now() / 1000);
+
+    seedSession(workspaceId, staleSessionId);
+    mockListAsterSessions.mockResolvedValue([
+      {
+        id: activeSessionId,
+        name: "可用会话",
+        created_at: now - 10,
+        updated_at: now,
+        messages_count: 1,
+      },
+    ]);
+    mockGetAsterSession.mockResolvedValue({
+      id: activeSessionId,
+      created_at: now - 10,
+      updated_at: now,
+      messages: [],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await flushEffects();
+      await flushEffects();
+
+      expect(
+        mockGetAsterSession.mock.calls.some(
+          ([sessionId]) => sessionId === staleSessionId,
+        ),
+      ).toBe(false);
+      expect(harness.getValue().sessionId).toBe(activeSessionId);
     } finally {
       harness.unmount();
     }
@@ -1210,8 +1238,7 @@ describe("useAsterAgentChat 偏好持久化", () => {
       });
       expect(
         value.messages[0]?.contentParts?.some(
-          (part) =>
-            part.type === "tool_use" && part.toolCall.id === "tool-1",
+          (part) => part.type === "tool_use" && part.toolCall.id === "tool-1",
         ),
       ).toBe(true);
       expect(value.messages[1]).toMatchObject({
@@ -1295,7 +1322,9 @@ describe("useAsterAgentChat 偏好持久化", () => {
         {
           role: "user",
           timestamp: now,
-          content: [{ type: "text", text: "/canvas-design 帮我设计一张科技感的海报" }],
+          content: [
+            { type: "text", text: "/canvas-design 帮我设计一张科技感的海报" },
+          ],
         },
         {
           role: "assistant",
@@ -1336,11 +1365,15 @@ describe("useAsterAgentChat 偏好持久化", () => {
         "user",
         "assistant",
       ]);
-      expect(value.messages[1]?.content).toContain("我来帮你设计一张科技感的海报！");
-      expect(value.messages[1]?.content).toContain("好的！让我为你创建一张科技海报。");
-      expect(value.messages.some((msg) => msg.content.trim().length === 0)).toBe(
-        false,
+      expect(value.messages[1]?.content).toContain(
+        "我来帮你设计一张科技感的海报！",
       );
+      expect(value.messages[1]?.content).toContain(
+        "好的！让我为你创建一张科技海报。",
+      );
+      expect(
+        value.messages.some((msg) => msg.content.trim().length === 0),
+      ).toBe(false);
       expect(
         value.messages[1]?.contentParts?.some(
           (part) =>
@@ -1518,6 +1551,59 @@ describe("useAsterAgentChat 偏好持久化", () => {
             part.toolCall.status === "completed",
         ),
       ).toBe(true);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时应去重相邻重复历史消息", async () => {
+    const workspaceId = "ws-history-adjacent-dedupe";
+    const now = Math.floor(Date.now() / 1000);
+    mockGetAsterSession.mockResolvedValue({
+      id: "topic-adjacent-dedupe",
+      execution_strategy: "react",
+      messages: [
+        {
+          role: "user",
+          timestamp: now,
+          content: [{ type: "text", text: "你好" }],
+        },
+        {
+          role: "user",
+          timestamp: now + 1,
+          content: [{ type: "text", text: "你好" }],
+        },
+        {
+          role: "assistant",
+          timestamp: now + 2,
+          content: [{ type: "text", text: "你好，我在。" }],
+        },
+        {
+          role: "assistant",
+          timestamp: now + 3,
+          content: [{ type: "text", text: "你好，我在。" }],
+        },
+      ],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic("topic-adjacent-dedupe");
+      });
+
+      const value = harness.getValue();
+      expect(value.messages).toHaveLength(2);
+      expect(value.messages[0]).toMatchObject({
+        role: "user",
+        content: "你好",
+      });
+      expect(value.messages[1]).toMatchObject({
+        role: "assistant",
+        content: "你好，我在。",
+      });
     } finally {
       harness.unmount();
     }

@@ -122,6 +122,16 @@ impl LogStore {
 
     pub fn clear(&mut self) {
         self.logs.clear();
+        if let Some(ref path) = self.log_file_path {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(path)
+            {
+                let _ = file.write_all(b"");
+            }
+        }
     }
 
     pub fn get_log_file_path(&self) -> Option<String> {

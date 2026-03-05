@@ -265,10 +265,22 @@ pub enum OutputProtocol {
 
 ```rust
 /// OAuth 2.0 配置（Google）
-pub const OAUTH_CLIENT_ID: &str =
-    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-pub const OAUTH_CLIENT_SECRET: &str =
-    "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";
+/// 必须通过环境变量配置：
+/// - ANTIGRAVITY_OAUTH_CLIENT_ID
+/// - ANTIGRAVITY_OAUTH_CLIENT_SECRET
+///
+/// 获取方式：
+/// 1. 使用 Antigravity CLI 的默认凭据
+/// 2. 从 Google Cloud Console 创建 OAuth 2.0 客户端
+fn oauth_client_id() -> String {
+    std::env::var("ANTIGRAVITY_OAUTH_CLIENT_ID")
+        .expect("ANTIGRAVITY_OAUTH_CLIENT_ID environment variable must be set")
+}
+
+fn oauth_client_secret() -> String {
+    std::env::var("ANTIGRAVITY_OAUTH_CLIENT_SECRET")
+        .expect("ANTIGRAVITY_OAUTH_CLIENT_SECRET environment variable must be set")
+}
 
 pub const OAUTH_SCOPES: &[&str] = &[
     "https://www.googleapis.com/auth/cloud-platform",
@@ -321,11 +333,13 @@ impl AntigravityProvider {
         let refresh_token = credential.refresh_token.as_ref()
             .ok_or(Error::MissingRefreshToken)?;
 
+        let client_id = oauth_client_id();
+        let client_secret = oauth_client_secret();
         let response = self.http_client
             .post(OAUTH_TOKEN_URL)
             .form(&[
-                ("client_id", OAUTH_CLIENT_ID),
-                ("client_secret", OAUTH_CLIENT_SECRET),
+                ("client_id", client_id.as_str()),
+                ("client_secret", client_secret.as_str()),
                 ("refresh_token", refresh_token.as_str()),
                 ("grant_type", "refresh_token"),
             ])
@@ -1217,6 +1231,10 @@ pnpm test
 | `ANTIGRAVITY_ENVIRONMENT` | API 环境 | `daily` |
 | `ANTIGRAVITY_DEBUG` | 调试模式 | `false` |
 | `ANTIGRAVITY_TIMEOUT_MS` | 请求超时 | `120000` |
+| `ANTIGRAVITY_OAUTH_CLIENT_ID` | OAuth Client ID（必需） | 无，必须设置 |
+| `ANTIGRAVITY_OAUTH_CLIENT_SECRET` | OAuth Client Secret（必需） | 无，必须设置 |
+
+**注意**：OAuth 凭据可以从 Antigravity CLI 获取或从 Google Cloud Console 创建。
 
 ### B. 参考链接
 

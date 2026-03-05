@@ -8,6 +8,10 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  isAsterSessionNotFoundError,
+  resolveRestorableSessionId,
+} from "@/lib/asterSessionRecovery";
 
 // ============ 类型定义 ============
 
@@ -398,6 +402,39 @@ export const useAgentStore = create<AgentState>((set, get) => ({
       });
     } catch (error) {
       console.error("[AgentStore] 切换会话失败:", error);
+      if (isAsterSessionNotFoundError(error)) {
+        try {
+          const sessions = await invoke<
+            Array<{
+              id: string;
+              created_at: number;
+              updated_at: number;
+            }>
+          >("aster_session_list");
+          const recoveredSessionId = resolveRestorableSessionId({
+            candidateSessionId: null,
+            sessions: sessions.map((item) => ({
+              id: item.id,
+              createdAt: item.created_at,
+              updatedAt: item.updated_at,
+            })),
+          });
+
+          if (recoveredSessionId && recoveredSessionId !== sessionId) {
+            await get().switchSession(recoveredSessionId);
+            return;
+          }
+
+          await get().createSession();
+          set({
+            messages: [],
+            pendingActions: [],
+          });
+          return;
+        } catch (recoveryError) {
+          console.error("[AgentStore] 恢复会话失败:", recoveryError);
+        }
+      }
       throw error;
     }
   },

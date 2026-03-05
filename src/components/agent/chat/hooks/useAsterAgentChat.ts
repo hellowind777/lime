@@ -30,6 +30,10 @@ import {
   type ToolResultImage,
 } from "@/lib/api/agent";
 import {
+  isAsterSessionNotFoundError,
+  resolveRestorableSessionId,
+} from "@/lib/asterSessionRecovery";
+import {
   Message,
   MessageImage,
   ContentPart,
@@ -44,6 +48,7 @@ export interface Topic {
   id: string;
   title: string;
   createdAt: Date;
+  updatedAt: Date;
   messagesCount: number;
   executionStrategy: AsterExecutionStrategy;
 }
@@ -154,8 +159,7 @@ const normalizeAskOptions = (
       return null;
     })
     .filter(
-      (item): item is { label: string; description?: string } =>
-        item !== null,
+      (item): item is { label: string; description?: string } => item !== null,
     );
 
   return normalized.length > 0 ? normalized : undefined;
@@ -207,9 +211,7 @@ const normalizeActionQuestions = (
   };
 
   const normalized = Array.isArray(value)
-    ? value
-        .map(toQuestion)
-        .filter((item): item is Question => item !== null)
+    ? value.map(toQuestion).filter((item): item is Question => item !== null)
     : [];
 
   if (normalized.length > 0) return normalized;
@@ -322,7 +324,9 @@ const resolveHistoryUserDataText = (userData: unknown): string | undefined => {
   return String(userData);
 };
 
-const stringifyToolArguments = (argumentsValue: unknown): string | undefined => {
+const stringifyToolArguments = (
+  argumentsValue: unknown,
+): string | undefined => {
   if (argumentsValue === null || argumentsValue === undefined) return undefined;
   if (typeof argumentsValue === "string") {
     const value = argumentsValue.trim();
@@ -536,7 +540,11 @@ const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
     }
 
     const previous = merged[merged.length - 1];
-    if (!previous || previous.role !== "assistant" || current.role !== "assistant") {
+    if (
+      !previous ||
+      previous.role !== "assistant" ||
+      current.role !== "assistant"
+    ) {
       merged.push(current);
       continue;
     }
@@ -550,8 +558,7 @@ const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
         if (part.type === "tool_use") {
           const existingIndex = nextParts.findIndex(
             (item) =>
-              item.type === "tool_use" &&
-              item.toolCall.id === part.toolCall.id,
+              item.type === "tool_use" && item.toolCall.id === part.toolCall.id,
           );
           if (existingIndex >= 0) {
             // 同一工具调用在历史里会先有 running，再有 completed/failed。
@@ -581,15 +588,24 @@ const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
       }
       return nextParts;
     })();
-    const toolCallMap = new Map<string, NonNullable<Message["toolCalls"]>[number]>();
-    for (const toolCall of [...(previous.toolCalls || []), ...(current.toolCalls || [])]) {
+    const toolCallMap = new Map<
+      string,
+      NonNullable<Message["toolCalls"]>[number]
+    >();
+    for (const toolCall of [
+      ...(previous.toolCalls || []),
+      ...(current.toolCalls || []),
+    ]) {
       toolCallMap.set(toolCall.id, toolCall);
     }
     const toolCalls = Array.from(toolCallMap.values());
     const contextTrace = (() => {
       const seen = new Set<string>();
       const mergedSteps: ContextTraceStep[] = [];
-      for (const step of [...(previous.contextTrace || []), ...(current.contextTrace || [])]) {
+      for (const step of [
+        ...(previous.contextTrace || []),
+        ...(current.contextTrace || []),
+      ]) {
         const key = `${step.stage}::${step.detail}`;
         if (!seen.has(key)) {
           seen.add(key);
@@ -612,6 +628,90 @@ const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
   }
 
   return merged;
+};
+
+const normalizeSignatureText = (text: string): string =>
+  text.replace(/\s+/g, " ").trim();
+
+const messageImageSignature = (images?: MessageImage[]): string => {
+  if (!images || images.length === 0) return "";
+  return images
+    .map((image) => `${image.mediaType}:${image.data.slice(0, 64)}`)
+    .join("|");
+};
+
+const messageToolCallsSignature = (
+  toolCalls?: Message["toolCalls"],
+): string => {
+  if (!toolCalls || toolCalls.length === 0) return "";
+  return toolCalls
+    .map((toolCall) => {
+      const output = toolCall.result?.output
+        ? normalizeSignatureText(toolCall.result.output)
+        : "";
+      const error = toolCall.result?.error
+        ? normalizeSignatureText(toolCall.result.error)
+        : "";
+      return `${toolCall.id}:${toolCall.status}:${toolCall.name}:${output}:${error}`;
+    })
+    .join("|");
+};
+
+const messageContentPartsSignature = (parts?: ContentPart[]): string => {
+  if (!parts || parts.length === 0) return "";
+  return parts
+    .map((part) => {
+      if (part.type === "text" || part.type === "thinking") {
+        return `${part.type}:${normalizeSignatureText(part.text)}`;
+      }
+      if (part.type === "tool_use") {
+        const output = part.toolCall.result?.output
+          ? normalizeSignatureText(part.toolCall.result.output)
+          : "";
+        const error = part.toolCall.result?.error
+          ? normalizeSignatureText(part.toolCall.result.error)
+          : "";
+        return `tool_use:${part.toolCall.id}:${part.toolCall.status}:${part.toolCall.name}:${output}:${error}`;
+      }
+      const prompt = part.actionRequired.prompt
+        ? normalizeSignatureText(part.actionRequired.prompt)
+        : "";
+      return `action_required:${part.actionRequired.requestId}:${part.actionRequired.actionType}:${prompt}`;
+    })
+    .join("|");
+};
+
+const buildHistoryMessageSignature = (message: Message): string => {
+  return [
+    message.role,
+    normalizeSignatureText(message.content),
+    messageImageSignature(message.images),
+    messageToolCallsSignature(message.toolCalls),
+    messageContentPartsSignature(message.contentParts),
+  ].join("::");
+};
+
+const dedupeAdjacentHistoryMessages = (messages: Message[]): Message[] => {
+  const deduped: Message[] = [];
+  let previousSignature: string | null = null;
+  let previousTimestampMs: number | null = null;
+
+  for (const message of messages) {
+    const signature = buildHistoryMessageSignature(message);
+    const timestampMs = message.timestamp.getTime();
+    const isDuplicate =
+      previousSignature === signature &&
+      previousTimestampMs !== null &&
+      Math.abs(timestampMs - previousTimestampMs) <= 5000;
+
+    if (!isDuplicate) {
+      deduped.push(message);
+      previousSignature = signature;
+      previousTimestampMs = timestampMs;
+    }
+  }
+
+  return deduped;
 };
 
 const resolveActionPromptKey = (action: ActionRequired): string | null => {
@@ -721,11 +821,10 @@ const loadTransient = <T>(key: string, defaultValue: T): T => {
     if (stored) {
       const parsed = JSON.parse(stored);
       if (key.startsWith("aster_messages") && Array.isArray(parsed)) {
-        const normalizedMessages = parsed
-          .map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp),
-          })) as Message[];
+        const normalizedMessages = parsed.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp),
+        })) as Message[];
         const normalized = normalizeHistoryMessages(normalizedMessages);
         // 清理旧版本历史缓存中的 fallback 工具名，触发回源重建真实工具名称。
         if (hasLegacyFallbackToolNames(normalized)) {
@@ -914,15 +1013,22 @@ const mapProviderName = (providerType: string): string => {
   return mapping[providerType.toLowerCase()] || providerType;
 };
 
-const mapSessionToTopic = (session: AsterSessionInfo): Topic => ({
-  id: session.id,
-  title:
-    session.name ||
-    `话题 ${new Date(session.created_at * 1000).toLocaleDateString("zh-CN")}`,
-  createdAt: new Date(session.created_at * 1000),
-  messagesCount: session.messages_count ?? 0,
-  executionStrategy: normalizeExecutionStrategy(session.execution_strategy),
-});
+const mapSessionToTopic = (session: AsterSessionInfo): Topic => {
+  const updatedAtEpoch = Number.isFinite(session.updated_at)
+    ? session.updated_at
+    : session.created_at;
+
+  return {
+    id: session.id,
+    title:
+      session.name ||
+      `话题 ${new Date(session.created_at * 1000).toLocaleDateString("zh-CN")}`,
+    createdAt: new Date(session.created_at * 1000),
+    updatedAt: new Date(updatedAtEpoch * 1000),
+    messagesCount: session.messages_count ?? 0,
+    executionStrategy: normalizeExecutionStrategy(session.execution_strategy),
+  };
+};
 
 export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   const { onWriteFile, workspaceId } = options;
@@ -993,6 +1099,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   }, [sessionId, workspaceId]);
 
   const [topics, setTopics] = useState<Topic[]>([]);
+  const [topicsReady, setTopicsReady] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [pendingActions, setPendingActions] = useState<ActionRequired[]>([]);
   const [workspacePathMissing, setWorkspacePathMissing] = useState<{
@@ -1048,11 +1155,18 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   modelRef.current = model;
 
   const persistSessionModelPreference = useCallback(
-    (targetSessionId: string, targetProviderType: string, targetModel: string) => {
-      savePersisted(getSessionModelPreferenceKey(workspaceId, targetSessionId), {
-        providerType: targetProviderType,
-        model: targetModel,
-      });
+    (
+      targetSessionId: string,
+      targetProviderType: string,
+      targetModel: string,
+    ) => {
+      savePersisted(
+        getSessionModelPreferenceKey(workspaceId, targetSessionId),
+        {
+          providerType: targetProviderType,
+          model: targetModel,
+        },
+      );
     },
     [workspaceId],
   );
@@ -1294,38 +1408,63 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (!isInitialized) {
       return;
     }
 
     if (!workspaceId?.trim()) {
       setTopics([]);
+      setTopicsReady(true);
       return;
     }
 
+    setTopicsReady(false);
     listAsterSessions()
       .then((sessions) => {
-        const topicList = filterSessionsByWorkspace(sessions).map(mapSessionToTopic);
+        if (cancelled) {
+          return;
+        }
+        const topicList =
+          filterSessionsByWorkspace(sessions).map(mapSessionToTopic);
         setTopics(topicList);
       })
       .catch((error) => {
+        if (cancelled) {
+          return;
+        }
         console.error("[AsterChat] 加载话题失败:", error);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setTopicsReady(true);
+        }
       });
+
+    return () => {
+      cancelled = true;
+    };
   }, [filterSessionsByWorkspace, isInitialized, workspaceId]);
 
   // 加载话题列表
   const loadTopics = useCallback(async () => {
     if (!workspaceId?.trim()) {
       setTopics([]);
+      setTopicsReady(true);
       return;
     }
 
+    setTopicsReady(false);
     try {
       const sessions = await listAsterSessions();
-      const topicList = filterSessionsByWorkspace(sessions).map(mapSessionToTopic);
+      const topicList =
+        filterSessionsByWorkspace(sessions).map(mapSessionToTopic);
       setTopics(topicList);
     } catch (error) {
       console.error("[AsterChat] 加载话题失败:", error);
+    } finally {
+      setTopicsReady(true);
     }
   }, [filterSessionsByWorkspace, workspaceId]);
 
@@ -1504,7 +1643,11 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 );
               }
 
-              if (nextRequests.some((item) => item.requestId === actionData.requestId)) {
+              if (
+                nextRequests.some(
+                  (item) => item.requestId === actionData.requestId,
+                )
+              ) {
                 return msg;
               }
 
@@ -1622,14 +1765,15 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                   toolArgs?.options || toolArgs?.choices || toolArgs?.enum,
                 );
                 const explicitRequestId = requestIdFromArgs?.trim();
-                const normalizedQuestions =
-                  normalizeActionQuestions(toolArgs?.questions) ?? [
-                    {
-                      question,
-                      options,
-                      multiSelect: false,
-                    },
-                  ];
+                const normalizedQuestions = normalizeActionQuestions(
+                  toolArgs?.questions,
+                ) ?? [
+                  {
+                    question,
+                    options,
+                    multiSelect: false,
+                  },
+                ];
 
                 const fallbackAction: ActionRequired = {
                   requestId:
@@ -1666,7 +1810,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                   eventType,
                   status: isSuccess ? "success" : "error",
                   duration,
-                  description: outputText || (isSuccess ? "工具执行完成" : "工具执行失败"),
+                  description:
+                    outputText || (isSuccess ? "工具执行完成" : "工具执行失败"),
                   error: isSuccess
                     ? undefined
                     : outputText || "工具返回失败状态",
@@ -1676,7 +1821,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                   eventType,
                   status: isSuccess ? "success" : "error",
                   title: `工具 ${toolName}`,
-                  description: outputText || (isSuccess ? "工具执行完成" : "工具执行失败"),
+                  description:
+                    outputText || (isSuccess ? "工具执行完成" : "工具执行失败"),
                   duration,
                   workspaceId: resolvedWorkspaceId,
                   sessionId: activeSessionId,
@@ -1753,7 +1899,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 toolName: data.tool_name,
                 arguments: data.arguments,
                 prompt: data.prompt,
-                questions: normalizeActionQuestions(data.questions, data.prompt),
+                questions: normalizeActionQuestions(
+                  data.questions,
+                  data.prompt,
+                ),
                 requestedSchema: data.requested_schema,
                 isFallback: false,
               };
@@ -1878,7 +2027,10 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                   error: data.message,
                 });
               }
-              if (data.message.includes("429") || data.message.toLowerCase().includes("rate limit")) {
+              if (
+                data.message.includes("429") ||
+                data.message.toLowerCase().includes("rate limit")
+              ) {
                 toast.warning("请求过于频繁，请稍后重试");
               } else {
                 toast.error(`响应错误: ${data.message}`);
@@ -1957,9 +2109,11 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
           });
         }
         console.error("[AsterChat] 发送失败:", error);
-        const errMsg =
-          error instanceof Error ? error.message : String(error);
-        if (errMsg.includes("429") || errMsg.toLowerCase().includes("rate limit")) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (
+          errMsg.includes("429") ||
+          errMsg.toLowerCase().includes("rate limit")
+        ) {
           toast.warning("请求过于频繁，请稍后重试");
         } else if (isWorkspacePathErrorMessage(errMsg)) {
           setWorkspacePathMissing({ content, images });
@@ -1972,12 +2126,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
         if (unlisten) unlisten();
       }
     },
-    [
-      ensureSession,
-      executionStrategy,
-      getRequiredWorkspaceId,
-      onWriteFile,
-    ],
+    [ensureSession, executionStrategy, getRequiredWorkspaceId, onWriteFile],
   );
 
   // 停止发送
@@ -2016,7 +2165,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   const fixWorkspacePathAndRetry = useCallback(
     async (newPath: string) => {
       if (!workspacePathMissing) return;
-      const { content: retryContent, images: retryImages } = workspacePathMissing;
+      const { content: retryContent, images: retryImages } =
+        workspacePathMissing;
       setWorkspacePathMissing(null);
       try {
         await invoke("workspace_update", {
@@ -2044,9 +2194,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
         const pendingAction = pendingActions.find(
           (item) => item.requestId === response.requestId,
         );
-        const actionType =
-          response.actionType ||
-          pendingAction?.actionType;
+        const actionType = response.actionType || pendingAction?.actionType;
         const normalizedResponse =
           typeof response.response === "string" ? response.response.trim() : "";
         let submittedUserData: unknown = response.userData;
@@ -2243,12 +2391,17 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       skipAutoRestoreRef.current = false;
       try {
         const detail = await getAsterSession(topicId);
-        const topicPreference = loadSessionModelPreference(workspaceId, topicId);
+        const topicPreference = loadSessionModelPreference(
+          workspaceId,
+          topicId,
+        );
         const historyToolNameById = new Map<string, string>();
         const loadedMessages: Message[] = detail.messages
           .filter(
             (msg) =>
-              msg.role === "user" || msg.role === "assistant" || msg.role === "tool",
+              msg.role === "user" ||
+              msg.role === "assistant" ||
+              msg.role === "tool",
           )
           .flatMap((msg, index) => {
             // 从 TauriMessageContent 数组中提取文本和 contentParts
@@ -2313,27 +2466,25 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                       ? (part.tool_call as Record<string, unknown>)
                       : undefined;
                 const nestedToolCallValue =
-                  nestedToolCall?.value && typeof nestedToolCall.value === "object"
+                  nestedToolCall?.value &&
+                  typeof nestedToolCall.value === "object"
                     ? (nestedToolCall.value as Record<string, unknown>)
                     : undefined;
                 const toolName =
-                  (
-                    (typeof part.tool_name === "string" && part.tool_name.trim()) ||
-                    (typeof part.toolName === "string" && part.toolName.trim()) ||
-                    (typeof part.name === "string" && part.name.trim()) ||
-                    (typeof nestedToolCallValue?.name === "string" &&
-                      nestedToolCallValue.name.trim())
-                  )
-                    ? (
-                        (typeof part.tool_name === "string" &&
-                          part.tool_name.trim()) ||
-                        (typeof part.toolName === "string" &&
-                          part.toolName.trim()) ||
-                        (typeof part.name === "string" && part.name.trim()) ||
-                        (typeof nestedToolCallValue?.name === "string" &&
-                          nestedToolCallValue.name.trim()) ||
-                        ""
-                      )
+                  (typeof part.tool_name === "string" &&
+                    part.tool_name.trim()) ||
+                  (typeof part.toolName === "string" && part.toolName.trim()) ||
+                  (typeof part.name === "string" && part.name.trim()) ||
+                  (typeof nestedToolCallValue?.name === "string" &&
+                    nestedToolCallValue.name.trim())
+                    ? (typeof part.tool_name === "string" &&
+                        part.tool_name.trim()) ||
+                      (typeof part.toolName === "string" &&
+                        part.toolName.trim()) ||
+                      (typeof part.name === "string" && part.name.trim()) ||
+                      (typeof nestedToolCallValue?.name === "string" &&
+                        nestedToolCallValue.name.trim()) ||
+                      ""
                     : resolveHistoryToolName(part.id, historyToolNameById);
                 const rawArguments =
                   part.arguments ??
@@ -2355,23 +2506,25 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
               if (partType === "tool_response") {
                 if (!part.id || typeof part.id !== "string") continue;
                 const success = part.success !== false;
-                const toolName =
-                  resolveHistoryToolName(part.id, historyToolNameById);
+                const toolName = resolveHistoryToolName(
+                  part.id,
+                  historyToolNameById,
+                );
                 const outputText =
                   typeof part.output === "string" ? part.output : "";
                 const toolCall = {
                   id: part.id,
                   name: toolName,
-                  status: success ? ("completed" as const) : ("failed" as const),
+                  status: success
+                    ? ("completed" as const)
+                    : ("failed" as const),
                   startTime: messageTimestamp,
                   endTime: messageTimestamp,
                   result: {
                     success,
                     output: outputText,
                     error:
-                      typeof part.error === "string"
-                        ? part.error
-                        : undefined,
+                      typeof part.error === "string" ? part.error : undefined,
                     images: normalizeToolResultImages(part.images, outputText),
                   },
                 };
@@ -2401,7 +2554,9 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
             const content = textParts.join("\n").trim();
             let normalizedRole =
-              msg.role === "tool" ? "assistant" : (msg.role as "user" | "assistant");
+              msg.role === "tool"
+                ? "assistant"
+                : (msg.role as "user" | "assistant");
             const hasToolMetadata =
               toolCalls.length > 0 ||
               contentParts.some((part) => part.type === "tool_use");
@@ -2429,7 +2584,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
                 role: normalizedRole,
                 content,
                 images: images.length > 0 ? images : undefined,
-                contentParts: contentParts.length > 0 ? contentParts : undefined,
+                contentParts:
+                  contentParts.length > 0 ? contentParts : undefined,
                 toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
                 timestamp: messageTimestamp,
                 isThinking: false,
@@ -2437,7 +2593,11 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
             ];
           });
 
-        setMessages(mergeAdjacentAssistantMessages(loadedMessages));
+        setMessages(
+          mergeAdjacentAssistantMessages(
+            dedupeAdjacentHistoryMessages(loadedMessages),
+          ),
+        );
         const selectedTopic = topics.find((topic) => topic.id === topicId);
         setExecutionStrategyState(
           normalizeExecutionStrategy(
@@ -2464,11 +2624,21 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       } catch (error) {
         console.error("[AsterChat] 切换话题失败:", error);
         console.error("[AsterChat] 错误详情:", JSON.stringify(error, null, 2));
+        if (isAsterSessionNotFoundError(error)) {
+          setMessages([]);
+          setSessionId(null);
+          saveTransient(getScopedSessionKey(), null);
+          savePersisted(getScopedPersistedSessionKey(), null);
+          void loadTopics();
+          return;
+        }
         setMessages([]);
         setSessionId(null);
         saveTransient(getScopedSessionKey(), null);
         savePersisted(getScopedPersistedSessionKey(), null);
-        toast.error(`加载对话历史失败: ${error instanceof Error ? error.message : String(error)}`);
+        toast.error(
+          `加载对话历史失败: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
     },
     [
@@ -2477,6 +2647,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       messages.length,
       persistSessionModelPreference,
       sessionId,
+      loadTopics,
       topics,
       workspaceId,
     ],
@@ -2487,6 +2658,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     const resolvedWorkspaceId = workspaceId?.trim();
     if (!resolvedWorkspaceId) return;
     if (!isInitialized) return;
+    if (!topicsReady) return;
     if (skipAutoRestoreRef.current) return;
     if (sessionId) return;
     if (topics.length === 0) return;
@@ -2497,16 +2669,14 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     const scopedCandidate =
       loadTransient<string | null>(getScopedSessionKey(), null) ||
       loadPersisted<string | null>(getScopedPersistedSessionKey(), null);
-    const mappedFallbackCandidate =
-      topics.find(
-        (topic) =>
-          loadPersisted<string | null>(
-            `agent_session_workspace_${topic.id}`,
-            null,
-          ) === resolvedWorkspaceId,
-      )?.id || null;
-
-    const targetSessionId = scopedCandidate || mappedFallbackCandidate;
+    const targetSessionId = resolveRestorableSessionId({
+      candidateSessionId: scopedCandidate,
+      sessions: topics.map((topic) => ({
+        id: topic.id,
+        createdAt: Math.floor(topic.createdAt.getTime() / 1000),
+        updatedAt: Math.floor(topic.updatedAt.getTime() / 1000),
+      })),
+    });
     if (!targetSessionId) {
       return;
     }
@@ -2522,6 +2692,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     isInitialized,
     sessionId,
     switchTopic,
+    topicsReady,
     topics,
     workspaceId,
   ]);
@@ -2535,6 +2706,16 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   // 有 sessionId 但消息为空时，主动回填历史
   useEffect(() => {
     if (!sessionId) return;
+    if (!topicsReady) return;
+
+    if (topics.length > 0 && !topics.some((topic) => topic.id === sessionId)) {
+      setSessionId(null);
+      setMessages([]);
+      saveTransient(getScopedSessionKey(), null);
+      savePersisted(getScopedPersistedSessionKey(), null);
+      hydratedSessionRef.current = null;
+      return;
+    }
 
     if (messages.length > 0) {
       hydratedSessionRef.current = sessionId;
@@ -2551,7 +2732,15 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
       console.warn("[AsterChat] 会话水合失败:", error);
       hydratedSessionRef.current = null;
     });
-  }, [messages.length, sessionId, switchTopic]);
+  }, [
+    getScopedPersistedSessionKey,
+    getScopedSessionKey,
+    messages.length,
+    sessionId,
+    switchTopic,
+    topics,
+    topicsReady,
+  ]);
 
   // 删除话题
   const deleteTopic = useCallback(
@@ -2578,30 +2767,28 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
         toast.error("删除话题失败");
       }
     },
-    [
-      getScopedPersistedSessionKey,
-      getScopedSessionKey,
-      loadTopics,
-      sessionId,
-    ],
+    [getScopedPersistedSessionKey, getScopedSessionKey, loadTopics, sessionId],
   );
 
   // 重命名话题（持久化）
-  const renameTopic = useCallback(async (topicId: string, newTitle: string) => {
-    const normalizedTitle = newTitle.trim();
-    if (!normalizedTitle) {
-      return;
-    }
+  const renameTopic = useCallback(
+    async (topicId: string, newTitle: string) => {
+      const normalizedTitle = newTitle.trim();
+      if (!normalizedTitle) {
+        return;
+      }
 
-    try {
-      await renameAsterSession(topicId, normalizedTitle);
-      await loadTopics();
-      toast.success("话题已重命名");
-    } catch (error) {
-      console.error("[AsterChat] 重命名话题失败:", error);
-      toast.error("重命名失败");
-    }
-  }, [loadTopics]);
+      try {
+        await renameAsterSession(topicId, normalizedTitle);
+        await loadTopics();
+        toast.success("话题已重命名");
+      } catch (error) {
+        console.error("[AsterChat] 重命名话题失败:", error);
+        toast.error("重命名失败");
+      }
+    },
+    [loadTopics],
+  );
 
   // 兼容接口
   const handleStartProcess = useCallback(async () => {

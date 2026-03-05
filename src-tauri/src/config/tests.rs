@@ -208,6 +208,7 @@ fn arb_config() -> impl Strategy<Value = Config> {
             heartbeat: proxycast_core::config::HeartbeatSettings::default(),
             channels: proxycast_core::config::ChannelsConfig::default(),
             crash_reporting: proxycast_core::config::CrashReportingConfig::default(),
+            gateway: proxycast_core::config::GatewayConfig::default(),
         })
 }
 
@@ -464,6 +465,7 @@ fn arb_valid_config() -> impl Strategy<Value = Config> {
             heartbeat: proxycast_core::config::HeartbeatSettings::default(),
             channels: proxycast_core::config::ChannelsConfig::default(),
             crash_reporting: proxycast_core::config::CrashReportingConfig::default(),
+            gateway: proxycast_core::config::GatewayConfig::default(),
         })
 }
 
@@ -530,6 +532,7 @@ fn arb_invalid_config() -> impl Strategy<Value = Config> {
                     heartbeat: proxycast_core::config::HeartbeatSettings::default(),
                     channels: proxycast_core::config::ChannelsConfig::default(),
                     crash_reporting: proxycast_core::config::CrashReportingConfig::default(),
+                    gateway: proxycast_core::config::GatewayConfig::default(),
                 };
                 // 根据类型使配置无效
                 match invalid_type {

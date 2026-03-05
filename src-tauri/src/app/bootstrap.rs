@@ -32,6 +32,7 @@ use crate::services::heartbeat_service::{HeartbeatService, HeartbeatServiceState
 use crate::telemetry;
 use crate::voice::recording_service::{create_recording_service_state, RecordingServiceState};
 use proxycast_core::config::{Config, ConfigManager};
+use proxycast_scheduler::AgentScheduler;
 use proxycast_server as server;
 use proxycast_services::api_key_provider_service::ApiKeyProviderService;
 use proxycast_services::aster_session_store::ProxyCastSessionStore;
@@ -238,6 +239,13 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         let conn = database::lock_db(&db).map_err(|e| format!("Failed to lock database: {e}"))?;
         database::dao::skills::SkillDao::init_default_skill_repos(&conn)
             .map_err(|e| format!("初始化默认技能仓库失败: {e}"))?;
+    }
+
+    // 初始化调度器表，避免运行期健康检查出现缺表错误
+    if let Err(error) = AgentScheduler::init_tables(&db) {
+        tracing::error!("[Bootstrap] 调度器表初始化失败: {}", error);
+    } else {
+        tracing::info!("[Bootstrap] 调度器表初始化成功");
     }
 
     // 初始化上下文记忆服务

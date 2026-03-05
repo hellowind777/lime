@@ -65,7 +65,7 @@ fn resolve_codex_provider_and_model(
         })
         .map(|item| {
             let model = resolve_model_name(explicit_model, &item.provider.custom_models)?;
-            Ok((item.provider.id, model))
+            Ok::<_, String>((item.provider.id, model))
         })
         .transpose()?
         .ok_or_else(|| "未找到启用且含可用 Key 的 Codex Provider".to_string())

@@ -94,6 +94,10 @@ pub fn run() {
     let shared_tokens_clone = shared_tokens.clone();
     let shared_logger_clone = shared_logger.clone();
     let update_check_service_clone = update_check_service_state.0.clone();
+    let gateway_tunnel_state = proxycast_gateway::tunnel::GatewayTunnelState::default();
+    let gateway_tunnel_state_for_setup = gateway_tunnel_state.clone();
+    let global_config_manager_for_setup = global_config_manager_state.clone();
+    let tunnel_logs_clone = logs.clone();
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -155,6 +159,10 @@ pub fn run() {
         .manage(recording_service)
         .manage(mcp_manager_state)
         .manage(heartbeat_service_state)
+        .manage(proxycast_gateway::telegram::TelegramGatewayState::default())
+        .manage(proxycast_gateway::discord::DiscordGatewayState::default())
+        .manage(proxycast_gateway::feishu::FeishuGatewayState::default())
+        .manage(gateway_tunnel_state)
         .manage(commands::telegram_remote_cmd::TelegramRemoteState::default())
         .on_window_event(move |window, event| {
             // 处理窗口关闭事件
@@ -718,6 +726,108 @@ pub fn run() {
                             tracing::error!("[启动] 无法获取 HeartbeatServiceState");
                             break;
                         }
+                    }
+                });
+            }
+
+            // 启动 Gateway Tunnel 守护（managed 模式自动拉起并持续保活）
+            {
+                let tunnel_state = gateway_tunnel_state_for_setup.clone();
+                let config_manager = global_config_manager_for_setup.clone();
+                let logs = tunnel_logs_clone.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut round: u64 = 0;
+                    loop {
+                        let config = config_manager.config();
+                        if !config.gateway.tunnel.enabled {
+                            round = 0;
+                            tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+                            continue;
+                        }
+
+                        let mode = config.gateway.tunnel.mode.trim().to_ascii_lowercase();
+                        if mode == "managed" {
+                            match proxycast_gateway::tunnel::status_tunnel_with_config(
+                                &tunnel_state,
+                                Some(config.clone()),
+                            )
+                            .await
+                            {
+                                Ok(status) => {
+                                    if status.running {
+                                        if round == 0 {
+                                            logs.write().await.add(
+                                                "info",
+                                                &format!(
+                                                    "[GatewayTunnel] managed 隧道运行中: pid={:?} local={} public={:?}",
+                                                    status.pid, status.local_url, status.public_base_url
+                                                ),
+                                            );
+                                        }
+                                    } else if proxycast_gateway::tunnel::is_manual_stop_error(
+                                        status.last_error.as_deref(),
+                                    ) {
+                                        if round % 6 == 0 {
+                                            logs.write().await.add(
+                                                "info",
+                                                "[GatewayTunnel] managed 隧道处于手动停止状态，守护器不自动拉起",
+                                            );
+                                        }
+                                    } else {
+                                        logs.write().await.add(
+                                            "warn",
+                                            &format!(
+                                                "[GatewayTunnel] managed 隧道未运行，守护器尝试拉起: last_exit={:?} last_error={:?}",
+                                                status.last_exit, status.last_error
+                                            ),
+                                        );
+                                        if let Err(e) = proxycast_gateway::tunnel::start_tunnel(
+                                            &tunnel_state,
+                                            logs.clone(),
+                                            config.clone(),
+                                        )
+                                        .await
+                                        {
+                                            logs.write().await.add(
+                                                "warn",
+                                                &format!("[GatewayTunnel] 守护拉起失败: {e}"),
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    logs.write()
+                                        .await
+                                        .add("warn", &format!("[GatewayTunnel] 守护状态检查失败: {e}"));
+                                }
+                            }
+                        } else if mode == "external" && round % 6 == 0 {
+                            match proxycast_gateway::tunnel::status_tunnel_with_config(
+                                &tunnel_state,
+                                Some(config),
+                            )
+                            .await
+                            {
+                                Ok(status) => {
+                                    logs.write().await.add(
+                                        "info",
+                                        &format!(
+                                            "[GatewayTunnel] external 模式诊断: active={:?} detail={:?}",
+                                            status.connector_active, status.connector_message
+                                        ),
+                                    );
+                                }
+                                Err(e) => {
+                                    logs.write().await.add(
+                                        "warn",
+                                        &format!("[GatewayTunnel] external 模式诊断失败: {e}"),
+                                    );
+                                }
+                            }
+                        }
+
+                        round = round.saturating_add(1);
+                        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                     }
                 });
             }
@@ -1483,6 +1593,21 @@ pub fn run() {
             commands::heartbeat_cmd::preview_heartbeat_schedule,
             commands::heartbeat_cmd::validate_heartbeat_schedule,
             // Telegram 远程触发命令
+            commands::gateway_channel_cmd::gateway_channel_start,
+            commands::gateway_channel_cmd::gateway_channel_stop,
+            commands::gateway_channel_cmd::gateway_channel_status,
+            commands::gateway_channel_cmd::telegram_channel_probe,
+            commands::gateway_channel_cmd::feishu_channel_probe,
+            commands::gateway_channel_cmd::discord_channel_probe,
+            commands::gateway_tunnel_cmd::gateway_tunnel_probe,
+            commands::gateway_tunnel_cmd::gateway_tunnel_detect_cloudflared,
+            commands::gateway_tunnel_cmd::gateway_tunnel_install_cloudflared,
+            commands::gateway_tunnel_cmd::gateway_tunnel_create,
+            commands::gateway_tunnel_cmd::gateway_tunnel_start,
+            commands::gateway_tunnel_cmd::gateway_tunnel_stop,
+            commands::gateway_tunnel_cmd::gateway_tunnel_restart,
+            commands::gateway_tunnel_cmd::gateway_tunnel_status,
+            commands::gateway_tunnel_cmd::gateway_tunnel_sync_webhook_url,
             commands::telegram_remote_cmd::start_telegram_remote,
             commands::telegram_remote_cmd::stop_telegram_remote,
             commands::telegram_remote_cmd::get_telegram_remote_status,

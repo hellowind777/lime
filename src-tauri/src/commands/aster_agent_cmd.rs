@@ -19,12 +19,6 @@ use crate::mcp::{McpManagerState, McpServerConfig};
 use crate::services::execution_tracker_service::{ExecutionTracker, RunFinalizeOptions, RunSource};
 use crate::services::heartbeat_service::HeartbeatServiceState;
 use crate::services::memory_profile_prompt_service::merge_system_prompt_with_memory_profile;
-#[cfg(test)]
-use crate::services::request_tool_policy_prompt_service::REQUEST_TOOL_POLICY_MARKER;
-use crate::services::request_tool_policy_prompt_service::{
-    execute_web_search_preflight_if_needed, merge_system_prompt_with_request_tool_policy,
-    resolve_request_tool_policy, RequestToolPolicy, WebSearchExecutionTracker,
-};
 use crate::services::web_search_prompt_service::merge_system_prompt_with_web_search;
 use crate::services::web_search_runtime_service::apply_web_search_runtime_env;
 use crate::services::workspace_health_service::ensure_workspace_ready_with_auto_relocate;
@@ -48,7 +42,12 @@ use aster::tools::{
 };
 use async_trait::async_trait;
 use futures::StreamExt;
-use proxycast_agent::event_converter::convert_agent_event;
+#[cfg(test)]
+use proxycast_agent::request_tool_policy::REQUEST_TOOL_POLICY_MARKER;
+use proxycast_agent::request_tool_policy::{
+    merge_system_prompt_with_request_tool_policy, resolve_request_tool_policy,
+    stream_reply_with_policy, ReplyAttemptError, RequestToolPolicy,
+};
 use proxycast_services::mcp_service::McpService;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -389,12 +388,6 @@ impl AsterExecutionStrategy {
     }
 }
 
-#[derive(Debug)]
-struct ReplyAttemptError {
-    message: String,
-    emitted_any: bool,
-}
-
 fn should_force_react_for_message(message: &str) -> bool {
     let lowered = message.to_lowercase();
     let default_hints = [
@@ -413,29 +406,6 @@ fn should_force_react_for_message(message: &str) -> bool {
     resolve_intent_hints("PROXYCAST_FORCE_REACT_HINTS", &default_hints)
         .iter()
         .any(|kw| lowered.contains(kw))
-}
-
-fn extract_inline_agent_provider_error(message: &Message) -> Option<String> {
-    let text = message.as_concat_text();
-    if !text.contains("Ran into this error:") {
-        return None;
-    }
-    if !text.contains("Please retry if you think this is a transient or recoverable error.") {
-        return None;
-    }
-
-    let after_prefix = text.split_once("Ran into this error:")?.1.trim();
-    let detail = after_prefix
-        .split_once("\n\nPlease retry if you think this is a transient or recoverable error.")
-        .map(|(left, _)| left.trim())
-        .unwrap_or(after_prefix)
-        .trim_end_matches('.');
-
-    if detail.is_empty() {
-        return Some("Agent provider execution failed".to_string());
-    }
-
-    Some(format!("Agent provider execution failed: {detail}"))
 }
 
 fn should_use_code_orchestrated_for_message(message: &str) -> bool {
@@ -510,104 +480,21 @@ async fn stream_reply_once(
     cancel_token: CancellationToken,
     request_tool_policy: &RequestToolPolicy,
 ) -> Result<(), ReplyAttemptError> {
-    let mut web_search_tracker = WebSearchExecutionTracker::default();
-    let preflight = execute_web_search_preflight_if_needed(
+    stream_reply_with_policy(
         agent,
-        &session_config.id,
         message_text,
         working_directory,
-        Some(cancel_token.clone()),
+        session_config,
+        Some(cancel_token),
         request_tool_policy,
-        &mut web_search_tracker,
+        |event| {
+            if let Err(error) = app.emit(event_name, event) {
+                tracing::error!("[AsterAgent] 发送事件失败: {}", error);
+            }
+        },
     )
-    .await;
-    match preflight {
-        Ok(preflight_execution) => {
-            for event in preflight_execution.events {
-                if let Err(error) = app.emit(event_name, &event) {
-                    tracing::error!("[AsterAgent] 发送预调用事件失败: {}", error);
-                }
-            }
-        }
-        Err(error) => {
-            return Err(ReplyAttemptError {
-                message: format!(
-                    "{error}\n尝试记录: {}",
-                    web_search_tracker.format_attempts()
-                ),
-                emitted_any: false,
-            });
-        }
-    }
-
-    let user_message = Message::user().with_text(message_text);
-    let mut stream = agent
-        .reply(user_message, session_config, Some(cancel_token))
-        .await
-        .map_err(|e| ReplyAttemptError {
-            message: format!("Agent error: {e}"),
-            emitted_any: false,
-        })?;
-
-    let mut emitted_any = false;
-    while let Some(event_result) = stream.next().await {
-        match event_result {
-            Ok(agent_event) => {
-                emitted_any = true;
-                let inline_provider_error = match &agent_event {
-                    AgentEvent::Message(message) => extract_inline_agent_provider_error(message),
-                    _ => None,
-                };
-                let tauri_events = convert_agent_event(agent_event);
-                for tauri_event in tauri_events {
-                    match &tauri_event {
-                        TauriAgentEvent::ToolStart {
-                            tool_name, tool_id, ..
-                        } => web_search_tracker.record_tool_start(
-                            request_tool_policy,
-                            tool_id,
-                            tool_name,
-                        ),
-                        TauriAgentEvent::ToolEnd { tool_id, result } => web_search_tracker
-                            .record_tool_end(
-                                request_tool_policy,
-                                tool_id,
-                                result.success,
-                                result.error.as_deref(),
-                            ),
-                        _ => {}
-                    }
-                    if let Err(e) = app.emit(event_name, &tauri_event) {
-                        tracing::error!("[AsterAgent] 发送事件失败: {}", e);
-                    }
-                }
-                if let Some(message) = inline_provider_error {
-                    tracing::warn!("[AsterAgent] 捕获到消息级 Provider 错误: {}", message);
-                    return Err(ReplyAttemptError {
-                        message,
-                        emitted_any: true,
-                    });
-                }
-            }
-            Err(e) => {
-                return Err(ReplyAttemptError {
-                    message: format!("Stream error: {e}"),
-                    emitted_any,
-                });
-            }
-        }
-    }
-
-    if let Err(validation_error) =
-        web_search_tracker.validate_web_search_requirement(request_tool_policy)
-    {
-        return Err(ReplyAttemptError {
-            message: validation_error,
-            emitted_any,
-        });
-    }
-
-    Ok(())
+    .await
+    .map(|_| ())
 }
 
 /// 基于 aster::sandbox 的本地 bash 强隔离工具

@@ -6,7 +6,7 @@ use crate::app::types::{AppState, LogState};
 use crate::app::utils::is_valid_bind_host;
 use crate::config::{
     self,
-    observer::{ConfigChangeEvent, FullReloadEvent, RoutingChangeEvent},
+    observer::{ConfigChangeEvent, RoutingChangeEvent},
     ConfigChangeSource, GlobalConfigManagerState,
 };
 
@@ -52,21 +52,9 @@ pub async fn save_config(
         s.config = config.clone();
     }
 
-    let save_result = config::save_config(&config).map_err(|e| e.to_string());
+    let save_result = config_manager.0.save_config(&config).await;
     match save_result {
         Ok(()) => {
-            proxycast_core::tool_calling::apply_tool_calling_runtime_config(&config);
-
-            let full_reload_event = ConfigChangeEvent::FullReload(FullReloadEvent {
-                timestamp_ms: chrono::Utc::now().timestamp_millis() as u64,
-                source: ConfigChangeSource::FrontendUI,
-            });
-            config_manager
-                .0
-                .subject()
-                .notify_event(full_reload_event)
-                .await;
-
             tracing::info!("[CONFIG] 配置保存成功: host={}", config.server.host);
             Ok(())
         }

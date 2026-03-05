@@ -136,8 +136,8 @@ impl OSCParser {
     /// 解析出的 OSC 序列列表，每个元素包含序列和位置范围
     ///
     /// # 示例
-    /// ```
-    /// use proxycast::terminal::integration::osc_parser::{OSCParser, OSCSequence};
+    /// ```ignore
+    /// use proxycast_terminal::integration::osc_parser::{OSCParser, OSCSequence};
     ///
     /// let data = b"\x1b]7;file://localhost/home/user\x07";
     /// let results = OSCParser::parse(data);

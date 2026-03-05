@@ -90,7 +90,7 @@ pub fn migrate_playwright_mcp_server(conn: &Connection) -> Result<MigrationResul
 fn execute_playwright_migration(conn: &Connection) -> Result<String, String> {
     // 创建 Playwright MCP Server 配置
     let server_id = Uuid::new_v4().to_string();
-    let created_at = Utc::now().to_rfc3339();
+    let created_at = Utc::now().timestamp();
 
     // 构建服务器配置
     let server_config = json!({

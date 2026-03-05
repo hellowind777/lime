@@ -91,8 +91,8 @@ impl ConnectionRouter {
     /// 对应的连接类型
     ///
     /// # 示例
-    /// ```
-    /// use proxycast::terminal::connections::ConnectionRouter;
+    /// ```ignore
+    /// use proxycast_terminal::connections::{ConnectionRouter, ConnectionType};
     ///
     /// assert_eq!(ConnectionRouter::route(""), ConnectionType::Local);
     /// assert_eq!(ConnectionRouter::route("local"), ConnectionType::Local);

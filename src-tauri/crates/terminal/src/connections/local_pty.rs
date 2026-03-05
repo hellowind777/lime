@@ -52,9 +52,40 @@ fn resolve_default_shell() -> String {
 
     #[cfg(target_os = "windows")]
     {
+        let is_valid_windows_shell = |candidate: &str| -> bool {
+            let cleaned = candidate.trim();
+            if cleaned.is_empty() {
+                return false;
+            }
+
+            // 拒绝 Unix 风格路径（如 /bin/bash）
+            if cleaned.starts_with('/') {
+                return false;
+            }
+
+            let path = Path::new(cleaned);
+            if path.is_absolute() {
+                if !path.exists() {
+                    return false;
+                }
+
+                let ext = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.to_ascii_lowercase());
+
+                return matches!(ext.as_deref(), Some("exe" | "cmd" | "bat" | "com"));
+            }
+
+            if cleaned.contains('/') || cleaned.contains('\\') {
+                return false;
+            }
+
+            true
+        };
+
         if let Some(shell) = shell_from_env {
-            let path = Path::new(&shell);
-            if path.is_absolute() && path.exists() {
+            if is_valid_windows_shell(&shell) {
                 return shell;
             }
         }
@@ -66,7 +97,7 @@ fn resolve_default_shell() -> String {
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            if !cleaned.is_empty() && Path::new(&cleaned).exists() {
+            if is_valid_windows_shell(&cleaned) {
                 return cleaned;
             }
         }

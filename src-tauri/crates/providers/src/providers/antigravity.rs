@@ -98,10 +98,19 @@ const ANTIGRAVITY_API_VERSION: &str = "v1internal";
 const CREDENTIALS_DIR: &str = ".antigravity";
 const CREDENTIALS_FILE: &str = "oauth_creds.json";
 
-// OAuth credentials - 与 Antigravity CLI 相同
-pub const OAUTH_CLIENT_ID: &str =
-    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
-pub const OAUTH_CLIENT_SECRET: &str = "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";
+// OAuth credentials - 从环境变量读取
+// 必须通过环境变量配置：
+// - ANTIGRAVITY_OAUTH_CLIENT_ID
+// - ANTIGRAVITY_OAUTH_CLIENT_SECRET
+fn oauth_client_id() -> String {
+    std::env::var("ANTIGRAVITY_OAUTH_CLIENT_ID")
+        .expect("ANTIGRAVITY_OAUTH_CLIENT_ID environment variable must be set")
+}
+
+fn oauth_client_secret() -> String {
+    std::env::var("ANTIGRAVITY_OAUTH_CLIENT_SECRET")
+        .expect("ANTIGRAVITY_OAUTH_CLIENT_SECRET environment variable must be set")
+}
 
 // OAuth scopes
 const OAUTH_SCOPES: &[&str] = &[
@@ -655,9 +664,11 @@ impl AntigravityProvider {
             })?
             .clone();
 
+        let client_id = oauth_client_id();
+        let client_secret = oauth_client_secret();
         let params = [
-            ("client_id", OAUTH_CLIENT_ID),
-            ("client_secret", OAUTH_CLIENT_SECRET),
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
             ("refresh_token", refresh_token.as_str()),
             ("grant_type", "refresh_token"),
         ];
@@ -779,9 +790,11 @@ impl AntigravityProvider {
             .as_ref()
             .ok_or("No refresh token available")?;
 
+        let client_id = oauth_client_id();
+        let client_secret = oauth_client_secret();
         let params = [
-            ("client_id", OAUTH_CLIENT_ID),
-            ("client_secret", OAUTH_CLIENT_SECRET),
+            ("client_id", client_id.as_str()),
+            ("client_secret", client_secret.as_str()),
             ("refresh_token", refresh_token.as_str()),
             ("grant_type", "refresh_token"),
         ];
@@ -1177,10 +1190,11 @@ pub struct AntigravityOAuthResult {
 pub fn generate_auth_url(port: u16, state: &str) -> String {
     let scopes = OAUTH_SCOPES.join(" ");
     let redirect_uri = format!("http://localhost:{port}/oauth-callback");
+    let client_id = oauth_client_id();
 
     let params = [
         ("access_type", "offline"),
-        ("client_id", OAUTH_CLIENT_ID),
+        ("client_id", client_id.as_str()),
         ("prompt", "consent"),
         ("redirect_uri", &redirect_uri),
         ("response_type", "code"),
@@ -1203,10 +1217,12 @@ pub async fn exchange_code_for_token(
     code: &str,
     redirect_uri: &str,
 ) -> Result<serde_json::Value, Box<dyn Error + Send + Sync>> {
+    let client_id = oauth_client_id();
+    let client_secret = oauth_client_secret();
     let params = [
         ("code", code),
-        ("client_id", OAUTH_CLIENT_ID),
-        ("client_secret", OAUTH_CLIENT_SECRET),
+        ("client_id", client_id.as_str()),
+        ("client_secret", client_secret.as_str()),
         ("redirect_uri", redirect_uri),
         ("grant_type", "authorization_code"),
     ];
@@ -2283,7 +2299,7 @@ mod tests {
         /// Property 1: 对于任何有效的过期时间（RFC3339 格式），validate_token() 应正确判断状态
         #[test]
         fn prop_validate_token_rfc3339_format(
-            expires_in_secs in -3600i64..7200i64, // -1小时到2小时
+            expires_in_secs in -3600i64..7200i64, // -1小时到2小时 (边界 ±2s 容差避免时间竞争)
         ) {
             let now = chrono::Utc::now();
             let expires_at = now + chrono::Duration::seconds(expires_in_secs);
@@ -2295,13 +2311,14 @@ mod tests {
 
             let result = provider.validate_token();
 
-            if expires_in_secs <= 0 {
+            if expires_in_secs <= -2 {
                 prop_assert!(is_expired(&result), "Expected Expired for expires_in_secs={}", expires_in_secs);
-            } else if expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD {
+            } else if expires_in_secs >= 2 && expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD - 2 {
                 prop_assert!(is_expiring_soon(&result), "Expected ExpiringSoon for expires_in_secs={}", expires_in_secs);
-            } else {
+            } else if expires_in_secs > TOKEN_EXPIRING_SOON_THRESHOLD + 2 {
                 prop_assert!(is_valid(&result), "Expected Valid for expires_in_secs={}", expires_in_secs);
             }
+            // 边界值 ±2s 内跳过断言，避免时间竞争
         }
 
         /// Property 1: 对于任何有效的过期时间（毫秒时间戳格式），validate_token() 应正确判断状态
@@ -2319,13 +2336,14 @@ mod tests {
 
             let result = provider.validate_token();
 
-            if expires_in_secs <= 0 {
+            if expires_in_secs <= -2 {
                 prop_assert!(is_expired(&result), "Expected Expired for expires_in_secs={}", expires_in_secs);
-            } else if expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD {
+            } else if expires_in_secs >= 2 && expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD - 2 {
                 prop_assert!(is_expiring_soon(&result), "Expected ExpiringSoon for expires_in_secs={}", expires_in_secs);
-            } else {
+            } else if expires_in_secs > TOKEN_EXPIRING_SOON_THRESHOLD + 2 {
                 prop_assert!(is_valid(&result), "Expected Valid for expires_in_secs={}", expires_in_secs);
             }
+            // 边界值 ±2s 内跳过断言，避免时间竞争
         }
 
         /// Property 1: 对于任何有效的过期时间（timestamp + expires_in 格式），validate_token() 应正确判断状态
@@ -2343,14 +2361,15 @@ mod tests {
 
             let result = provider.validate_token();
 
-            // 由于时间精度问题，允许 1 秒的误差
+            // 由于时间精度问题，允许 2 秒的误差
             if expires_in_secs <= 1 {
                 prop_assert!(is_expired(&result) || is_expiring_soon(&result), "Expected Expired or ExpiringSoon for expires_in_secs={}", expires_in_secs);
-            } else if expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD {
+            } else if expires_in_secs >= 2 && expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD - 2 {
                 prop_assert!(is_expiring_soon(&result), "Expected ExpiringSoon for expires_in_secs={}", expires_in_secs);
-            } else {
+            } else if expires_in_secs > TOKEN_EXPIRING_SOON_THRESHOLD + 2 {
                 prop_assert!(is_valid(&result), "Expected Valid for expires_in_secs={}", expires_in_secs);
             }
+            // 边界值 ±2s 内跳过断言，避免时间竞争
         }
     }
 

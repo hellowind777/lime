@@ -142,6 +142,8 @@ pub struct AgentRunParams {
     pub temperature: Option<f32>,
     /// 最大 token 数（可选）
     pub max_tokens: Option<u32>,
+    /// 是否开启联网搜索策略（可选）
+    pub web_search: Option<bool>,
     /// 是否流式响应
     #[serde(default)]
     pub stream: bool,

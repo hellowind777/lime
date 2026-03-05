@@ -90,6 +90,40 @@ pub struct PtySession {
 }
 
 impl PtySession {
+    #[cfg(target_os = "windows")]
+    fn is_valid_windows_shell(shell: &str) -> bool {
+        let cleaned = shell.trim();
+        if cleaned.is_empty() {
+            return false;
+        }
+
+        // 拒绝 Unix 风格路径（如 /bin/bash），避免在 Windows 下误判为可执行 shell
+        if cleaned.starts_with('/') {
+            return false;
+        }
+
+        let path = Path::new(cleaned);
+        if path.is_absolute() {
+            if !path.exists() {
+                return false;
+            }
+
+            let ext = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(|value| value.to_ascii_lowercase());
+
+            return matches!(ext.as_deref(), Some("exe" | "cmd" | "bat" | "com"));
+        }
+
+        // 相对路径包含分隔符时通常不可控，直接拒绝；仅允许命令名（由 PATH 解析）
+        if cleaned.contains('/') || cleaned.contains('\\') {
+            return false;
+        }
+
+        true
+    }
+
     fn resolve_default_shell() -> String {
         let shell_from_env = std::env::var("SHELL").ok().and_then(|value| {
             let cleaned = value
@@ -104,8 +138,7 @@ impl PtySession {
         #[cfg(target_os = "windows")]
         {
             if let Some(shell) = shell_from_env {
-                let path = Path::new(&shell);
-                if path.is_absolute() && path.exists() {
+                if Self::is_valid_windows_shell(&shell) {
                     return shell;
                 }
             }
@@ -117,7 +150,7 @@ impl PtySession {
                     .unwrap_or_default()
                     .trim()
                     .to_string();
-                if !cleaned.is_empty() && Path::new(&cleaned).exists() {
+                if Self::is_valid_windows_shell(&cleaned) {
                     return cleaned;
                 }
             }

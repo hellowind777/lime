@@ -156,6 +156,129 @@ export interface DiscordBotConfig {
   bot_token: string;
   allowed_server_ids: string[];
   default_model?: string;
+  default_account?: string;
+  accounts?: Record<string, DiscordAccountConfig>;
+  dm_policy?: string;
+  allow_from?: string[];
+  group_policy?: string;
+  group_allow_from?: string[];
+  groups?: Record<string, DiscordGuildConfig>;
+  streaming?: string;
+  reply_to_mode?: string;
+  intents?: DiscordIntentsConfig;
+  actions?: DiscordActionsConfig;
+  thread_bindings?: DiscordThreadBindingsConfig;
+  auto_presence?: DiscordAutoPresenceConfig;
+  voice?: DiscordVoiceConfig;
+  agent_components?: DiscordAgentComponentsConfig;
+  ui?: DiscordUiConfig;
+  exec_approvals?: DiscordExecApprovalsConfig;
+  response_prefix?: string;
+  ack_reaction?: string;
+}
+
+export interface DiscordAccountConfig {
+  enabled?: boolean;
+  name?: string;
+  bot_token?: string;
+  allowed_server_ids?: string[];
+  default_model?: string;
+  dm_policy?: string;
+  allow_from?: string[];
+  group_policy?: string;
+  group_allow_from?: string[];
+  groups?: Record<string, DiscordGuildConfig>;
+  streaming?: string;
+  reply_to_mode?: string;
+  intents?: DiscordIntentsConfig;
+  actions?: DiscordActionsConfig;
+  thread_bindings?: DiscordThreadBindingsConfig;
+  auto_presence?: DiscordAutoPresenceConfig;
+  voice?: DiscordVoiceConfig;
+  agent_components?: DiscordAgentComponentsConfig;
+  ui?: DiscordUiConfig;
+  exec_approvals?: DiscordExecApprovalsConfig;
+  response_prefix?: string;
+  ack_reaction?: string;
+}
+
+export interface DiscordGuildConfig {
+  enabled?: boolean;
+  require_mention?: boolean;
+  group_policy?: string;
+  allow_from?: string[];
+  channels?: Record<string, DiscordChannelConfig>;
+}
+
+export interface DiscordChannelConfig {
+  enabled?: boolean;
+  require_mention?: boolean;
+  group_policy?: string;
+  allow_from?: string[];
+}
+
+export interface DiscordIntentsConfig {
+  message_content?: boolean;
+  guild_members?: boolean;
+  presence?: boolean;
+}
+
+export interface DiscordActionsConfig {
+  reactions?: boolean;
+  messages?: boolean;
+  threads?: boolean;
+  moderation?: boolean;
+  presence?: boolean;
+}
+
+export interface DiscordThreadBindingsConfig {
+  enabled?: boolean;
+  idle_hours?: number;
+  max_age_hours?: number;
+  spawn_subagent_sessions?: boolean;
+  spawn_acp_sessions?: boolean;
+}
+
+export interface DiscordAutoPresenceConfig {
+  enabled?: boolean;
+  interval_ms?: number;
+  min_update_interval_ms?: number;
+  healthy_text?: string;
+  degraded_text?: string;
+  exhausted_text?: string;
+}
+
+export interface DiscordVoiceAutoJoinConfig {
+  guild_id: string;
+  channel_id: string;
+}
+
+export interface DiscordVoiceConfig {
+  enabled?: boolean;
+  auto_join?: DiscordVoiceAutoJoinConfig[];
+  dave_encryption?: boolean;
+  decryption_failure_tolerance?: number;
+}
+
+export interface DiscordAgentComponentsConfig {
+  enabled?: boolean;
+}
+
+export interface DiscordUiComponentsConfig {
+  accent_color?: string;
+}
+
+export interface DiscordUiConfig {
+  components?: DiscordUiComponentsConfig;
+}
+
+export interface DiscordExecApprovalsConfig {
+  enabled?: boolean;
+  approvers?: string[];
+  agent_filter?: string[];
+  session_filter?: string[];
+  cleanup_after_resolve?: boolean;
+  target?: string;
 }
 
 export interface FeishuBotConfig {
@@ -165,6 +288,49 @@ export interface FeishuBotConfig {
   verification_token?: string;
   encrypt_key?: string;
   default_model?: string;
+  default_account?: string;
+  accounts?: Record<string, FeishuAccountConfig>;
+  domain?: string;
+  connection_mode?: string;
+  webhook_host?: string;
+  webhook_port?: number;
+  webhook_path?: string;
+  dm_policy?: string;
+  allow_from?: string[];
+  group_policy?: string;
+  group_allow_from?: string[];
+  groups?: Record<string, FeishuGroupConfig>;
+  streaming?: string;
+  reply_to_mode?: string;
+}
+
+export interface FeishuGroupConfig {
+  enabled?: boolean;
+  require_mention?: boolean;
+  group_policy?: string;
+  allow_from?: string[];
+}
+
+export interface FeishuAccountConfig {
+  enabled?: boolean;
+  name?: string;
+  app_id?: string;
+  app_secret?: string;
+  verification_token?: string;
+  encrypt_key?: string;
+  default_model?: string;
+  domain?: string;
+  connection_mode?: string;
+  webhook_host?: string;
+  webhook_port?: number;
+  webhook_path?: string;
+  dm_policy?: string;
+  allow_from?: string[];
+  group_policy?: string;
+  group_allow_from?: string[];
+  groups?: Record<string, FeishuGroupConfig>;
+  streaming?: string;
+  reply_to_mode?: string;
 }
 
 export interface ChannelsConfig {

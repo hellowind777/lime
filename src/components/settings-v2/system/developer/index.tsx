@@ -6,7 +6,11 @@ import { useCallback, useState } from "react";
 import { Bug, Code2, Eye } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useComponentDebug } from "@/contexts/ComponentDebugContext";
-import { getConfig, getLogs, getPersistedLogsTail } from "@/hooks/useTauri";
+import {
+  getConfig,
+  getLogs,
+  getPersistedLogsTail,
+} from "@/hooks/useTauri";
 import {
   buildCrashDiagnosticPayload,
   copyCrashDiagnosticToClipboard,
