@@ -61,17 +61,15 @@ pub fn ensure_workspace_ready_with_auto_relocate(
     let original_root = workspace.root_path.clone();
 
     match ensure_workspace_root_ready(&original_root) {
-        Ok(created) => {
-            return Ok(WorkspaceReadyResult {
-                root_path: original_root,
-                existed: !created,
-                created,
-                repaired: created,
-                relocated: false,
-                previous_root_path: None,
-                warning: None,
-            });
-        }
+        Ok(created) => Ok(WorkspaceReadyResult {
+            root_path: original_root,
+            existed: !created,
+            created,
+            repaired: created,
+            relocated: false,
+            previous_root_path: None,
+            warning: None,
+        }),
         Err(primary_error) => {
             let fallback_root = build_workspace_fallback_root(workspace)?;
             if fallback_root == original_root {

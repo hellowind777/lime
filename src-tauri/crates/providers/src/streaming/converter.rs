@@ -29,9 +29,10 @@ pub enum StreamFormat {
 }
 
 /// 转换器状态
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ConverterState {
     /// 初始状态
+    #[default]
     Idle,
     /// 正在转换
     Converting,
@@ -39,12 +40,6 @@ pub enum ConverterState {
     Completed,
     /// 错误状态
     Error(String),
-}
-
-impl Default for ConverterState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// 工具调用累积器
@@ -580,12 +575,10 @@ impl StreamConverter {
     fn generate_end_events(&mut self) -> Vec<String> {
         match self.target_format {
             StreamFormat::AnthropicSse => {
-                let mut events = Vec::new();
-                // message_delta
-                events.push(self.create_anthropic_message_delta());
-                // message_stop
-                events.push(self.create_anthropic_message_stop());
-                events
+                vec![
+                    self.create_anthropic_message_delta(),
+                    self.create_anthropic_message_stop(),
+                ]
             }
             StreamFormat::OpenAiSse => {
                 let finish_reason = if self.tool_accumulators.is_empty() {

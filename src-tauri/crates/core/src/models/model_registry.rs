@@ -146,8 +146,7 @@ impl std::str::FromStr for ModelTier {
 }
 
 /// 模型数据来源
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ModelSource {
     /// 从内嵌资源加载（构建时打包）

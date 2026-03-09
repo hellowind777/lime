@@ -323,7 +323,7 @@ pub async fn search_pixabay_images(
         .iter()
         .filter_map(|hit| {
             Some(PixabayHit {
-                id: hit["id"].as_u64()? as u64,
+                id: hit["id"].as_u64()?,
                 preview_url: hit["previewURL"].as_str()?.to_string(),
                 large_image_url: hit["largeImageURL"].as_str()?.to_string(),
                 image_width: hit["imageWidth"].as_u64()? as u32,

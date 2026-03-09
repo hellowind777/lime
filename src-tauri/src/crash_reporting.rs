@@ -81,7 +81,7 @@ pub fn capture_frontend_report(
                 scope.set_tag("creation_mode", mode.to_string());
             }
             if let Some(extra) = metadata {
-                scope.set_extra("frontend_report", sentry::protocol::Value::from(extra));
+                scope.set_extra("frontend_report", extra);
             }
         },
         || {

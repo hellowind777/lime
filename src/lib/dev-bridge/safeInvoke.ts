@@ -26,8 +26,20 @@ export interface InvokeErrorBufferEntry {
   args_preview?: Record<string, unknown>;
 }
 
+export interface InvokeTraceBufferEntry {
+  timestamp: string;
+  command: string;
+  transport: "tauri-ipc" | "tauri-legacy" | "http-bridge" | "fallback-invoke";
+  status: "success" | "error";
+  duration_ms: number;
+  error?: string;
+  args_preview?: Record<string, unknown>;
+}
+
 const INVOKE_ERROR_BUFFER_KEY = "proxycast_invoke_error_buffer_v1";
 const INVOKE_ERROR_BUFFER_LIMIT = 120;
+const INVOKE_TRACE_BUFFER_KEY = "proxycast_invoke_trace_buffer_v1";
+const INVOKE_TRACE_BUFFER_LIMIT = 240;
 const INVOKE_ERROR_TEXT_LIMIT = 800;
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
@@ -127,6 +139,50 @@ function writeInvokeErrorBuffer(items: InvokeErrorBufferEntry[]): void {
   }
 }
 
+function readInvokeTraceBuffer(): InvokeTraceBufferEntry[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+  try {
+    const raw = window.localStorage.getItem(INVOKE_TRACE_BUFFER_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter(
+        (item): item is InvokeTraceBufferEntry =>
+          item &&
+          typeof item === "object" &&
+          typeof item.timestamp === "string" &&
+          typeof item.command === "string" &&
+          typeof item.transport === "string" &&
+          (item.status === "success" || item.status === "error") &&
+          typeof item.duration_ms === "number",
+      )
+      .slice(-INVOKE_TRACE_BUFFER_LIMIT);
+  } catch {
+    return [];
+  }
+}
+
+function writeInvokeTraceBuffer(items: InvokeTraceBufferEntry[]): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(
+      INVOKE_TRACE_BUFFER_KEY,
+      JSON.stringify(items.slice(-INVOKE_TRACE_BUFFER_LIMIT)),
+    );
+  } catch {
+    // ignore
+  }
+}
+
 function recordInvokeError(
   command: string,
   args: Record<string, unknown> | undefined,
@@ -147,11 +203,42 @@ function recordInvokeError(
   writeInvokeErrorBuffer(current);
 }
 
+function recordInvokeTrace(
+  command: string,
+  args: Record<string, unknown> | undefined,
+  transport: InvokeTraceBufferEntry["transport"],
+  status: InvokeTraceBufferEntry["status"],
+  startedAt: number,
+  error?: unknown,
+): void {
+  const current = readInvokeTraceBuffer();
+  const entry: InvokeTraceBufferEntry = {
+    timestamp: new Date().toISOString(),
+    command: sanitizeText(command),
+    transport,
+    status,
+    duration_ms: Math.max(0, Date.now() - startedAt),
+    error: error ? toErrorMessage(error) : undefined,
+    args_preview: args
+      ? (sanitizeValue(args) as Record<string, unknown>)
+      : undefined,
+  };
+  current.push(entry);
+  writeInvokeTraceBuffer(current);
+}
+
 export function getInvokeErrorBuffer(limit = 50): InvokeErrorBufferEntry[] {
   const safeLimit = Number.isFinite(limit)
     ? Math.min(200, Math.max(1, Math.floor(limit)))
     : 50;
   return readInvokeErrorBuffer().slice(-safeLimit);
+}
+
+export function getInvokeTraceBuffer(limit = 80): InvokeTraceBufferEntry[] {
+  const safeLimit = Number.isFinite(limit)
+    ? Math.min(300, Math.max(1, Math.floor(limit)))
+    : 80;
+  return readInvokeTraceBuffer().slice(-safeLimit);
 }
 
 export function clearInvokeErrorBuffer(): void {
@@ -160,6 +247,17 @@ export function clearInvokeErrorBuffer(): void {
   }
   try {
     window.localStorage.removeItem(INVOKE_ERROR_BUFFER_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+export function clearInvokeTraceBuffer(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(INVOKE_TRACE_BUFFER_KEY);
   } catch {
     // ignore
   }
@@ -174,15 +272,20 @@ export async function safeInvoke<T = any>(
   cmd: string,
   args?: Record<string, unknown>,
 ): Promise<T> {
+  const startedAt = Date.now();
+
   // 1. 优先使用 Tauri IPC (生产环境或 Tauri webview 可用时)
   if (
     typeof window !== "undefined" &&
     (window as any).__TAURI__?.core?.invoke
   ) {
     try {
-      return await (window as any).__TAURI__.core.invoke(cmd, args);
+      const result = await (window as any).__TAURI__.core.invoke(cmd, args);
+      recordInvokeTrace(cmd, args, "tauri-ipc", "success", startedAt);
+      return result;
     } catch (error) {
       recordInvokeError(cmd, args, error, "tauri-ipc");
+      recordInvokeTrace(cmd, args, "tauri-ipc", "error", startedAt, error);
       throw error;
     }
   }
@@ -190,9 +293,12 @@ export async function safeInvoke<T = any>(
   // Legacy check for older Tauri versions
   if (typeof window !== "undefined" && (window as any).__TAURI__?.invoke) {
     try {
-      return await (window as any).__TAURI__.invoke(cmd, args);
+      const result = await (window as any).__TAURI__.invoke(cmd, args);
+      recordInvokeTrace(cmd, args, "tauri-legacy", "success", startedAt);
+      return result;
     } catch (error) {
       recordInvokeError(cmd, args, error, "tauri-legacy");
+      recordInvokeTrace(cmd, args, "tauri-legacy", "error", startedAt, error);
       throw error;
     }
   }
@@ -200,9 +306,19 @@ export async function safeInvoke<T = any>(
   // 2. 浏览器开发模式下，部分原生/非关键命令直接优先走 mock。
   if (isDevBridgeAvailable() && shouldPreferMockInBrowser(cmd)) {
     try {
-      return await baseInvoke(cmd, args);
+      const result = await baseInvoke(cmd, args);
+      recordInvokeTrace(cmd, args, "fallback-invoke", "success", startedAt);
+      return result;
     } catch (error) {
       recordInvokeError(cmd, args, error, "fallback-invoke");
+      recordInvokeTrace(
+        cmd,
+        args,
+        "fallback-invoke",
+        "error",
+        startedAt,
+        error,
+      );
       throw error;
     }
   }
@@ -211,15 +327,40 @@ export async function safeInvoke<T = any>(
   if (isDevBridgeAvailable()) {
     try {
       const result = await invokeViaHttp(cmd, args);
+      recordInvokeTrace(cmd, args, "http-bridge", "success", startedAt);
       return result as T;
     } catch (error) {
       const normalizedError = normalizeDevBridgeError(cmd, error);
       recordInvokeError(cmd, args, normalizedError, "http-bridge");
+      recordInvokeTrace(
+        cmd,
+        args,
+        "http-bridge",
+        "error",
+        startedAt,
+        normalizedError,
+      );
 
       try {
-        return await baseInvoke(cmd, args);
+        const result = await baseInvoke(cmd, args);
+        recordInvokeTrace(
+          cmd,
+          args,
+          "fallback-invoke",
+          "success",
+          startedAt,
+        );
+        return result;
       } catch (fallbackError) {
         recordInvokeError(cmd, args, fallbackError, "fallback-invoke");
+        recordInvokeTrace(
+          cmd,
+          args,
+          "fallback-invoke",
+          "error",
+          startedAt,
+          fallbackError,
+        );
         throw normalizedError;
       }
     }
@@ -227,9 +368,12 @@ export async function safeInvoke<T = any>(
 
   // 4. Fallback 到 mock（Vite alias 会替换 @tauri-apps 导入）
   try {
-    return await baseInvoke(cmd, args);
+    const result = await baseInvoke(cmd, args);
+    recordInvokeTrace(cmd, args, "fallback-invoke", "success", startedAt);
+    return result;
   } catch (error) {
     recordInvokeError(cmd, args, error, "fallback-invoke");
+    recordInvokeTrace(cmd, args, "fallback-invoke", "error", startedAt, error);
     throw error;
   }
 }

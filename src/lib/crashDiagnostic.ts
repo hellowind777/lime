@@ -4,8 +4,10 @@ import type {
 } from "@/hooks/useTauri";
 import {
   getInvokeErrorBuffer,
+  getInvokeTraceBuffer,
   safeInvoke,
   type InvokeErrorBufferEntry,
+  type InvokeTraceBufferEntry,
 } from "@/lib/dev-bridge";
 import { getRuntimeAppVersion } from "@/lib/appVersion";
 import {
@@ -35,6 +37,7 @@ export interface CrashDiagnosticPayload {
   frontend_crash_logs: LogEntry[];
   frontend_crash_buffer?: FrontendCrashBufferEntry[];
   invoke_error_buffer?: InvokeErrorBufferEntry[];
+  invoke_trace_buffer?: InvokeTraceBufferEntry[];
   persisted_log_tail?: LogEntry[];
   workspace_repair_history?: WorkspaceRepairRecord[];
   theme_workbench_document_state?: ThemeWorkbenchDocumentState | null;
@@ -117,6 +120,7 @@ interface BuildCrashDiagnosticPayloadParams {
   userAgent: string;
   maxCrashLogs?: number;
   maxInvokeErrors?: number;
+  maxInvokeTraces?: number;
   maxPersistedLogs?: number;
   maxWorkspaceRepairs?: number;
   themeWorkbenchDocumentState?: ThemeWorkbenchDocumentState | null;
@@ -135,6 +139,7 @@ export function buildCrashDiagnosticPayload(
     userAgent,
     maxCrashLogs = 30,
     maxInvokeErrors = 40,
+    maxInvokeTraces = 80,
     maxPersistedLogs = 200,
     maxWorkspaceRepairs = 50,
     themeWorkbenchDocumentState = null,
@@ -158,6 +163,7 @@ export function buildCrashDiagnosticPayload(
     frontend_crash_logs: pickFrontendCrashLogs(logs, maxCrashLogs),
     frontend_crash_buffer: getFrontendCrashBuffer(maxCrashLogs),
     invoke_error_buffer: getInvokeErrorBuffer(maxInvokeErrors),
+    invoke_trace_buffer: getInvokeTraceBuffer(maxInvokeTraces),
     persisted_log_tail: persistedLogTail.slice(-maxPersistedLogs),
     workspace_repair_history: getWorkspaceRepairHistory(maxWorkspaceRepairs),
     theme_workbench_document_state: themeWorkbenchDocumentState,
@@ -269,6 +275,7 @@ function buildDiagnosticSummary(payload: CrashDiagnosticPayload): string {
   const crashLogCount = payload.frontend_crash_logs.length;
   const localCrashCount = payload.frontend_crash_buffer?.length ?? 0;
   const invokeErrorCount = payload.invoke_error_buffer?.length ?? 0;
+  const invokeTraceCount = payload.invoke_trace_buffer?.length ?? 0;
   const persistedLogCount = payload.persisted_log_tail?.length ?? 0;
   const workspaceRepairCount = payload.workspace_repair_history?.length ?? 0;
   const versionCount = payload.theme_workbench_document_state?.version_count ?? 0;
@@ -281,6 +288,7 @@ function buildDiagnosticSummary(payload: CrashDiagnosticPayload): string {
     `- 崩溃日志条数：${crashLogCount}`,
     `- 本地崩溃缓存条数：${localCrashCount}`,
     `- 命令调用失败缓存条数：${invokeErrorCount}`,
+    `- 最近调用轨迹条数：${invokeTraceCount}`,
     `- 持久化日志尾部行数：${persistedLogCount}`,
     `- Workspace 自动修复记录条数：${workspaceRepairCount}`,
     `- 主题工作台文稿版本数：${versionCount}`,

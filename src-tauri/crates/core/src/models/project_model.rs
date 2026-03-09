@@ -1271,14 +1271,35 @@ mod tests {
         assert_eq!(MaterialType::Color.as_str(), "color");
         assert_eq!(MaterialType::Layout.as_str(), "layout");
 
-        assert_eq!(MaterialType::from_str("document"), MaterialType::Document);
-        assert_eq!(MaterialType::from_str("IMAGE"), MaterialType::Image);
-        assert_eq!(MaterialType::from_str("audio"), MaterialType::Audio);
-        assert_eq!(MaterialType::from_str("VIDEO"), MaterialType::Video);
-        assert_eq!(MaterialType::from_str("icon"), MaterialType::Icon);
-        assert_eq!(MaterialType::from_str("color"), MaterialType::Color);
-        assert_eq!(MaterialType::from_str("layout"), MaterialType::Layout);
-        assert_eq!(MaterialType::from_str("unknown"), MaterialType::Document);
+        assert_eq!(
+            "document".parse::<MaterialType>().unwrap(),
+            MaterialType::Document
+        );
+        assert_eq!(
+            "IMAGE".parse::<MaterialType>().unwrap(),
+            MaterialType::Image
+        );
+        assert_eq!(
+            "audio".parse::<MaterialType>().unwrap(),
+            MaterialType::Audio
+        );
+        assert_eq!(
+            "VIDEO".parse::<MaterialType>().unwrap(),
+            MaterialType::Video
+        );
+        assert_eq!("icon".parse::<MaterialType>().unwrap(), MaterialType::Icon);
+        assert_eq!(
+            "color".parse::<MaterialType>().unwrap(),
+            MaterialType::Color
+        );
+        assert_eq!(
+            "layout".parse::<MaterialType>().unwrap(),
+            MaterialType::Layout
+        );
+        assert_eq!(
+            "unknown".parse::<MaterialType>().unwrap(),
+            MaterialType::Document
+        );
     }
 
     #[test]
@@ -1302,11 +1323,17 @@ mod tests {
         assert_eq!(ImageCategory::Person.as_str(), "person");
 
         assert_eq!(
-            ImageCategory::from_str("background"),
+            "background".parse::<ImageCategory>().unwrap(),
             ImageCategory::Background
         );
-        assert_eq!(ImageCategory::from_str("PRODUCT"), ImageCategory::Product);
-        assert_eq!(ImageCategory::from_str("unknown"), ImageCategory::Other);
+        assert_eq!(
+            "PRODUCT".parse::<ImageCategory>().unwrap(),
+            ImageCategory::Product
+        );
+        assert_eq!(
+            "unknown".parse::<ImageCategory>().unwrap(),
+            ImageCategory::Other
+        );
 
         assert_eq!(ImageCategory::Background.display_name(), "背景");
         assert_eq!(ImageCategory::Product.display_name(), "产品");
@@ -1319,12 +1346,15 @@ mod tests {
         assert_eq!(LayoutCategory::Grid.as_str(), "grid");
 
         assert_eq!(
-            LayoutCategory::from_str("hero-image"),
+            "hero-image".parse::<LayoutCategory>().unwrap(),
             LayoutCategory::HeroImage
         );
-        assert_eq!(LayoutCategory::from_str("grid"), LayoutCategory::Grid);
         assert_eq!(
-            LayoutCategory::from_str("unknown"),
+            "grid".parse::<LayoutCategory>().unwrap(),
+            LayoutCategory::Grid
+        );
+        assert_eq!(
+            "unknown".parse::<LayoutCategory>().unwrap(),
             LayoutCategory::HeroImage
         );
 
@@ -1338,9 +1368,12 @@ mod tests {
         assert_eq!(Platform::Wechat.as_str(), "wechat");
         assert_eq!(Platform::Markdown.as_str(), "markdown");
 
-        assert_eq!(Platform::from_str("xiaohongshu"), Platform::Xiaohongshu);
-        assert_eq!(Platform::from_str("WECHAT"), Platform::Wechat);
-        assert_eq!(Platform::from_str("unknown"), Platform::Markdown);
+        assert_eq!(
+            "xiaohongshu".parse::<Platform>().unwrap(),
+            Platform::Xiaohongshu
+        );
+        assert_eq!("WECHAT".parse::<Platform>().unwrap(), Platform::Wechat);
+        assert_eq!("unknown".parse::<Platform>().unwrap(), Platform::Markdown);
     }
 
     #[test]
@@ -1356,9 +1389,15 @@ mod tests {
         assert_eq!(EmojiUsage::Moderate.as_str(), "moderate");
         assert_eq!(EmojiUsage::Minimal.as_str(), "minimal");
 
-        assert_eq!(EmojiUsage::from_str("heavy"), EmojiUsage::Heavy);
-        assert_eq!(EmojiUsage::from_str("MODERATE"), EmojiUsage::Moderate);
-        assert_eq!(EmojiUsage::from_str("unknown"), EmojiUsage::Moderate);
+        assert_eq!("heavy".parse::<EmojiUsage>().unwrap(), EmojiUsage::Heavy);
+        assert_eq!(
+            "MODERATE".parse::<EmojiUsage>().unwrap(),
+            EmojiUsage::Moderate
+        );
+        assert_eq!(
+            "unknown".parse::<EmojiUsage>().unwrap(),
+            EmojiUsage::Moderate
+        );
     }
 
     #[test]
@@ -1489,15 +1528,15 @@ mod tests {
         assert_eq!(BrandPersonality::Playful.as_str(), "playful");
 
         assert_eq!(
-            BrandPersonality::from_str("professional"),
+            "professional".parse::<BrandPersonality>().unwrap(),
             BrandPersonality::Professional
         );
         assert_eq!(
-            BrandPersonality::from_str("FRIENDLY"),
+            "FRIENDLY".parse::<BrandPersonality>().unwrap(),
             BrandPersonality::Friendly
         );
         assert_eq!(
-            BrandPersonality::from_str("unknown"),
+            "unknown".parse::<BrandPersonality>().unwrap(),
             BrandPersonality::Professional
         );
     }
@@ -1515,9 +1554,18 @@ mod tests {
         assert_eq!(DesignStyle::Modern.as_str(), "modern");
         assert_eq!(DesignStyle::Corporate.as_str(), "corporate");
 
-        assert_eq!(DesignStyle::from_str("minimal"), DesignStyle::Minimal);
-        assert_eq!(DesignStyle::from_str("MODERN"), DesignStyle::Modern);
-        assert_eq!(DesignStyle::from_str("unknown"), DesignStyle::Modern);
+        assert_eq!(
+            "minimal".parse::<DesignStyle>().unwrap(),
+            DesignStyle::Minimal
+        );
+        assert_eq!(
+            "MODERN".parse::<DesignStyle>().unwrap(),
+            DesignStyle::Modern
+        );
+        assert_eq!(
+            "unknown".parse::<DesignStyle>().unwrap(),
+            DesignStyle::Modern
+        );
     }
 
     #[test]

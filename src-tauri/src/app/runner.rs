@@ -808,7 +808,7 @@ pub fn run() {
                                     } else if proxycast_gateway::tunnel::is_manual_stop_error(
                                         status.last_error.as_deref(),
                                     ) {
-                                        if round % 6 == 0 {
+                                        if round.is_multiple_of(6) {
                                             logs.write().await.add(
                                                 "info",
                                                 "[GatewayTunnel] managed 隧道处于手动停止状态，守护器不自动拉起",
@@ -842,7 +842,7 @@ pub fn run() {
                                         .add("warn", &format!("[GatewayTunnel] 守护状态检查失败: {e}"));
                                 }
                             }
-                        } else if mode == "external" && round % 6 == 0 {
+                        } else if mode == "external" && round.is_multiple_of(6) {
                             match proxycast_gateway::tunnel::status_tunnel_with_config(
                                 &tunnel_state,
                                 Some(config),

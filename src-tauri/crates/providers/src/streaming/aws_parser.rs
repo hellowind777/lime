@@ -18,9 +18,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// 解析器状态
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ParserState {
     /// 等待数据
+    #[default]
     Idle,
     /// 正在解析
     Parsing,
@@ -28,12 +29,6 @@ pub enum ParserState {
     Completed,
     /// 错误状态
     Error(String),
-}
-
-impl Default for ParserState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 /// AWS Event Stream 解析后的事件

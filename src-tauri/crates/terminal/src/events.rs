@@ -14,10 +14,11 @@ use serde::{Deserialize, Serialize};
 use crate::connections::ConnStatus;
 
 /// 会话状态
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionStatus {
     /// 正在连接
+    #[default]
     Connecting,
     /// 运行中
     Running,
@@ -25,12 +26,6 @@ pub enum SessionStatus {
     Done,
     /// 错误
     Error,
-}
-
-impl Default for SessionStatus {
-    fn default() -> Self {
-        Self::Connecting
-    }
 }
 
 /// 终端输出事件

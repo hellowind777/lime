@@ -113,7 +113,7 @@ pub fn validate_schedule(schedule: &TaskSchedule, now: DateTime<Utc>) -> Result<
 /// 支持 5 字段（分 时 日 月 周）和 6 字段（秒 分 时 日 月 周）格式
 /// 5 字段格式会自动补充秒字段为 "0"
 pub fn normalize_cron_expression(expr: &str) -> String {
-    let parts: Vec<&str> = expr.trim().split_whitespace().collect();
+    let parts: Vec<&str> = expr.split_whitespace().collect();
     if parts.len() == 5 {
         // 5 字段格式，补充秒字段
         format!("0 {}", expr.trim())

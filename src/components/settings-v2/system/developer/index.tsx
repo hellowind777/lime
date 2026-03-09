@@ -219,7 +219,7 @@ export function DeveloperSettings() {
           <div>
             <h4 className="font-medium">崩溃诊断日志（开发协作）</h4>
             <p className="text-sm text-muted-foreground">
-              用于定位 Windows 闪退与前端异常，包含最近 30 条 FrontendCrash 日志（DSN 自动脱敏）
+              用于定位 Windows 闪退与前端异常，包含 FrontendCrash、失败命令以及最近调用轨迹（DSN 自动脱敏）
             </p>
           </div>
         </div>

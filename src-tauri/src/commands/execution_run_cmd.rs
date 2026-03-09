@@ -190,8 +190,7 @@ fn derive_run_title(run: &AgentRun) -> String {
 
     let source_ref_title = run
         .source_ref
-        .as_ref()
-        .map(String::as_str)
+        .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("运行节点 {value}"));

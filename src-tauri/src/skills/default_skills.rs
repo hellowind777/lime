@@ -73,7 +73,7 @@ fn parse_skill_version(content: &str) -> Option<(u32, u32, u32)> {
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("version:") {
-            let version_str = trimmed.splitn(2, ':').nth(1)?.trim();
+            let version_str = trimmed.split_once(':')?.1.trim();
             let parts: Vec<&str> = version_str.split('.').collect();
             if parts.len() == 3 {
                 let major = parts[0].trim().parse::<u32>().ok()?;
@@ -215,7 +215,7 @@ mod tests {
     fn should_embed_social_image_tool_contract_in_default_skill() {
         assert!(SOCIAL_POST_WITH_COVER_SKILL_CONTENT
             .contains("allowed-tools: social_generate_cover_image, search_query"));
-        assert!(SOCIAL_POST_WITH_COVER_SKILL_CONTENT.contains("## 配图说明"));
+        assert!(SOCIAL_POST_WITH_COVER_SKILL_CONTENT.contains("**配图说明**"));
         assert!(SOCIAL_POST_WITH_COVER_SKILL_CONTENT.contains("状态：{成功/失败}"));
     }
 

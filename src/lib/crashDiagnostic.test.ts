@@ -9,6 +9,7 @@ import {
   getClipboardPermissionGuide,
   sanitizeDiagnosticSceneTag,
 } from "./crashDiagnostic";
+import { clearInvokeTraceBuffer } from "./dev-bridge/safeInvoke";
 import {
   clearWorkspaceRepairHistory,
   recordWorkspaceRepair,
@@ -37,6 +38,7 @@ describe("copyCrashDiagnosticToClipboard", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     clearWorkspaceRepairHistory();
+    clearInvokeTraceBuffer();
   });
 
   it("应支持复制纯 JSON", async () => {
@@ -166,6 +168,7 @@ describe("diagnostic export file name", () => {
 describe("buildCrashDiagnosticPayload", () => {
   afterEach(() => {
     clearWorkspaceRepairHistory();
+    clearInvokeTraceBuffer();
   });
 
   it("应注入 workspace 自动修复记录", () => {
@@ -190,5 +193,32 @@ describe("buildCrashDiagnosticPayload", () => {
     expect(diagnostic.workspace_repair_history?.[0].source).toBe(
       "workspace_refresh",
     );
+  });
+
+  it("摘要应包含最近调用轨迹条数", () => {
+    window.localStorage.setItem(
+      "proxycast_invoke_trace_buffer_v1",
+      JSON.stringify([
+        {
+          timestamp: "2026-03-09T01:02:03.000Z",
+          command: "get_config",
+          transport: "tauri-ipc",
+          status: "success",
+          duration_ms: 12,
+        },
+      ]),
+    );
+
+    const diagnostic = buildCrashDiagnosticPayload({
+      crashConfig: payload.crash_reporting,
+      logs: payload.frontend_crash_logs,
+      appVersion: payload.app_version,
+      platform: payload.platform,
+      userAgent: payload.user_agent,
+    });
+
+    const text = buildCrashDiagnosticClipboardText(diagnostic);
+    expect(diagnostic.invoke_trace_buffer?.length).toBe(1);
+    expect(text).toContain("最近调用轨迹条数：1");
   });
 });

@@ -473,16 +473,12 @@ fn merge_system_prompt_with_auto_continue(
 /// Agent 执行策略
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum AsterExecutionStrategy {
     React,
     CodeOrchestrated,
+    #[default]
     Auto,
-}
-
-impl Default for AsterExecutionStrategy {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl AsterExecutionStrategy {
@@ -4704,7 +4700,7 @@ pub async fn social_generate_cover_image_cmd(
     }
 
     let (image_url, _b64, _revised) =
-        SocialGenerateCoverImageTool::extract_first_image_payload(&response_body).map_err(|e| e)?;
+        SocialGenerateCoverImageTool::extract_first_image_payload(&response_body)?;
 
     image_url.ok_or_else(|| "接口返回中未找到 image_url".to_string())
 }

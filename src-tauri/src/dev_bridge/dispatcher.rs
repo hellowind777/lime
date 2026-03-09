@@ -12,7 +12,7 @@ use crate::commands::workspace_cmd::{
     CreateWorkspaceRequest, UpdateWorkspaceRequest, WorkspaceEnsureResult, WorkspaceListItem,
 };
 use crate::content::{
-    ContentCreateRequest, ContentListQuery, ContentManager, ContentStatus, ContentUpdateRequest,
+    ContentCreateRequest, ContentListQuery, ContentManager, ContentUpdateRequest,
 };
 use crate::dev_bridge::DevBridgeState;
 use crate::services::workspace_health_service::{
@@ -775,7 +775,7 @@ pub async fn handle_command(
                 title: request.title,
                 content_type: request
                     .content_type
-                    .map(|value| crate::content::ContentType::from_str(&value)),
+                    .map(|value| value.parse::<crate::content::ContentType>().unwrap_or_default()),
                 order: request.order,
                 body: request.body,
                 metadata: request.metadata,
@@ -809,10 +809,10 @@ pub async fn handle_command(
             let query: Option<BridgeListContentRequest> = parse_optional_nested_arg(&args, "query")?;
             let manager = ContentManager::new(get_db(state)?.clone());
             let list_query = query.map(|query| ContentListQuery {
-                status: query.status.map(|value| ContentStatus::from_str(&value)),
+                status: query.status.map(|value| value.parse().unwrap_or_default()),
                 content_type: query
                     .content_type
-                    .map(|value| crate::content::ContentType::from_str(&value)),
+                    .map(|value| value.parse::<crate::content::ContentType>().unwrap_or_default()),
                 search: query.search,
                 sort_by: query.sort_by,
                 sort_order: query.sort_order,
@@ -831,7 +831,7 @@ pub async fn handle_command(
             let manager = ContentManager::new(get_db(state)?.clone());
             let update_request = ContentUpdateRequest {
                 title: request.title,
-                status: request.status.map(|value| ContentStatus::from_str(&value)),
+                status: request.status.map(|value| value.parse().unwrap_or_default()),
                 order: request.order,
                 body: request.body,
                 metadata: request.metadata,
@@ -1443,7 +1443,7 @@ mod tests {
         let created_id = created_value["id"].as_str().unwrap().to_string();
 
         assert_eq!(created_value["name"], "社媒项目");
-        assert_eq!(created_value["workspace_type"], "social-media");
+        assert_eq!(created_value["workspaceType"], "social-media");
 
         let list_value = handle_command(&state, "workspace_list", None)
             .await

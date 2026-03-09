@@ -3,8 +3,7 @@
 //! 提供内容管理的前端 API。
 
 use crate::content::{
-    Content, ContentCreateRequest, ContentListQuery, ContentManager, ContentStatus,
-    ContentUpdateRequest,
+    Content, ContentCreateRequest, ContentListQuery, ContentManager, ContentUpdateRequest,
 };
 use crate::database::DbConnection;
 use serde::{Deserialize, Serialize};
@@ -250,9 +249,7 @@ pub async fn content_create(
     let create_request = ContentCreateRequest {
         project_id: request.project_id,
         title: request.title,
-        content_type: request
-            .content_type
-            .map(|s| crate::content::ContentType::from_str(&s)),
+        content_type: request.content_type.map(|s| s.parse().unwrap_or_default()),
         order: request.order,
         body: request.body,
         metadata: request.metadata,
@@ -295,10 +292,8 @@ pub async fn content_list(
     let manager = ContentManager::new(db.inner().clone());
 
     let list_query = query.map(|q| ContentListQuery {
-        status: q.status.map(|s| ContentStatus::from_str(&s)),
-        content_type: q
-            .content_type
-            .map(|s| crate::content::ContentType::from_str(&s)),
+        status: q.status.map(|s| s.parse().unwrap_or_default()),
+        content_type: q.content_type.map(|s| s.parse().unwrap_or_default()),
         search: q.search,
         sort_by: q.sort_by,
         sort_order: q.sort_order,
@@ -321,7 +316,7 @@ pub async fn content_update(
 
     let update_request = ContentUpdateRequest {
         title: request.title,
-        status: request.status.map(|s| ContentStatus::from_str(&s)),
+        status: request.status.map(|s| s.parse().unwrap_or_default()),
         order: request.order,
         body: request.body,
         metadata: request.metadata,

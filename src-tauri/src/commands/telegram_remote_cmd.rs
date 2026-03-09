@@ -48,6 +48,7 @@ pub struct TelegramRemoteState {
     pub inner: Arc<RwLock<TelegramRemoteRuntime>>,
 }
 
+#[derive(Default)]
 pub struct TelegramRemoteRuntime {
     pub task: Option<JoinHandle<()>>,
     pub stop_token: Option<CancellationToken>,
@@ -59,17 +60,6 @@ impl Default for TelegramRemoteState {
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(TelegramRemoteRuntime::default())),
-        }
-    }
-}
-
-impl Default for TelegramRemoteRuntime {
-    fn default() -> Self {
-        Self {
-            task: None,
-            stop_token: None,
-            status: TelegramRemoteStatus::default(),
-            pending_confirmation: None,
         }
     }
 }

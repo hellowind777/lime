@@ -68,7 +68,7 @@ pub struct Antagonist {
     pub fate: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorldDetails {
     #[serde(rename = "powerSystem")]
     pub power_system: String,
@@ -205,18 +205,6 @@ impl Default for Antagonist {
             arc_custom: String::new(),
             motive: String::new(),
             fate: String::new(),
-        }
-    }
-}
-
-impl Default for WorldDetails {
-    fn default() -> Self {
-        Self {
-            power_system: String::new(),
-            factions: String::new(),
-            history_events: String::new(),
-            important_locations: String::new(),
-            culture_and_taboos: String::new(),
         }
     }
 }
@@ -2419,11 +2407,11 @@ fn normalize_novel_settings_v1(value: &Value) -> NovelSettingsV1 {
     normalized.main_character = normalize_main_character(obj.get("mainCharacter"));
     normalized.side_characters = value_as_array(obj.get("sideCharacters"))
         .iter()
-        .map(|item| normalize_side_character(item))
+        .map(normalize_side_character)
         .collect();
     normalized.antagonists = value_as_array(obj.get("antagonists"))
         .iter()
-        .map(|item| normalize_antagonist(item))
+        .map(normalize_antagonist)
         .collect();
     normalized.world_summary = value_as_string(obj.get("worldSummary"), &normalized.world_summary);
     normalized.conflict_theme =
@@ -2432,12 +2420,12 @@ fn normalize_novel_settings_v1(value: &Value) -> NovelSettingsV1 {
     normalized.opening = value_as_string(obj.get("opening"), &normalized.opening);
     normalized.middle_beats = value_as_array(obj.get("middleBeats"))
         .iter()
-        .map(|item| normalize_plot_beat(item))
+        .map(normalize_plot_beat)
         .collect();
     normalized.ending_type = value_as_string(obj.get("endingType"), &normalized.ending_type);
     normalized.subplots = value_as_array(obj.get("subplots"))
         .iter()
-        .map(|item| normalize_plot_beat(item))
+        .map(normalize_plot_beat)
         .collect();
     normalized.writing_style = normalize_writing_style(obj.get("writingStyle"));
     normalized.total_words = value_as_i64(obj.get("totalWords"), normalized.total_words);
@@ -2447,12 +2435,12 @@ fn normalize_novel_settings_v1(value: &Value) -> NovelSettingsV1 {
     normalized.harem = value_as_bool(obj.get("harem"), normalized.harem);
     normalized.taboos = value_as_array(obj.get("taboos"))
         .iter()
-        .map(|item| normalize_taboo(item))
+        .map(normalize_taboo)
         .filter(|item| !item.content.trim().is_empty())
         .collect();
     normalized.references = value_as_array(obj.get("references"))
         .iter()
-        .map(|item| normalize_reference(item))
+        .map(normalize_reference)
         .filter(|item| !item.title.trim().is_empty() || !item.inspiration.trim().is_empty())
         .collect();
 

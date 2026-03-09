@@ -140,34 +140,34 @@ impl StickySessionManager {
             if let Some(sid) = session_id {
                 // 检查会话是否已绑定账号
                 if let Some(bound_id) = self.get_bound_account(sid) {
-                // 找到绑定的账号
-                if let Some(bound_account) =
-                    sorted_accounts.iter().find(|a| a.account_id == bound_id)
-                {
-                    // 检查是否被限流
-                    if !self
-                        .rate_limit_tracker
-                        .is_rate_limited(&bound_account.email)
+                    // 找到绑定的账号
+                    if let Some(bound_account) =
+                        sorted_accounts.iter().find(|a| a.account_id == bound_id)
                     {
-                        tracing::debug!(
-                            "[StickySession] 复用绑定账号 {} (会话: {})",
-                            bound_account.email,
-                            sid
-                        );
-                        return Some(bound_account.clone());
+                        // 检查是否被限流
+                        if !self
+                            .rate_limit_tracker
+                            .is_rate_limited(&bound_account.email)
+                        {
+                            tracing::debug!(
+                                "[StickySession] 复用绑定账号 {} (会话: {})",
+                                bound_account.email,
+                                sid
+                            );
+                            return Some(bound_account.clone());
+                        } else {
+                            // 账号被限流，解绑并切换
+                            tracing::warn!(
+                                "[StickySession] 绑定账号 {} 被限流，解绑会话 {}",
+                                bound_account.email,
+                                sid
+                            );
+                            self.unbind_session(sid);
+                        }
                     } else {
-                        // 账号被限流，解绑并切换
-                        tracing::warn!(
-                            "[StickySession] 绑定账号 {} 被限流，解绑会话 {}",
-                            bound_account.email,
-                            sid
-                        );
+                        // 绑定的账号不存在，解绑
                         self.unbind_session(sid);
                     }
-                } else {
-                    // 绑定的账号不存在，解绑
-                    self.unbind_session(sid);
-                }
                 }
             }
         }

@@ -33,7 +33,13 @@ vi.mock("./mockPriorityCommands", () => ({
   shouldPreferMockInBrowser: vi.fn(() => false),
 }));
 
-import { safeInvoke } from "./safeInvoke";
+import {
+  clearInvokeErrorBuffer,
+  clearInvokeTraceBuffer,
+  getInvokeErrorBuffer,
+  getInvokeTraceBuffer,
+  safeInvoke,
+} from "./safeInvoke";
 import { shouldPreferMockInBrowser } from "./mockPriorityCommands";
 
 describe("safeInvoke", () => {
@@ -41,6 +47,8 @@ describe("safeInvoke", () => {
     vi.clearAllMocks();
     mocks.isDevBridgeAvailable.mockReturnValue(true);
     window.localStorage.clear();
+    clearInvokeErrorBuffer();
+    clearInvokeTraceBuffer();
     delete (window as any).__TAURI__;
   });
 
@@ -52,6 +60,14 @@ describe("safeInvoke", () => {
     expect(result).toEqual({ ok: true });
     expect(mocks.invokeViaHttp).toHaveBeenCalledWith("workspace_list", undefined);
     expect(mocks.baseInvoke).not.toHaveBeenCalled();
+
+    expect(getInvokeTraceBuffer()).toEqual([
+      expect.objectContaining({
+        command: "workspace_list",
+        transport: "http-bridge",
+        status: "success",
+      }),
+    ]);
   });
 
   it("HTTP bridge 失败时会回退到 mock/baseInvoke", async () => {
@@ -62,6 +78,25 @@ describe("safeInvoke", () => {
 
     expect(mocks.normalizeDevBridgeError).toHaveBeenCalled();
     expect(mocks.baseInvoke).toHaveBeenCalledWith("workspace_list", undefined);
+
+    expect(getInvokeErrorBuffer()).toEqual([
+      expect.objectContaining({
+        command: "workspace_list",
+        transport: "http-bridge",
+      }),
+    ]);
+    expect(getInvokeTraceBuffer()).toEqual([
+      expect.objectContaining({
+        command: "workspace_list",
+        transport: "http-bridge",
+        status: "error",
+      }),
+      expect.objectContaining({
+        command: "workspace_list",
+        transport: "fallback-invoke",
+        status: "success",
+      }),
+    ]);
   });
 
   it("mock 优先命令会直接走 fallback invoke", async () => {

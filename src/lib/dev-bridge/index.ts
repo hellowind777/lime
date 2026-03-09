@@ -23,6 +23,11 @@ export {
   safeListen,
   safeEmit,
   getInvokeErrorBuffer,
+  getInvokeTraceBuffer,
   clearInvokeErrorBuffer,
+  clearInvokeTraceBuffer,
 } from "./safeInvoke";
-export type { InvokeErrorBufferEntry } from "./safeInvoke";
+export type {
+  InvokeErrorBufferEntry,
+  InvokeTraceBufferEntry,
+} from "./safeInvoke";

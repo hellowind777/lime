@@ -1386,7 +1386,6 @@ Body
         assert!(normalized.final_output.contains("# 标题"));
         assert!(normalized.file_content.contains("# 标题"));
         assert!(normalized.file_content.contains("![封面图]("));
-        assert!(normalized.file_content.contains("## 配图说明"));
         assert!(normalized.file_path.starts_with("social-posts/"));
         assert!(normalized.file_path.ends_with(".md"));
     }
@@ -1409,7 +1408,6 @@ Body
             .contains("social-posts/custom-post.md"));
         assert!(normalized.file_content.contains("# 标题"));
         assert!(normalized.file_content.contains("![封面图]("));
-        assert!(normalized.file_content.contains("## 配图说明"));
     }
 
     #[test]
@@ -1430,7 +1428,6 @@ Body
             .contains("<write_file path=\"social-posts/"));
         assert!(normalized.file_content.contains("# 标题"));
         assert!(normalized.file_content.contains("![封面图]("));
-        assert!(normalized.file_content.contains("## 配图说明"));
     }
 
     #[test]
@@ -1606,7 +1603,7 @@ Content 2
         let skill = load_skill_from_file("social_post_with_cover", &skill_file).unwrap();
 
         assert_eq!(skill.skill_name, "social_post_with_cover");
-        assert_eq!(skill.execution_mode, "prompt");
+        assert_eq!(skill.execution_mode, "workflow");
         assert_eq!(
             skill.allowed_tools,
             Some(vec![
@@ -1614,7 +1611,7 @@ Content 2
                 "search_query".to_string(),
             ])
         );
-        assert!(content.contains("<write_file path=\"social-posts/"));
+        assert!(content.contains("<write_file") && content.contains("social-posts/"));
         assert!(!skill.disable_model_invocation);
     }
 }

@@ -146,9 +146,10 @@ pub enum ContentBlockType {
 }
 
 /// 停止原因
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum StopReason {
     /// 正常结束
+    #[default]
     EndTurn,
     /// 达到最大 token 数
     MaxTokens,
@@ -160,24 +161,21 @@ pub enum StopReason {
     Other(String),
 }
 
-impl Default for StopReason {
-    fn default() -> Self {
-        Self::EndTurn
+impl std::str::FromStr for StopReason {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "end_turn" | "stop" => Ok(Self::EndTurn),
+            "max_tokens" | "length" => Ok(Self::MaxTokens),
+            "tool_use" | "tool_calls" => Ok(Self::ToolUse),
+            "stop_sequence" => Ok(Self::StopSequence),
+            _ => Ok(Self::Other(s.to_string())),
+        }
     }
 }
 
 impl StopReason {
-    /// 从字符串解析停止原因
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "end_turn" | "stop" => Self::EndTurn,
-            "max_tokens" | "length" => Self::MaxTokens,
-            "tool_use" | "tool_calls" => Self::ToolUse,
-            "stop_sequence" => Self::StopSequence,
-            _ => Self::Other(s.to_string()),
-        }
-    }
-
     /// 转换为 OpenAI 格式的字符串
     pub fn to_openai_str(&self) -> &str {
         match self {
@@ -266,12 +264,27 @@ mod tests {
 
     #[test]
     fn test_stop_reason_from_str() {
-        assert_eq!(StopReason::from_str("end_turn"), StopReason::EndTurn);
-        assert_eq!(StopReason::from_str("stop"), StopReason::EndTurn);
-        assert_eq!(StopReason::from_str("max_tokens"), StopReason::MaxTokens);
-        assert_eq!(StopReason::from_str("length"), StopReason::MaxTokens);
-        assert_eq!(StopReason::from_str("tool_use"), StopReason::ToolUse);
-        assert_eq!(StopReason::from_str("tool_calls"), StopReason::ToolUse);
+        assert_eq!(
+            "end_turn".parse::<StopReason>().unwrap(),
+            StopReason::EndTurn
+        );
+        assert_eq!("stop".parse::<StopReason>().unwrap(), StopReason::EndTurn);
+        assert_eq!(
+            "max_tokens".parse::<StopReason>().unwrap(),
+            StopReason::MaxTokens
+        );
+        assert_eq!(
+            "length".parse::<StopReason>().unwrap(),
+            StopReason::MaxTokens
+        );
+        assert_eq!(
+            "tool_use".parse::<StopReason>().unwrap(),
+            StopReason::ToolUse
+        );
+        assert_eq!(
+            "tool_calls".parse::<StopReason>().unwrap(),
+            StopReason::ToolUse
+        );
     }
 
     #[test]
