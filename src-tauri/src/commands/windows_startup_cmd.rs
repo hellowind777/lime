@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 #[cfg(target_os = "windows")]
 use std::path::PathBuf;
@@ -126,14 +126,14 @@ pub fn collect_windows_startup_diagnostics(app: &AppHandle) -> WindowsStartupDia
         let mut errors = Vec::new();
         let mut warnings = Vec::new();
 
-        let app_data_dir = app.path().app_data_dir().ok();
+        let app_data_dir: Option<PathBuf> = app.path().app_data_dir().ok();
         let home_dir = dirs::home_dir();
         let legacy_proxycast_dir = home_dir.clone().map(|home| home.join(".proxycast"));
         let db_path = crate::database::get_db_path().ok();
         let webview2_version = detect_webview2_runtime_version();
         let current_exe = std::env::current_exe().ok();
         let current_dir = std::env::current_dir().ok();
-        let resource_dir = app.path().resource_dir().ok();
+        let resource_dir: Option<PathBuf> = app.path().resource_dir().ok();
         let shell_env = get_env_path_value("SHELL");
         let comspec_env = get_env_path_value("COMSPEC");
         let resolved_terminal_shell =

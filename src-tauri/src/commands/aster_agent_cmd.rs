@@ -736,7 +736,7 @@ impl WorkspaceSandboxedBashTool {
         format!("'{}'", value.replace('\'', "'\"'\"'"))
     }
 
-    fn build_shell_command(&self, command: &str, context: &ToolContext) -> (String, Vec<String>) {
+    fn build_shell_command(&self, command: &str, _context: &ToolContext) -> (String, Vec<String>) {
         #[cfg(target_os = "windows")]
         {
             return (

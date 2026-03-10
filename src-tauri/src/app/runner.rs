@@ -97,10 +97,14 @@ pub fn run() {
     let logs_clone = logs.clone();
     let db_clone = db.clone();
     let pool_service_clone = provider_pool_service_state.0.clone();
-    let api_key_provider_service_clone = api_key_provider_service_state.0.clone();
-    let connect_state_clone = connect_state.0.clone();
-    let model_registry_clone = model_registry_state.clone();
-    let skill_service_clone = skill_service_state.0.clone();
+    #[cfg(debug_assertions)]
+    let _api_key_provider_service_clone = api_key_provider_service_state.0.clone();
+    #[cfg(debug_assertions)]
+    let _connect_state_clone = connect_state.0.clone();
+    #[cfg(debug_assertions)]
+    let _model_registry_clone = model_registry_state.clone();
+    #[cfg(debug_assertions)]
+    let _skill_service_clone = skill_service_state.0.clone();
     let token_cache_clone = token_cache_service_state.0.clone();
     let shared_stats_clone = shared_stats.clone();
     let shared_tokens_clone = shared_tokens.clone();
@@ -983,6 +987,8 @@ pub fn run() {
             commands::openclaw_cmd::openclaw_check_git_available,
             commands::openclaw_cmd::openclaw_get_node_download_url,
             commands::openclaw_cmd::openclaw_get_git_download_url,
+            commands::openclaw_cmd::openclaw_get_command_preview,
+            commands::openclaw_cmd::openclaw_get_progress_logs,
             commands::openclaw_cmd::openclaw_install,
             commands::openclaw_cmd::openclaw_uninstall,
             commands::openclaw_cmd::openclaw_start_gateway,

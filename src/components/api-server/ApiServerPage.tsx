@@ -52,6 +52,15 @@ interface FetchModelsResult {
   error: string | null;
   request_url?: string | null;
   diagnostic_hint?: string | null;
+  error_kind?:
+    | "not_found"
+    | "unauthorized"
+    | "forbidden"
+    | "network"
+    | "invalid_response"
+    | "other"
+    | null;
+  should_prompt_error?: boolean;
 }
 
 interface TestState {
@@ -465,6 +474,23 @@ export function ApiServerPage({ hideHeader = false }: ApiServerPageProps) {
                 "fetch_provider_models_auto",
                 { providerId: provider },
               );
+              if (result?.error && result.should_prompt_error) {
+                const diagnostics = [
+                  result.error,
+                  result.request_url ? `请求地址：${result.request_url}` : null,
+                  result.diagnostic_hint ?? null,
+                ]
+                  .filter((line): line is string =>
+                    Boolean(line && line.trim()),
+                  )
+                  .join(" | ");
+                setMessage({
+                  type: "error",
+                  text:
+                    diagnostics ||
+                    "模型列表接口配置异常，请检查 Provider Base URL",
+                });
+              }
               if (result && result.models && result.models.length > 0) {
                 registryModels = result.models;
               }

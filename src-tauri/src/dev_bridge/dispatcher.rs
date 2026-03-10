@@ -25,6 +25,7 @@ use rusqlite::{params_from_iter, types::Value};
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use std::path::PathBuf;
+use tauri::Manager;
 
 fn load_model_registry_provider_ids_from_db(
     state: &DevBridgeState,
@@ -1235,6 +1236,214 @@ pub async fn handle_command(
                 "lan_ip": null,
                 "all_ips": ["127.0.0.1"]
             }))
+        }
+
+        // ========== OpenClaw ==========
+        "openclaw_check_installed" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let service = service.0.lock().await;
+            Ok(serde_json::to_value(service.check_installed().await?)?)
+        }
+
+        "openclaw_check_node_version" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let service = service.0.lock().await;
+            Ok(serde_json::to_value(service.check_node_version().await?)?)
+        }
+
+        "openclaw_check_git_available" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let service = service.0.lock().await;
+            Ok(serde_json::to_value(service.check_git_available().await?)?)
+        }
+
+        "openclaw_get_node_download_url" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let service = service.0.lock().await;
+            Ok(serde_json::json!(service.get_node_download_url()))
+        }
+
+        "openclaw_get_git_download_url" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let service = service.0.lock().await;
+            Ok(serde_json::json!(service.get_git_download_url()))
+        }
+
+        "openclaw_get_command_preview" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let args = args.unwrap_or_default();
+            let operation = get_string_arg(&args, "operation", "operation")?;
+            let port = args.get("port").and_then(|value| value.as_u64()).map(|value| value as u16);
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            Ok(serde_json::to_value(service.get_command_preview(app_handle, &operation, port).await?)?)
+        }
+
+        "openclaw_install" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            service.clear_progress_logs();
+            Ok(serde_json::to_value(service.install(app_handle).await?)?)
+        }
+
+        "openclaw_uninstall" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            service.clear_progress_logs();
+            Ok(serde_json::to_value(service.uninstall(app_handle).await?)?)
+        }
+
+        "openclaw_start_gateway" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let port = args
+                .as_ref()
+                .and_then(|value| value.get("port"))
+                .and_then(|value| value.as_u64())
+                .map(|value| value as u16);
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            service.clear_progress_logs();
+            Ok(serde_json::to_value(service.start_gateway(Some(app_handle), port).await?)?)
+        }
+
+        "openclaw_stop_gateway" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            service.clear_progress_logs();
+            Ok(serde_json::to_value(service.stop_gateway(Some(app_handle)).await?)?)
+        }
+
+        "openclaw_restart_gateway" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            service.clear_progress_logs();
+            Ok(serde_json::to_value(service.restart_gateway(app_handle).await?)?)
+        }
+
+        "openclaw_get_status" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            Ok(serde_json::to_value(service.get_status().await?)?)
+        }
+
+        "openclaw_check_health" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            Ok(serde_json::to_value(service.check_health().await?)?)
+        }
+
+        "openclaw_get_dashboard_url" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            Ok(serde_json::json!(service.get_dashboard_url()))
+        }
+
+        "openclaw_get_channels" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            Ok(serde_json::to_value(service.get_channels().await?)?)
+        }
+
+        "openclaw_get_progress_logs" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let service = service.0.lock().await;
+            Ok(serde_json::to_value(service.get_progress_logs())?)
+        }
+
+        "openclaw_sync_provider_config" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let request: crate::commands::openclaw_cmd::OpenClawSyncConfigRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            let db = get_db(state)?;
+            let provider = state
+                .api_key_provider_service
+                .get_provider(db, &request.provider_id)?
+                .ok_or_else(|| "未找到指定 Provider。".to_string())?;
+
+            if !provider.provider.enabled {
+                return Ok(serde_json::json!({
+                    "success": false,
+                    "message": "该 Provider 已被禁用。"
+                }));
+            }
+
+            let api_key = state
+                .api_key_provider_service
+                .get_next_api_key(db, &request.provider_id)?
+                .unwrap_or_default();
+            let service = app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            Ok(serde_json::to_value(service.sync_provider_config(
+                &provider.provider,
+                &api_key,
+                &request.primary_model_id,
+                &request.models,
+            )?)?)
         }
 
         // ========== Agent 会话管理 ==========

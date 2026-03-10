@@ -60,6 +60,15 @@ interface FetchModelsResult {
   error: string | null;
   request_url?: string | null;
   diagnostic_hint?: string | null;
+  error_kind?:
+    | "not_found"
+    | "unauthorized"
+    | "forbidden"
+    | "network"
+    | "invalid_response"
+    | "other"
+    | null;
+  should_prompt_error?: boolean;
 }
 
 function buildApiDiagnosticLines(result: {
@@ -252,6 +261,7 @@ export const ProviderModelList: React.FC<ProviderModelListProps> = ({
   const [apiDiagnosticHint, setApiDiagnosticHint] = useState<string | null>(
     null,
   );
+  const [apiShouldPromptError, setApiShouldPromptError] = useState(false);
 
   // 从 API 获取模型列表（自动获取 API Key）
   const handleRefreshFromApi = useCallback(async () => {
@@ -259,6 +269,7 @@ export const ProviderModelList: React.FC<ProviderModelListProps> = ({
     setApiError(null);
     setApiRequestUrl(null);
     setApiDiagnosticHint(null);
+    setApiShouldPromptError(false);
 
     try {
       const result = await invoke<FetchModelsResult>(
@@ -273,6 +284,7 @@ export const ProviderModelList: React.FC<ProviderModelListProps> = ({
         setApiSource(result.source);
         setApiRequestUrl(result.request_url ?? null);
         setApiDiagnosticHint(result.diagnostic_hint ?? null);
+        setApiShouldPromptError(Boolean(result.should_prompt_error));
         if (result.error) {
           setApiError(result.error);
         }
@@ -383,6 +395,11 @@ export const ProviderModelList: React.FC<ProviderModelListProps> = ({
         </div>
         {apiError && (
           <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-left text-xs text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300">
+            {apiShouldPromptError ? (
+              <div className="mb-1 font-semibold text-red-600 dark:text-red-400">
+                检测到 Provider 配置错误，请优先修正 Base URL 或鉴权配置
+              </div>
+            ) : null}
             {apiDiagnosticLines.map((line) => (
               <div key={line} className="break-all leading-5">
                 {line}
@@ -470,6 +487,11 @@ export const ProviderModelList: React.FC<ProviderModelListProps> = ({
       {/* API 错误提示 */}
       {apiError && (
         <div className="mb-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/20 dark:text-amber-300">
+          {apiShouldPromptError ? (
+            <div className="mb-1 font-semibold text-red-600 dark:text-red-400">
+              检测到 Provider 配置错误，请优先修正 Base URL 或鉴权配置
+            </div>
+          ) : null}
           {apiDiagnosticLines.map((line) => (
             <div key={line} className="break-all leading-5">
               {line}

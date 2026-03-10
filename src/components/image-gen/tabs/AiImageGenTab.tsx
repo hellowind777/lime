@@ -223,9 +223,11 @@ function getStatusText(status: GeneratedImage["status"]): string {
 // ==================== Styled Components ====================
 
 const Container = styled.div`
+  height: 100%;
   flex: 1;
   min-height: 0;
   display: flex;
+  overflow: hidden;
   background: hsl(var(--background));
   color: hsl(var(--foreground));
 `;
@@ -454,6 +456,7 @@ const Workspace = styled.main`
 
 const Canvas = styled.div`
   flex: 1;
+  min-height: 0;
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
   background: hsl(var(--background));
@@ -1061,7 +1064,7 @@ export function AiImageGenTab({ projectId, onNavigate }: AiImageGenTabProps) {
   };
 
   return (
-    <Container>
+    <Container data-testid="ai-image-gen-layout">
       <ControlPanel>
         {availableProviders.length > 1 && (
           <Section>

@@ -2,8 +2,11 @@
 //!
 //! 提供跨平台的屏幕截图功能，支持交互式区域选择
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tracing::{debug, error, info};
+
+#[cfg(target_os = "macos")]
+use std::path::Path;
 
 #[cfg(target_os = "macos")]
 use tracing::warn;

@@ -3,18 +3,18 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
     paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - '.github/workflows/deploy-docs.yml'
-      - '.github/workflows/update-homebrew.yml'
+      - "docs/**"
+      - "*.md"
+      - ".github/workflows/deploy-docs.yml"
+      - ".github/workflows/update-homebrew.yml"
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g., v0.1.0)'
+        description: "Version to release (e.g., v0.1.0)"
         required: true
-        default: 'v0.1.0'
+        default: "v0.1.0"
 
 permissions:
   contents: write
@@ -56,7 +56,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "22"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -174,7 +174,7 @@ jobs:
           tauriScript: npx tauri
           projectPath: src-tauri
           tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseName: "ProxyCast ${{ github.event.inputs.version || github.ref_name }}"
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: false
           prerelease: false
@@ -197,7 +197,7 @@ jobs:
           tauriScript: npx tauri
           projectPath: src-tauri
           tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseName: "ProxyCast ${{ github.event.inputs.version || github.ref_name }}"
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: false
           prerelease: false
@@ -230,7 +230,7 @@ jobs:
           tauriScript: npx tauri
           projectPath: src-tauri
           tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseName: "ProxyCast ${{ github.event.inputs.version || github.ref_name }}"
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: false
           prerelease: false
@@ -259,7 +259,7 @@ jobs:
           tauriScript: npx tauri
           projectPath: src-tauri
           tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseName: "ProxyCast ${{ github.event.inputs.version || github.ref_name }}"
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: false
           prerelease: false
@@ -282,7 +282,7 @@ jobs:
           tauriScript: npx tauri
           projectPath: src-tauri
           tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: 'ProxyCast ${{ github.event.inputs.version || github.ref_name }}'
+          releaseName: "ProxyCast ${{ github.event.inputs.version || github.ref_name }}"
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: false
           prerelease: false

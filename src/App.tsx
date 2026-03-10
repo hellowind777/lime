@@ -536,6 +536,9 @@ function AppContent() {
               onNavigate={handleNavigate}
               projectId={(pageParams as AgentPageParams).projectId}
               contentId={(pageParams as AgentPageParams).contentId}
+              initialUserPrompt={
+                (pageParams as AgentPageParams).initialUserPrompt
+              }
               theme={(pageParams as AgentPageParams).theme}
               lockTheme={(pageParams as AgentPageParams).lockTheme}
               fromResources={(pageParams as AgentPageParams).fromResources}

@@ -121,9 +121,9 @@ vi.mock("./useImageGen", async () => {
 
   return {
     useImageGen: () => {
-      const [selectedImageId, setSelectedImageId] = React.useState<string | null>(
-        images[0].id,
-      );
+      const [selectedImageId, setSelectedImageId] = React.useState<
+        string | null
+      >(images[0].id);
       const selectedImage =
         images.find((image) => image.id === selectedImageId) ?? images[0];
 
@@ -184,11 +184,17 @@ import ImageGenPage from "./ImageGenPage";
 
 const mountedRoots: MountedRoot[] = [];
 
-function renderPage(onNavigate?: (page: Page, params?: PageParams) => void): HTMLDivElement {
-  return renderIntoDom(<ImageGenPage onNavigate={onNavigate} />, mountedRoots).container;
+function renderPage(
+  onNavigate?: (page: Page, params?: PageParams) => void,
+): HTMLDivElement {
+  return renderIntoDom(<ImageGenPage onNavigate={onNavigate} />, mountedRoots)
+    .container;
 }
 
-function findButtonByText(container: HTMLElement, text: string): HTMLButtonElement {
+function findButtonByText(
+  container: HTMLElement,
+  text: string,
+): HTMLButtonElement {
   const target = Array.from(container.querySelectorAll("button")).find((node) =>
     node.textContent?.includes(text),
   );
@@ -211,6 +217,10 @@ function getPromptChip(container: HTMLElement): HTMLButtonElement {
     throw new Error("未找到提示词历史按钮");
   }
   return chip as HTMLButtonElement;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 beforeEach(() => {
@@ -271,7 +281,9 @@ describe("ImageGenPage", () => {
     expect(secondHistoryItem).not.toBeNull();
 
     act(() => {
-      secondHistoryItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      secondHistoryItem?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
     });
 
     const chipAfter = getPromptChip(container);
@@ -291,7 +303,36 @@ describe("ImageGenPage", () => {
     });
 
     expect(mockBackfillImagesToResource).toHaveBeenCalledTimes(1);
-    expect(mockBackfillImagesToResource).toHaveBeenCalledWith("project-default");
+    expect(mockBackfillImagesToResource).toHaveBeenCalledWith(
+      "project-default",
+    );
     expect(mockToast.success).toHaveBeenCalled();
+  });
+
+  it("AI 生图布局应锁定父级高度避免小屏裁切输入区", () => {
+    const mounted = renderIntoDom(
+      <div style={{ height: "640px", width: "960px" }}>
+        <ImageGenPage />
+      </div>,
+      mountedRoots,
+    );
+
+    const layout = mounted.container.querySelector<HTMLElement>(
+      '[data-testid="ai-image-gen-layout"]',
+    );
+    expect(layout).not.toBeNull();
+
+    const styles = Array.from(document.head.querySelectorAll("style"))
+      .map((node) => node.textContent || "")
+      .join("\n");
+
+    const hasExpectedRule = Array.from(layout?.classList || []).some(
+      (className) =>
+        new RegExp(
+          `\\.${escapeRegExp(className)}\\{[^}]*height:100%;[^}]*overflow:hidden;`,
+        ).test(styles),
+    );
+
+    expect(hasExpectedRule).toBe(true);
   });
 });

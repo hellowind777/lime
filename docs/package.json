@@ -1,5 +1,8 @@
 {
   "name": "proxycast-docs",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "dev": "nuxt dev --extends docus",
     "build": "nuxt build --extends docus",

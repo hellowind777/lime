@@ -14,6 +14,7 @@ const Container = styled.div`
   width: 100%;
   height: 100%;
   overflow: hidden;
+  gap: 12px;
 `;
 
 const ChatPanel = styled.div<{
@@ -53,6 +54,7 @@ const CanvasPanel = styled.div<{
   position: relative;
   height: 100%;
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   transition:
     transform ${({ $duration }) => $duration}ms ease-out,
@@ -90,7 +92,7 @@ export const LayoutTransition: React.FC<LayoutTransitionProps> = memo(
     const canvasStyles = getTransitionStyles("canvas");
 
     return (
-      <Container>
+      <Container data-testid="layout-transition-root">
         <CanvasPanel
           $visible={isCanvasVisible}
           $transform={canvasStyles.transform as string}

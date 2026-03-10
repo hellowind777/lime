@@ -27,6 +27,11 @@ export interface OpenClawActionResult {
   message: string;
 }
 
+export interface OpenClawCommandPreview {
+  title: string;
+  command: string;
+}
+
 export interface OpenClawGatewayStatusInfo {
   status: OpenClawGatewayStatus;
   port: number;
@@ -89,6 +94,13 @@ export async function openclawInstall(): Promise<OpenClawActionResult> {
   return safeInvoke("openclaw_install");
 }
 
+export async function openclawGetCommandPreview(
+  operation: "install" | "uninstall" | "start" | "stop" | "restart",
+  port?: number,
+): Promise<OpenClawCommandPreview> {
+  return safeInvoke("openclaw_get_command_preview", { operation, port });
+}
+
 export async function openclawUninstall(): Promise<OpenClawActionResult> {
   return safeInvoke("openclaw_uninstall");
 }
@@ -138,6 +150,12 @@ export async function listenOpenClawInstallProgress(
   );
 }
 
+export async function openclawGetProgressLogs(): Promise<
+  OpenClawInstallProgressEvent[]
+> {
+  return safeInvoke("openclaw_get_progress_logs");
+}
+
 export const openclawApi = {
   checkInstalled: openclawCheckInstalled,
   checkNodeVersion: openclawCheckNodeVersion,
@@ -145,6 +163,7 @@ export const openclawApi = {
   getNodeDownloadUrl: openclawGetNodeDownloadUrl,
   getGitDownloadUrl: openclawGetGitDownloadUrl,
   install: openclawInstall,
+  getCommandPreview: openclawGetCommandPreview,
   uninstall: openclawUninstall,
   startGateway: openclawStartGateway,
   stopGateway: openclawStopGateway,
@@ -153,6 +172,7 @@ export const openclawApi = {
   checkHealth: openclawCheckHealth,
   getDashboardUrl: openclawGetDashboardUrl,
   getChannels: openclawGetChannels,
+  getProgressLogs: openclawGetProgressLogs,
   syncProviderConfig: openclawSyncProviderConfig,
   listenInstallProgress: listenOpenClawInstallProgress,
 };

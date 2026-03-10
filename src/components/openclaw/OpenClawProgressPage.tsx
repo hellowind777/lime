@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Bot, Copy, Loader2 } from "lucide-react";
 import type { OpenClawInstallProgressEvent } from "@/lib/api/openclaw";
 import type { OpenClawOperationKind } from "./types";
 import { OpenClawMark } from "./OpenClawMark";
@@ -8,7 +8,12 @@ interface OpenClawProgressPageProps {
   running: boolean;
   message: string | null;
   logs: OpenClawInstallProgressEvent[];
+  repairPrompt: string;
   onClose: () => void;
+  onCopyLogs: () => void;
+  onCopyDiagnosticBundle: () => void;
+  onCopyRepairPrompt: () => void;
+  onAskAgentFix: () => void;
 }
 
 const titleMap: Record<OpenClawOperationKind, string> = {
@@ -28,7 +33,12 @@ export function OpenClawProgressPage({
   running,
   message,
   logs,
+  repairPrompt,
   onClose,
+  onCopyLogs,
+  onCopyDiagnosticBundle,
+  onCopyRepairPrompt,
+  onAskAgentFix,
 }: OpenClawProgressPageProps) {
   return (
     <div className="flex min-h-full flex-col items-center justify-center px-6 py-10">
@@ -51,15 +61,53 @@ export function OpenClawProgressPage({
                 {running ? "命令执行中，请稍候。" : message || "操作已结束。"}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={running}
-              className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
-            >
-              {running ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              {running ? "处理中" : "关闭"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={onCopyLogs}
+                disabled={logs.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
+              >
+                <Copy className="h-4 w-4" />
+                复制纯日志
+              </button>
+              <button
+                type="button"
+                onClick={onCopyDiagnosticBundle}
+                disabled={logs.length === 0}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
+              >
+                <Copy className="h-4 w-4" />
+                复制 JSON 诊断包
+              </button>
+              <button
+                type="button"
+                onClick={onCopyRepairPrompt}
+                disabled={!repairPrompt.trim()}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
+              >
+                <Copy className="h-4 w-4" />
+                复制修复提示词
+              </button>
+              <button
+                type="button"
+                onClick={onAskAgentFix}
+                disabled={!repairPrompt.trim()}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
+              >
+                <Bot className="h-4 w-4" />
+                交给 AI 修复
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={running}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
+              >
+                {running ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {running ? "处理中" : "关闭"}
+              </button>
+            </div>
           </div>
 
           <div className="mt-4 max-h-[360px] min-h-[260px] overflow-auto rounded-xl bg-slate-950 p-4 text-sm text-slate-100">

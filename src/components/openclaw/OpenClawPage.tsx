@@ -23,6 +23,7 @@ import {
   type OpenClawNodeCheckResult,
   type OpenClawSyncModelEntry,
 } from "@/lib/api/openclaw";
+import { getOrCreateDefaultProject } from "@/lib/api/project";
 
 import { OpenClawConfigurePage } from "./OpenClawConfigurePage";
 import { OpenClawDashboardPage } from "./OpenClawDashboardPage";
@@ -131,6 +132,76 @@ function toSyncModels(
     name: model.display_name,
     contextWindow: model.limits.context_length ?? undefined,
   }));
+}
+
+function openClawOperationLabel(kind: OpenClawOperationKind | null): string {
+  switch (kind) {
+    case "install":
+      return "安装";
+    case "uninstall":
+      return "卸载";
+    case "restart":
+      return "重启";
+    default:
+      return "处理";
+  }
+}
+
+function buildOpenClawRepairPrompt(
+  kind: OpenClawOperationKind | null,
+  message: string | null,
+  logs: OpenClawInstallProgressEvent[],
+  systemInfo: {
+    os: string;
+    userAgent: string;
+    installPath: string;
+    nodeStatus: string;
+    gitStatus: string;
+    gatewayStatus: string;
+    gatewayPort: number;
+    healthStatus: string;
+    dashboardUrl: string;
+  },
+): string {
+  const operationLabel = openClawOperationLabel(kind);
+  const visibleLogs = logs.slice(-40);
+  const summarizedError =
+    visibleLogs
+      .slice()
+      .reverse()
+      .find((log) => log.level === "error" || log.level === "warn")?.message ||
+    message ||
+    "安装/运行过程中出现异常";
+  const logText =
+    visibleLogs.length > 0
+      ? visibleLogs
+          .map((log) => `[${log.level.toUpperCase()}] ${log.message}`)
+          .join("\n")
+      : "暂无日志输出";
+
+  return [
+    `我正在${operationLabel} openclaw，但在过程中遇到了这个问题：${summarizedError}。`,
+    "",
+    "请帮我：",
+    "1. 判断最可能的根因",
+    "2. 给出最小可执行的修复步骤",
+    "3. 如果需要修改环境变量、Node/npm、PATH、全局包冲突，请明确指出",
+    "4. 如果可以在当前 ProxyCast / Tauri 项目中修复，也请给出具体修改建议",
+    "",
+    "当前系统信息：",
+    `- 操作系统: ${systemInfo.os}`,
+    `- User Agent: ${systemInfo.userAgent}`,
+    `- OpenClaw 安装路径: ${systemInfo.installPath}`,
+    `- Node.js 状态: ${systemInfo.nodeStatus}`,
+    `- Git 状态: ${systemInfo.gitStatus}`,
+    `- Gateway 状态: ${systemInfo.gatewayStatus}`,
+    `- Gateway 端口: ${systemInfo.gatewayPort}`,
+    `- 健康检查: ${systemInfo.healthStatus}`,
+    `- Dashboard 地址: ${systemInfo.dashboardUrl}`,
+    "",
+    "以下是完整日志：",
+    logText,
+  ].join("\n");
 }
 
 function renderBlockedPage(
@@ -393,6 +464,35 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!operationState.running) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncProgressLogs = async () => {
+      try {
+        const logs = await openclawApi.getProgressLogs();
+        if (!cancelled && logs.length > 0) {
+          setInstallLogs(logs);
+        }
+      } catch {
+        // 忽略轮询失败，保留事件流或已有日志
+      }
+    };
+
+    void syncProgressLogs();
+    const timer = window.setInterval(() => {
+      void syncProgressLogs();
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [operationState.running]);
+
   const refreshGatewayRuntime = useCallback(async () => {
     const status = await openclawApi.getStatus();
     setGatewayStatus(status.status);
@@ -598,17 +698,27 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
   );
 
   const handleInstall = useCallback(async () => {
+    const preview = await openclawApi
+      .getCommandPreview("install")
+      .catch(() => null);
     await runProgressOperation(
       "install",
       () => openclawApi.install(),
       "runtime",
       "install",
-      [
-        {
-          level: "info",
-          message: "已发送安装请求，正在等待后端返回安装命令...",
-        },
-      ],
+      preview
+        ? [
+            { level: "info", message: preview.title },
+            ...preview.command
+              .split("\n")
+              .map((line) => ({ level: "info" as const, message: line })),
+          ]
+        : [
+            {
+              level: "info",
+              message: "已发送安装请求，正在等待后端返回安装命令...",
+            },
+          ],
     );
   }, [runProgressOperation]);
 
@@ -618,18 +728,28 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
     }
 
     await closeDashboardWindowSilently();
+    const preview = await openclawApi
+      .getCommandPreview("uninstall")
+      .catch(() => null);
 
     await runProgressOperation(
       "uninstall",
       () => openclawApi.uninstall(),
       "install",
       installed ? "configure" : "install",
-      [
-        {
-          level: "info",
-          message: "已发送卸载请求，正在等待后端返回卸载命令...",
-        },
-      ],
+      preview
+        ? [
+            { level: "info", message: preview.title },
+            ...preview.command
+              .split("\n")
+              .map((line) => ({ level: "info" as const, message: line })),
+          ]
+        : [
+            {
+              level: "info",
+              message: "已发送卸载请求，正在等待后端返回卸载命令...",
+            },
+          ],
       () => {
         clearLastSynced();
         setSelectedModelId("");
@@ -645,20 +765,30 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
 
   const handleRestart = useCallback(async () => {
     await closeDashboardWindowSilently();
+    const preview = await openclawApi
+      .getCommandPreview("restart", gatewayPort)
+      .catch(() => null);
 
     await runProgressOperation(
       "restart",
       () => openclawApi.restartGateway(),
       "runtime",
       "runtime",
-      [
-        {
-          level: "info",
-          message: "已发送重启请求，正在停止并重新拉起 Gateway...",
-        },
-      ],
+      preview
+        ? [
+            { level: "info", message: preview.title },
+            ...preview.command
+              .split("\n")
+              .map((line) => ({ level: "info" as const, message: line })),
+          ]
+        : [
+            {
+              level: "info",
+              message: "已发送重启请求，正在停止并重新拉起 Gateway...",
+            },
+          ],
     );
-  }, [closeDashboardWindowSilently, runProgressOperation]);
+  }, [closeDashboardWindowSilently, gatewayPort, runProgressOperation]);
 
   const handleSync = useCallback(async () => {
     await syncProviderConfig();
@@ -779,6 +909,168 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
     navigateSubpage(operationState.returnSubpage);
   }, [navigateSubpage, operationState.returnSubpage]);
 
+  const openClawRepairPrompt = useMemo(
+    () =>
+      buildOpenClawRepairPrompt(
+        operationState.kind,
+        operationState.message,
+        installLogs,
+        {
+          os:
+            typeof navigator !== "undefined"
+              ? `${navigator.platform || "unknown"} / ${navigator.language || "unknown"}`
+              : "unknown",
+          userAgent:
+            typeof navigator !== "undefined"
+              ? navigator.userAgent || "unknown"
+              : "unknown",
+          installPath: installedStatus?.path || "未检测到安装路径",
+          nodeStatus: formatNodeStatus(nodeStatus),
+          gitStatus: formatBinaryStatus(gitStatus, "可用", "未检测到 Git"),
+          gatewayStatus,
+          gatewayPort,
+          healthStatus: healthInfo
+            ? `${healthInfo.status}${healthInfo.version ? ` · ${healthInfo.version}` : ""}`
+            : "尚未执行健康检查",
+          dashboardUrl: dashboardUrl || "尚未生成 Dashboard 地址",
+        },
+      ),
+    [
+      dashboardUrl,
+      gatewayPort,
+      gatewayStatus,
+      gitStatus,
+      healthInfo,
+      installLogs,
+      installedStatus?.path,
+      nodeStatus,
+      operationState.kind,
+      operationState.message,
+    ],
+  );
+
+  const openClawRawLogsText = useMemo(
+    () =>
+      installLogs.length > 0
+        ? installLogs
+            .map((log) => `[${log.level.toUpperCase()}] ${log.message}`)
+            .join("\n")
+        : "",
+    [installLogs],
+  );
+
+  const openClawDiagnosticBundleJson = useMemo(
+    () =>
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          source: "openclaw-progress",
+          operation: operationState.kind,
+          running: operationState.running,
+          message: operationState.message,
+          system: {
+            os:
+              typeof navigator !== "undefined"
+                ? `${navigator.platform || "unknown"} / ${navigator.language || "unknown"}`
+                : "unknown",
+            userAgent:
+              typeof navigator !== "undefined"
+                ? navigator.userAgent || "unknown"
+                : "unknown",
+            installPath: installedStatus?.path || "未检测到安装路径",
+            nodeStatus: formatNodeStatus(nodeStatus),
+            gitStatus: formatBinaryStatus(gitStatus, "可用", "未检测到 Git"),
+            gatewayStatus,
+            gatewayPort,
+            healthStatus: healthInfo
+              ? `${healthInfo.status}${healthInfo.version ? ` · ${healthInfo.version}` : ""}`
+              : "尚未执行健康检查",
+            dashboardUrl: dashboardUrl || "尚未生成 Dashboard 地址",
+          },
+          logs: installLogs,
+        },
+        null,
+        2,
+      ),
+    [
+      dashboardUrl,
+      gatewayPort,
+      gatewayStatus,
+      gitStatus,
+      healthInfo,
+      installLogs,
+      installedStatus?.path,
+      nodeStatus,
+      operationState.kind,
+      operationState.message,
+      operationState.running,
+    ],
+  );
+
+  const handleCopyOpenClawRepairPrompt = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(openClawRepairPrompt);
+      toast.success("OpenClaw 修复提示词已复制。");
+    } catch {
+      toast.error("复制修复提示词失败。");
+    }
+  }, [openClawRepairPrompt]);
+
+  const handleCopyOpenClawLogs = useCallback(async () => {
+    if (!openClawRawLogsText.trim()) {
+      toast.error("当前没有可复制的日志。");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(openClawRawLogsText);
+      toast.success("OpenClaw 纯日志已复制。");
+    } catch {
+      toast.error("复制纯日志失败。");
+    }
+  }, [openClawRawLogsText]);
+
+  const handleCopyOpenClawDiagnosticBundle = useCallback(async () => {
+    if (!openClawRawLogsText.trim()) {
+      toast.error("当前没有可复制的诊断内容。");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(openClawDiagnosticBundleJson);
+      toast.success("OpenClaw JSON 诊断包已复制。");
+    } catch {
+      toast.error("复制 JSON 诊断包失败。");
+    }
+  }, [openClawDiagnosticBundleJson, openClawRawLogsText]);
+
+  const handleAskAgentFixOpenClaw = useCallback(async () => {
+    const prompt = openClawRepairPrompt.trim();
+    if (!prompt) {
+      toast.error("当前没有可用于诊断的日志内容。");
+      return;
+    }
+
+    const project = await getOrCreateDefaultProject().catch((error) => {
+      toast.error(
+        error instanceof Error ? error.message : "创建默认项目失败。",
+      );
+      return null;
+    });
+
+    if (!project) {
+      return;
+    }
+
+    onNavigate?.("agent", {
+      projectId: project.id,
+      initialUserPrompt: prompt,
+      newChatAt: Date.now(),
+      theme: "general",
+      lockTheme: false,
+    });
+  }, [onNavigate, openClawRepairPrompt]);
+
   if (!statusResolved && !operationState.running) {
     return (
       <div className="flex min-h-full flex-col items-center justify-center px-6 py-10">
@@ -838,7 +1130,12 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
         }
         message={operationState.message}
         logs={installLogs}
+        repairPrompt={openClawRepairPrompt}
         onClose={handleCloseProgress}
+        onCopyLogs={() => void handleCopyOpenClawLogs()}
+        onCopyDiagnosticBundle={() => void handleCopyOpenClawDiagnosticBundle()}
+        onCopyRepairPrompt={() => void handleCopyOpenClawRepairPrompt()}
+        onAskAgentFix={handleAskAgentFixOpenClaw}
       />
     );
   }

@@ -2,8 +2,8 @@ use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::database::DbConnection;
 use crate::services::openclaw_service::{
     openclaw_install_event_name, ActionResult, BinaryAvailabilityStatus, BinaryInstallStatus,
-    ChannelInfo, GatewayStatusInfo, HealthInfo, NodeCheckResult, OpenClawServiceState,
-    SyncModelEntry,
+    ChannelInfo, CommandPreview, GatewayStatusInfo, HealthInfo, InstallProgressEvent,
+    NodeCheckResult, OpenClawServiceState, SyncModelEntry,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -58,11 +58,23 @@ pub async fn openclaw_get_git_download_url(
 }
 
 #[tauri::command]
+pub async fn openclaw_get_command_preview(
+    app: AppHandle,
+    service: State<'_, OpenClawServiceState>,
+    operation: String,
+    port: Option<u16>,
+) -> Result<CommandPreview, String> {
+    let mut service = service.0.lock().await;
+    service.get_command_preview(&app, &operation, port).await
+}
+
+#[tauri::command]
 pub async fn openclaw_install(
     app: AppHandle,
     service: State<'_, OpenClawServiceState>,
 ) -> Result<ActionResult, String> {
-    let service = service.0.lock().await;
+    let mut service = service.0.lock().await;
+    service.clear_progress_logs();
     service.install(&app).await
 }
 
@@ -72,6 +84,7 @@ pub async fn openclaw_uninstall(
     service: State<'_, OpenClawServiceState>,
 ) -> Result<ActionResult, String> {
     let mut service = service.0.lock().await;
+    service.clear_progress_logs();
     service.uninstall(&app).await
 }
 
@@ -82,6 +95,7 @@ pub async fn openclaw_start_gateway(
     service: State<'_, OpenClawServiceState>,
 ) -> Result<ActionResult, String> {
     let mut service = service.0.lock().await;
+    service.clear_progress_logs();
     service.start_gateway(Some(&app), port).await
 }
 
@@ -91,6 +105,7 @@ pub async fn openclaw_stop_gateway(
     service: State<'_, OpenClawServiceState>,
 ) -> Result<ActionResult, String> {
     let mut service = service.0.lock().await;
+    service.clear_progress_logs();
     service.stop_gateway(Some(&app)).await
 }
 
@@ -100,7 +115,16 @@ pub async fn openclaw_restart_gateway(
     service: State<'_, OpenClawServiceState>,
 ) -> Result<ActionResult, String> {
     let mut service = service.0.lock().await;
+    service.clear_progress_logs();
     service.restart_gateway(&app).await
+}
+
+#[tauri::command]
+pub async fn openclaw_get_progress_logs(
+    service: State<'_, OpenClawServiceState>,
+) -> Result<Vec<InstallProgressEvent>, String> {
+    let service = service.0.lock().await;
+    Ok(service.get_progress_logs())
 }
 
 #[tauri::command]

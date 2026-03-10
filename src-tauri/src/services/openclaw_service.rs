@@ -5,13 +5,13 @@ use rand::{distributions::Alphanumeric, Rng};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
 use std::time::SystemTime;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -24,6 +24,7 @@ const OPENCLAW_CN_PACKAGE: &str = "@qingchencloud/openclaw-zh@latest";
 const OPENCLAW_DEFAULT_PACKAGE: &str = "openclaw@latest";
 const NPM_MIRROR_CN: &str = "https://registry.npmmirror.com";
 const NODE_MIN_VERSION: (u64, u64, u64) = (22, 0, 0);
+const OPENCLAW_PROGRESS_LOG_LIMIT: usize = 400;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +53,13 @@ pub struct NodeCheckResult {
 pub struct ActionResult {
     pub success: bool,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandPreview {
+    pub title: String,
+    pub command: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +118,7 @@ pub struct OpenClawService {
     gateway_port: u16,
     gateway_auth_token: String,
     gateway_started_at: Option<SystemTime>,
+    progress_logs: VecDeque<InstallProgressEvent>,
 }
 
 impl Default for OpenClawService {
@@ -120,6 +129,7 @@ impl Default for OpenClawService {
             gateway_port: DEFAULT_GATEWAY_PORT,
             gateway_auth_token: String::new(),
             gateway_started_at: None,
+            progress_logs: VecDeque::new(),
         }
     }
 }
@@ -133,6 +143,38 @@ impl Default for OpenClawServiceState {
 }
 
 impl OpenClawService {
+    pub fn clear_progress_logs(&mut self) {
+        self.progress_logs.clear();
+    }
+
+    pub fn get_progress_logs(&self) -> Vec<InstallProgressEvent> {
+        self.progress_logs.iter().cloned().collect()
+    }
+
+    fn push_progress_log(&mut self, message: String, level: String) {
+        if self.progress_logs.len() >= OPENCLAW_PROGRESS_LOG_LIMIT {
+            self.progress_logs.pop_front();
+        }
+        self.progress_logs
+            .push_back(InstallProgressEvent { message, level });
+    }
+
+    pub async fn get_command_preview(
+        &mut self,
+        app: &AppHandle,
+        operation: &str,
+        port: Option<u16>,
+    ) -> Result<CommandPreview, String> {
+        match operation {
+            "install" => self.build_install_command_preview(app).await,
+            "uninstall" => self.build_uninstall_command_preview().await,
+            "restart" => self.build_restart_command_preview(port).await,
+            "start" => self.build_start_command_preview(port).await,
+            "stop" => self.build_stop_command_preview(port).await,
+            _ => Err(format!("不支持的 OpenClaw 操作预览: {operation}")),
+        }
+    }
+
     pub async fn check_installed(&self) -> Result<BinaryInstallStatus, String> {
         let path = find_command_in_shell("openclaw").await?;
         Ok(BinaryInstallStatus {
@@ -215,29 +257,8 @@ impl OpenClawService {
     }
 
     pub async fn install(&self, app: &AppHandle) -> Result<ActionResult, String> {
-        let npm_path = find_command_in_shell("npm")
-            .await?
-            .ok_or_else(|| "未检测到 npm，可先安装或修复 Node.js 环境。".to_string())?;
-        let npm_prefix = detect_npm_global_prefix(&npm_path).await;
-        let package = if should_use_china_package(app) {
-            OPENCLAW_CN_PACKAGE
-        } else {
-            OPENCLAW_DEFAULT_PACKAGE
-        };
-
-        let prefix_env = npm_prefix
-            .as_deref()
-            .map(shell_env_assignment)
-            .unwrap_or_default();
-        let npm_cmd = shell_escape(&npm_path);
-        let cleanup_command = format!(
-            "{prefix_env}{npm_cmd} uninstall -g openclaw @qingchencloud/openclaw-zh || true"
-        );
-        let install_command = if should_use_china_package(app) {
-            format!("{prefix_env}{npm_cmd} install -g {package} --registry={NPM_MIRROR_CN}")
-        } else {
-            format!("{prefix_env}{npm_cmd} install -g {package}")
-        };
+        let (_, npm_path, npm_prefix, cleanup_command, install_command) =
+            self.resolve_install_commands(app).await?;
         let command = format!("{cleanup_command}\n{install_command}");
 
         emit_install_progress(app, &format!("使用 npm: {npm_path}"), "info");
@@ -255,19 +276,7 @@ impl OpenClawService {
             let _ = self.stop_gateway(None).await;
         }
 
-        let npm_path = find_command_in_shell("npm")
-            .await?
-            .ok_or_else(|| "未检测到 npm，可先安装或修复 Node.js 环境。".to_string())?;
-        let npm_prefix = detect_npm_global_prefix(&npm_path).await;
-        let prefix_env = npm_prefix
-            .as_deref()
-            .map(shell_env_assignment)
-            .unwrap_or_default();
-        let command = format!(
-            "{}{} uninstall -g openclaw @qingchencloud/openclaw-zh",
-            prefix_env,
-            shell_escape(&npm_path)
-        );
+        let (npm_path, npm_prefix, command) = self.resolve_uninstall_command().await?;
 
         emit_install_progress(app, &format!("使用 npm: {npm_path}"), "info");
         if let Some(prefix) = npm_prefix {
@@ -902,6 +911,148 @@ impl OpenClawService {
         std::fs::write(proxycast_config_path, content).map_err(|e| format!("写入配置失败: {e}"))?;
         Ok(())
     }
+
+    async fn resolve_install_commands(
+        &self,
+        app: &AppHandle,
+    ) -> Result<(String, String, Option<String>, String, String), String> {
+        let npm_path = find_command_in_shell("npm")
+            .await?
+            .ok_or_else(|| "未检测到 npm，可先安装或修复 Node.js 环境。".to_string())?;
+        let npm_prefix = detect_npm_global_prefix(&npm_path).await;
+        let package = if should_use_china_package(app).await {
+            OPENCLAW_CN_PACKAGE
+        } else {
+            OPENCLAW_DEFAULT_PACKAGE
+        };
+        let prefix_env = npm_prefix
+            .as_deref()
+            .map(shell_env_assignment)
+            .unwrap_or_default();
+        let npm_cmd = shell_escape(&npm_path);
+        let cleanup_command = format!(
+            "{prefix_env}{npm_cmd} uninstall -g openclaw @qingchencloud/openclaw-zh || true"
+        );
+        let install_command = if should_use_china_package(app).await {
+            format!("{prefix_env}{npm_cmd} install -g {package} --registry={NPM_MIRROR_CN}")
+        } else {
+            format!("{prefix_env}{npm_cmd} install -g {package}")
+        };
+        Ok((
+            package.to_string(),
+            npm_path,
+            npm_prefix,
+            cleanup_command,
+            install_command,
+        ))
+    }
+
+    async fn resolve_uninstall_command(&self) -> Result<(String, Option<String>, String), String> {
+        let npm_path = find_command_in_shell("npm")
+            .await?
+            .ok_or_else(|| "未检测到 npm，可先安装或修复 Node.js 环境。".to_string())?;
+        let npm_prefix = detect_npm_global_prefix(&npm_path).await;
+        let prefix_env = npm_prefix
+            .as_deref()
+            .map(shell_env_assignment)
+            .unwrap_or_default();
+        let command = format!(
+            "{}{} uninstall -g openclaw @qingchencloud/openclaw-zh",
+            prefix_env,
+            shell_escape(&npm_path)
+        );
+        Ok((npm_path, npm_prefix, command))
+    }
+
+    async fn build_install_command_preview(
+        &self,
+        app: &AppHandle,
+    ) -> Result<CommandPreview, String> {
+        let (package, npm_path, npm_prefix, cleanup_command, install_command) =
+            self.resolve_install_commands(app).await?;
+        let prefix_note = npm_prefix
+            .map(|prefix| format!("npm: {npm_path}\nprefix: {prefix}\n"))
+            .unwrap_or_else(|| format!("npm: {npm_path}\n"));
+        Ok(CommandPreview {
+            title: format!("安装 {package}"),
+            command: format!("{prefix_note}{cleanup_command}\n{install_command}"),
+        })
+    }
+
+    async fn build_uninstall_command_preview(&self) -> Result<CommandPreview, String> {
+        let (npm_path, npm_prefix, command) = self.resolve_uninstall_command().await?;
+        let prefix_note = npm_prefix
+            .map(|prefix| format!("npm: {npm_path}\nprefix: {prefix}\n"))
+            .unwrap_or_else(|| format!("npm: {npm_path}\n"));
+        Ok(CommandPreview {
+            title: "卸载 OpenClaw".to_string(),
+            command: format!("{prefix_note}{command}"),
+        })
+    }
+
+    async fn build_start_command_preview(
+        &mut self,
+        port: Option<u16>,
+    ) -> Result<CommandPreview, String> {
+        if let Some(next_port) = port {
+            self.gateway_port = next_port.max(1);
+        }
+        self.restore_auth_token_from_config();
+        let binary = find_command_in_shell("openclaw")
+            .await?
+            .ok_or_else(|| "未检测到 OpenClaw 可执行文件，请先安装。".to_string())?;
+        let config_path = openclaw_proxycast_config_path();
+        Ok(CommandPreview {
+            title: "启动 Gateway".to_string(),
+            command: format!(
+                "{}OPENCLAW_CONFIG_PATH={} {} gateway --port {}",
+                if cfg!(target_os = "windows") {
+                    "set "
+                } else {
+                    ""
+                },
+                shell_escape(config_path.to_string_lossy().as_ref()),
+                shell_escape(&binary),
+                self.gateway_port
+            ),
+        })
+    }
+
+    async fn build_stop_command_preview(
+        &mut self,
+        port: Option<u16>,
+    ) -> Result<CommandPreview, String> {
+        if let Some(next_port) = port {
+            self.gateway_port = next_port.max(1);
+        }
+        self.restore_auth_token_from_config();
+        let binary = find_command_in_shell("openclaw")
+            .await?
+            .ok_or_else(|| "未检测到 OpenClaw 可执行文件，请先安装。".to_string())?;
+        let config_path = openclaw_proxycast_config_path();
+        Ok(CommandPreview {
+            title: "停止 Gateway".to_string(),
+            command: format!(
+                "OPENCLAW_CONFIG_PATH={} {} gateway stop --url {} --token {}",
+                shell_escape(config_path.to_string_lossy().as_ref()),
+                shell_escape(&binary),
+                self.gateway_ws_url(),
+                shell_escape(&self.gateway_auth_token)
+            ),
+        })
+    }
+
+    async fn build_restart_command_preview(
+        &mut self,
+        port: Option<u16>,
+    ) -> Result<CommandPreview, String> {
+        let stop = self.build_stop_command_preview(port).await?;
+        let start = self.build_start_command_preview(port).await?;
+        Ok(CommandPreview {
+            title: "重启 Gateway".to_string(),
+            command: format!("{}\n{}", stop.command, start.command),
+        })
+    }
 }
 
 pub fn openclaw_install_event_name() -> &'static str {
@@ -1091,12 +1242,12 @@ fn generate_auth_token() -> String {
         .collect()
 }
 
-fn should_use_china_package(app: &AppHandle) -> bool {
+async fn should_use_china_package(app: &AppHandle) -> bool {
     if let Some(app_state) = app.try_state::<AppState>() {
-        let language = tauri::async_runtime::block_on(async {
+        let language = {
             let state = app_state.read().await;
             state.config.language.clone()
-        });
+        };
 
         if language.starts_with("zh") {
             return true;
@@ -1273,31 +1424,14 @@ async fn run_shell_command_with_progress(
     let stdout_task = child.stdout.take().map(|stdout| {
         let app = app.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    emit_install_progress(&app, trimmed, "info");
-                }
-            }
+            stream_reader_to_progress(app, stdout, "info").await;
         })
     });
 
     let stderr_task = child.stderr.take().map(|stderr| {
         let app = app.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let trimmed = line.trim();
-                if !trimmed.is_empty() {
-                    let level = if trimmed.to_ascii_lowercase().contains("warn") {
-                        "warn"
-                    } else {
-                        "error"
-                    };
-                    emit_install_progress(&app, trimmed, level);
-                }
-            }
+            stream_reader_to_progress(app, stderr, "error").await;
         })
     });
 
@@ -1337,6 +1471,15 @@ fn spawn_shell_command(command_line: &str) -> Result<Child, String> {
         let mut cmd = Command::new("cmd");
         cmd.arg("/C").arg(command_line);
         cmd
+    } else if cfg!(target_os = "macos") {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+        let mut cmd = Command::new("script");
+        cmd.arg("-q")
+            .arg("/dev/null")
+            .arg(shell)
+            .arg("-lc")
+            .arg(command_line);
+        cmd
     } else {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut cmd = Command::new(shell);
@@ -1344,11 +1487,109 @@ fn spawn_shell_command(command_line: &str) -> Result<Child, String> {
         cmd
     };
 
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .env("NO_COLOR", "1")
+        .env("CLICOLOR", "0")
+        .env("FORCE_COLOR", "0")
+        .env("npm_config_color", "false")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     command.spawn().map_err(|e| format!("启动命令失败: {e}"))
 }
 
+async fn stream_reader_to_progress<R>(app: AppHandle, mut reader: R, default_level: &'static str)
+where
+    R: AsyncRead + Unpin,
+{
+    let mut buffer = [0_u8; 2048];
+    let mut pending = String::new();
+
+    loop {
+        match reader.read(&mut buffer).await {
+            Ok(0) => break,
+            Ok(size) => {
+                pending.push_str(&String::from_utf8_lossy(&buffer[..size]));
+                flush_progress_chunks(&app, &mut pending, default_level);
+            }
+            Err(error) => {
+                emit_install_progress(&app, &format!("读取命令输出失败: {error}"), "warn");
+                break;
+            }
+        }
+    }
+
+    let tail = pending.trim();
+    if !tail.is_empty() {
+        emit_install_progress(&app, tail, classify_progress_level(tail, default_level));
+    }
+}
+
+fn flush_progress_chunks(app: &AppHandle, pending: &mut String, default_level: &'static str) {
+    loop {
+        let next_break = pending.find(['\n', '\r']);
+        let Some(index) = next_break else {
+            break;
+        };
+
+        let mut line = pending[..index].trim().to_string();
+        let mut consume_len = index + 1;
+        while pending
+            .get(consume_len..consume_len + 1)
+            .is_some_and(|ch| ch == "\n" || ch == "\r")
+        {
+            consume_len += 1;
+        }
+
+        pending.drain(..consume_len);
+
+        if line.is_empty() {
+            continue;
+        }
+
+        line = sanitize_progress_line(&line);
+        if line.is_empty() {
+            continue;
+        }
+
+        emit_install_progress(app, &line, classify_progress_level(&line, default_level));
+    }
+
+    if pending.len() > 4096 {
+        let line = sanitize_progress_line(pending.trim());
+        if !line.is_empty() {
+            emit_install_progress(app, &line, classify_progress_level(&line, default_level));
+        }
+        pending.clear();
+    }
+}
+
+fn sanitize_progress_line(value: &str) -> String {
+    value
+        .replace('\u{1b}', "")
+        .replace("[?25h", "")
+        .replace("[?25l", "")
+        .trim()
+        .to_string()
+}
+
+fn classify_progress_level(message: &str, default_level: &'static str) -> &'static str {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("error") || lower.contains("fatal") {
+        "error"
+    } else if lower.contains("warn") || lower.contains("warning") {
+        "warn"
+    } else {
+        default_level
+    }
+}
+
 fn emit_install_progress(app: &AppHandle, message: &str, level: &str) {
+    if let Some(service_state) = app.try_state::<OpenClawServiceState>() {
+        if let Ok(mut service) = service_state.0.try_lock() {
+            service.push_progress_log(message.to_string(), level.to_string());
+        }
+    }
+
     let payload = InstallProgressEvent {
         message: message.to_string(),
         level: level.to_string(),

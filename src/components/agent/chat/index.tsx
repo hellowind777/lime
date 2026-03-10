@@ -4937,6 +4937,42 @@ export function AgentChatPage({
     onInitialUserPromptConsumed,
   ]);
 
+  // 通用聊天场景：若带有 initialUserPrompt，则自动新建并发送首条消息
+  useEffect(() => {
+    const pendingInitialPrompt = (initialUserPrompt || "").trim();
+    if (
+      !pendingInitialPrompt ||
+      contentId ||
+      messages.length > 0 ||
+      isSending
+    ) {
+      return;
+    }
+
+    if (consumedInitialPromptRef.current === pendingInitialPrompt) {
+      return;
+    }
+
+    consumedInitialPromptRef.current = pendingInitialPrompt;
+    void (async () => {
+      await handleSend(
+        [],
+        chatToolPreferences.webSearch,
+        chatToolPreferences.thinking,
+        pendingInitialPrompt,
+      );
+      onInitialUserPromptConsumed?.();
+    })();
+  }, [
+    chatToolPreferences,
+    contentId,
+    handleSend,
+    initialUserPrompt,
+    isSending,
+    messages.length,
+    onInitialUserPromptConsumed,
+  ]);
+
   // 当 contentId 变化时重置引导状态
   useEffect(() => {
     hasTriggeredGuide.current = false;

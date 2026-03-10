@@ -925,12 +925,14 @@ impl ModelRegistryService {
                     error: None,
                     request_url: Some(api_url),
                     diagnostic_hint: None,
+                    error_kind: None,
+                    should_prompt_error: false,
                 })
             }
             Err(api_error) => {
                 tracing::warn!(
                     "[ModelRegistry] API 获取失败: {}, 回退到本地文件",
-                    api_error
+                    api_error.message
                 );
 
                 // 回退到本地资源模型（多级匹配）
@@ -947,17 +949,24 @@ impl ModelRegistryService {
                     Ok(FetchModelsResult {
                         models: vec![],
                         source: ModelFetchSource::LocalFallback,
-                        error: Some(format!("API 获取失败: {api_error}, 本地也无数据")),
+                        error: Some(format!("API 获取失败: {}, 本地也无数据", api_error.message)),
                         request_url: Some(api_url),
                         diagnostic_hint,
+                        error_kind: Some(api_error.kind.clone()),
+                        should_prompt_error: Self::should_prompt_model_fetch_error(&api_error.kind),
                     })
                 } else {
                     Ok(FetchModelsResult {
                         models: local_models,
                         source: ModelFetchSource::LocalFallback,
-                        error: Some(format!("API 获取失败: {api_error}, 已使用本地数据")),
+                        error: Some(format!(
+                            "API 获取失败: {}, 已使用本地数据",
+                            api_error.message
+                        )),
                         request_url: Some(api_url),
                         diagnostic_hint,
+                        error_kind: Some(api_error.kind.clone()),
+                        should_prompt_error: Self::should_prompt_model_fetch_error(&api_error.kind),
                     })
                 }
             }
@@ -1355,16 +1364,30 @@ impl ModelRegistryService {
         None
     }
 
+    fn should_prompt_model_fetch_error(kind: &ModelFetchErrorKind) -> bool {
+        matches!(
+            kind,
+            ModelFetchErrorKind::NotFound
+                | ModelFetchErrorKind::Unauthorized
+                | ModelFetchErrorKind::Forbidden
+        )
+    }
+
     /// 调用 /v1/models API
     async fn call_models_api(
         &self,
         url: &str,
         api_key: &str,
-    ) -> Result<Vec<ApiModelResponse>, String> {
+    ) -> Result<Vec<ApiModelResponse>, ModelsApiError> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
+            .map_err(|e| {
+                ModelsApiError::new(
+                    ModelFetchErrorKind::Other,
+                    format!("创建 HTTP 客户端失败: {e}"),
+                )
+            })?;
 
         let response = client
             .get(url)
@@ -1372,7 +1395,9 @@ impl ModelRegistryService {
             .header("Content-Type", "application/json")
             .send()
             .await
-            .map_err(|e| format!("请求失败: {e}"))?;
+            .map_err(|e| {
+                ModelsApiError::new(ModelFetchErrorKind::Network, format!("请求失败: {e}"))
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -1381,21 +1406,40 @@ impl ModelRegistryService {
                 .await
                 .unwrap_or_else(|_| "无法读取响应体".to_string());
             if status == reqwest::StatusCode::NOT_FOUND {
-                return Err(format!(
-                    "API 返回错误 {status}: {body}（请求地址: {url}）。这通常表示 Base URL 路径不兼容，请检查 Provider Base URL 是否已经包含版本路径，或是否应直接使用 /models 端点。"
+                return Err(ModelsApiError::new(
+                    ModelFetchErrorKind::NotFound,
+                    format!(
+                        "API 返回错误 {status}: {body}（请求地址: {url}）。这通常表示 Base URL 路径不兼容，请检查 Provider Base URL 是否已经包含版本路径，或是否应直接使用 /models 端点。"
+                    ),
                 ));
             }
-            return Err(format!("API 返回错误 {status}: {body}（请求地址: {url}）"));
+            let kind = if status == reqwest::StatusCode::UNAUTHORIZED {
+                ModelFetchErrorKind::Unauthorized
+            } else if status == reqwest::StatusCode::FORBIDDEN {
+                ModelFetchErrorKind::Forbidden
+            } else {
+                ModelFetchErrorKind::Other
+            };
+            return Err(ModelsApiError::new(
+                kind,
+                format!("API 返回错误 {status}: {body}（请求地址: {url}）"),
+            ));
         }
 
-        let body = response
-            .text()
-            .await
-            .map_err(|e| format!("读取响应失败: {e}"))?;
+        let body = response.text().await.map_err(|e| {
+            ModelsApiError::new(
+                ModelFetchErrorKind::InvalidResponse,
+                format!("读取响应失败: {e}"),
+            )
+        })?;
 
         // 解析 OpenAI 格式的响应
-        let api_response: ApiModelsResponse =
-            serde_json::from_str(&body).map_err(|e| format!("解析响应失败: {e}"))?;
+        let api_response: ApiModelsResponse = serde_json::from_str(&body).map_err(|e| {
+            ModelsApiError::new(
+                ModelFetchErrorKind::InvalidResponse,
+                format!("解析响应失败: {e}"),
+            )
+        })?;
 
         Ok(api_response.data)
     }
@@ -1452,6 +1496,18 @@ impl ModelRegistryService {
 // API 响应类型
 // ============================================================================
 
+#[derive(Debug, Clone)]
+struct ModelsApiError {
+    kind: ModelFetchErrorKind,
+    message: String,
+}
+
+impl ModelsApiError {
+    fn new(kind: ModelFetchErrorKind, message: String) -> Self {
+        Self { kind, message }
+    }
+}
+
 /// OpenAI /v1/models API 响应格式
 #[derive(Debug, Deserialize)]
 struct ApiModelsResponse {
@@ -1477,6 +1533,18 @@ pub enum ModelFetchSource {
     LocalFallback,
 }
 
+/// 模型获取错误类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelFetchErrorKind {
+    NotFound,
+    Unauthorized,
+    Forbidden,
+    Network,
+    InvalidResponse,
+    Other,
+}
+
 /// 从 API 获取模型的结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FetchModelsResult {
@@ -1490,6 +1558,10 @@ pub struct FetchModelsResult {
     pub request_url: Option<String>,
     /// 面向用户的诊断建议（如果有）
     pub diagnostic_hint: Option<String>,
+    /// 错误类型（如果有）
+    pub error_kind: Option<ModelFetchErrorKind>,
+    /// 是否应将该错误作为配置问题强提示
+    pub should_prompt_error: bool,
 }
 
 #[cfg(test)]

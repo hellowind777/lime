@@ -44,6 +44,15 @@ interface FetchModelsResult {
   error: string | null;
   request_url?: string | null;
   diagnostic_hint?: string | null;
+  error_kind?:
+    | "not_found"
+    | "unauthorized"
+    | "forbidden"
+    | "network"
+    | "invalid_response"
+    | "other"
+    | null;
+  should_prompt_error?: boolean;
 }
 
 // ============================================================================
