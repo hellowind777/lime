@@ -2,8 +2,8 @@ use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::database::DbConnection;
 use crate::services::openclaw_service::{
     openclaw_install_event_name, ActionResult, BinaryAvailabilityStatus, BinaryInstallStatus,
-    ChannelInfo, CommandPreview, GatewayStatusInfo, HealthInfo, InstallProgressEvent,
-    NodeCheckResult, OpenClawServiceState, SyncModelEntry,
+    ChannelInfo, CommandPreview, EnvironmentStatus, GatewayStatusInfo, HealthInfo,
+    InstallProgressEvent, NodeCheckResult, OpenClawServiceState, SyncModelEntry,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
@@ -23,6 +23,14 @@ pub async fn openclaw_check_installed(
 ) -> Result<BinaryInstallStatus, String> {
     let service = service.0.lock().await;
     service.check_installed().await
+}
+
+#[tauri::command]
+pub async fn openclaw_get_environment_status(
+    service: State<'_, OpenClawServiceState>,
+) -> Result<EnvironmentStatus, String> {
+    let service = service.0.lock().await;
+    service.get_environment_status().await
 }
 
 #[tauri::command]
@@ -76,6 +84,26 @@ pub async fn openclaw_install(
     let mut service = service.0.lock().await;
     service.clear_progress_logs();
     service.install(&app).await
+}
+
+#[tauri::command]
+pub async fn openclaw_install_dependency(
+    app: AppHandle,
+    service: State<'_, OpenClawServiceState>,
+    kind: String,
+) -> Result<ActionResult, String> {
+    let mut service = service.0.lock().await;
+    service.clear_progress_logs();
+    service.install_dependency(&app, &kind).await
+}
+
+#[tauri::command]
+pub async fn openclaw_cleanup_temp_artifacts(
+    app: AppHandle,
+    service: State<'_, OpenClawServiceState>,
+) -> Result<ActionResult, String> {
+    let mut service = service.0.lock().await;
+    service.cleanup_temp_artifacts(Some(&app)).await
 }
 
 #[tauri::command]

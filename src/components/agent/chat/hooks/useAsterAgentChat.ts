@@ -1484,27 +1484,66 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     }
   }, [filterSessionsByWorkspace, workspaceId]);
 
+  const createFreshSession = useCallback(
+    async (sessionName?: string): Promise<string | null> => {
+      try {
+        const resolvedWorkspaceId = getRequiredWorkspaceId();
+        const newSessionId = await createAsterSession(
+          resolvedWorkspaceId,
+          undefined,
+          sessionName,
+          executionStrategy,
+        );
+
+        const now = new Date();
+        setMessages([]);
+        setPendingActions([]);
+        setSessionId(newSessionId);
+        setTopics((prev) => [
+          {
+            id: newSessionId,
+            title: sessionName?.trim() || "新话题",
+            createdAt: now,
+            updatedAt: now,
+            messagesCount: 0,
+            executionStrategy,
+          },
+          ...prev.filter((topic) => topic.id !== newSessionId),
+        ]);
+        currentAssistantMsgIdRef.current = null;
+        currentStreamingSessionIdRef.current = null;
+        hydratedSessionRef.current = newSessionId;
+        skipAutoRestoreRef.current = false;
+        restoredWorkspaceRef.current = resolvedWorkspaceId;
+
+        saveTransient(getScopedSessionKey(), newSessionId);
+        savePersisted(getScopedPersistedSessionKey(), newSessionId);
+        saveTransient(getScopedMessagesKey(), []);
+
+        void loadTopics();
+        return newSessionId;
+      } catch (error) {
+        console.error("[AsterChat] 创建新话题失败:", error);
+        toast.error(`创建新话题失败: ${error}`);
+        return null;
+      }
+    },
+    [
+      executionStrategy,
+      getRequiredWorkspaceId,
+      getScopedMessagesKey,
+      getScopedPersistedSessionKey,
+      getScopedSessionKey,
+      loadTopics,
+    ],
+  );
+
   // 确保有会话
   const ensureSession = useCallback(async (): Promise<string | null> => {
     if (sessionId) return sessionId;
 
-    try {
-      const resolvedWorkspaceId = getRequiredWorkspaceId();
-      const newSessionId = await createAsterSession(
-        resolvedWorkspaceId,
-        undefined,
-        undefined,
-        executionStrategy,
-      );
-      setSessionId(newSessionId);
-      skipAutoRestoreRef.current = false;
-      return newSessionId;
-    } catch (error) {
-      console.error("[AsterChat] 创建会话失败:", error);
-      toast.error(`创建会话失败: ${error}`);
-      return null;
-    }
-  }, [executionStrategy, getRequiredWorkspaceId, sessionId]);
+    return createFreshSession();
+  }, [createFreshSession, sessionId]);
 
   // 辅助函数：追加文本到 contentParts
   const appendTextToParts = (
@@ -2192,7 +2231,13 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
         if (unlisten) unlisten();
       }
     },
-    [ensureSession, executionStrategy, getRequiredWorkspaceId, onWriteFile, systemPrompt],
+    [
+      ensureSession,
+      executionStrategy,
+      getRequiredWorkspaceId,
+      onWriteFile,
+      systemPrompt,
+    ],
   );
 
   // 停止发送
@@ -2906,6 +2951,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
 
     topics,
     sessionId,
+    createFreshSession,
+    ensureSession,
     switchTopic,
     deleteTopic,
     renameTopic,

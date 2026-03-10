@@ -95,14 +95,14 @@ vi.mock("@/features/themes/video", () => ({
     theme: "video",
     capabilities: {
       workspaceKind: "video-canvas",
+      showWorkspaceRightRailInWorkspace: false,
     },
     navigation: {
       defaultView: "create",
       items: [
         { key: "create", label: "创作" },
         { key: "material", label: "素材" },
-        { key: "template", label: "排版" },
-        { key: "publish", label: "发布" },
+        { key: "publish", label: "任务" },
         { key: "settings", label: "设置" },
       ],
     },
@@ -122,8 +122,7 @@ vi.mock("@/features/themes/video", () => ({
     ),
     panelRenderers: {
       material: () => <div>Material Panel</div>,
-      template: () => <div>Template Panel</div>,
-      publish: () => <div>Publish Panel</div>,
+      publish: () => <div>Task Panel</div>,
       settings: () => <div>Settings Panel</div>,
     },
   },
@@ -1184,7 +1183,30 @@ describe("WorkbenchPage 左侧栏模式行为", () => {
     expect(
       container.querySelector("[data-testid='workbench-right-rail-expanded']"),
     ).not.toBeNull();
-    expect(container.textContent).toContain("短视频 · 引导模式");
+    expect(container.textContent).toContain("视频制作 · 引导模式");
+    expect(findInputByPlaceholder(container, "搜索文稿...")).toBeNull();
+  });
+
+  it("视频主题在作业模式不应渲染右侧视频助手栏", async () => {
+    mockListProjects.mockResolvedValueOnce([
+      createWorkspaceProjectFixture({
+        id: "video-project-2",
+        name: "视频项目B",
+        workspaceType: "video",
+        rootPath: "/tmp/workspace/video-project-2",
+      }),
+    ]);
+
+    const { container } = renderPage({
+      theme: "video",
+      viewMode: "workspace",
+      projectId: "video-project-2",
+    });
+    await flushEffects();
+
+    expect(
+      container.querySelector("[data-testid='workbench-right-rail-expanded']"),
+    ).toBeNull();
   });
 
   it("切换到非创作视图时左侧显示紧凑提示并可返回创作视图", async () => {

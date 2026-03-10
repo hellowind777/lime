@@ -9,19 +9,11 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 const JSON_RECURSION_LIMIT: usize = 50;
-
-/// 从工具结果中提取文本内容
-///
-/// 使用 serde_json 来处理，避免直接依赖 rmcp 类型
-fn push_non_empty(target: &mut Vec<String>, value: Option<&str>) {
-    let Some(raw) = value else {
-        return;
-    };
-    let trimmed = raw.trim();
-    if !trimmed.is_empty() {
-        target.push(trimmed.to_string());
-    }
-}
+const JSON_TRAVERSAL_NODE_LIMIT: usize = 4_096;
+const TOOL_RESULT_MAX_TEXT_PARTS: usize = 256;
+const TOOL_RESULT_MAX_OUTPUT_CHARS: usize = 16_000;
+const TOOL_RESULT_MAX_IMAGES: usize = 12;
+const TOOL_RESULT_TRUNCATED_NOTICE: &str = "\n\n[event_converter] 工具输出已截断";
 
 fn enhance_execution_error_text(raw: &str) -> String {
     if !raw.contains("Execution error: No such file or directory (os error 2)") {
@@ -48,48 +40,119 @@ fn dedupe_preserve_order(items: Vec<String>) -> Vec<String> {
     deduped
 }
 
-fn collect_tool_result_text(value: &serde_json::Value, target: &mut Vec<String>) {
-    collect_tool_result_text_with_depth(value, target, 0);
+#[derive(Debug, Default)]
+struct TextCollectState {
+    collected_chars: usize,
+    truncated: bool,
 }
 
-fn collect_tool_result_text_with_depth(
-    value: &serde_json::Value,
+fn truncate_chars(text: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !text.is_empty());
+    }
+
+    let mut char_count = 0usize;
+    for (idx, _) in text.char_indices() {
+        if char_count == max_chars {
+            return (text[..idx].to_string(), true);
+        }
+        char_count += 1;
+    }
+
+    (text.to_string(), false)
+}
+
+fn push_non_empty_limited(
     target: &mut Vec<String>,
-    depth: usize,
+    value: Option<&str>,
+    state: &mut TextCollectState,
 ) {
-    if depth >= JSON_RECURSION_LIMIT {
+    let Some(raw) = value else {
+        return;
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if target.len() >= TOOL_RESULT_MAX_TEXT_PARTS
+        || state.collected_chars >= TOOL_RESULT_MAX_OUTPUT_CHARS
+    {
+        state.truncated = true;
         return;
     }
 
-    match value {
-        serde_json::Value::String(text) => push_non_empty(target, Some(text)),
-        serde_json::Value::Array(items) => {
-            for item in items {
-                collect_tool_result_text_with_depth(item, target, depth + 1);
-            }
-        }
-        serde_json::Value::Object(obj) => {
-            if let Some(content) = obj.get("content") {
-                collect_tool_result_text_with_depth(content, target, depth + 1);
-            }
-            if let Some(value) = obj.get("value") {
-                collect_tool_result_text_with_depth(value, target, depth + 1);
-            }
-            for key in ["text", "output", "stdout", "stderr", "message", "error"] {
-                push_non_empty(target, obj.get(key).and_then(|v| v.as_str()));
-            }
-        }
-        _ => {}
+    let remaining = TOOL_RESULT_MAX_OUTPUT_CHARS.saturating_sub(state.collected_chars);
+    let (snippet, was_truncated) = truncate_chars(trimmed, remaining);
+    if snippet.is_empty() {
+        state.truncated = true;
+        return;
     }
+
+    state.collected_chars += snippet.chars().count();
+    state.truncated |= was_truncated;
+    target.push(snippet);
+}
+
+fn collect_tool_result_text(value: &serde_json::Value, target: &mut Vec<String>) -> bool {
+    let mut stack = vec![(value, 0usize)];
+    let mut visited_nodes = 0usize;
+    let mut state = TextCollectState::default();
+
+    while let Some((current, depth)) = stack.pop() {
+        visited_nodes += 1;
+        if visited_nodes > JSON_TRAVERSAL_NODE_LIMIT {
+            state.truncated = true;
+            break;
+        }
+        if depth >= JSON_RECURSION_LIMIT {
+            state.truncated = true;
+            continue;
+        }
+
+        match current {
+            serde_json::Value::String(text) => {
+                push_non_empty_limited(target, Some(text), &mut state);
+            }
+            serde_json::Value::Array(items) => {
+                for item in items.iter().rev() {
+                    stack.push((item, depth + 1));
+                }
+            }
+            serde_json::Value::Object(obj) => {
+                for key in ["text", "output", "stdout", "stderr", "message", "error"] {
+                    push_non_empty_limited(
+                        target,
+                        obj.get(key).and_then(|v| v.as_str()),
+                        &mut state,
+                    );
+                }
+                if let Some(value) = obj.get("value") {
+                    stack.push((value, depth + 1));
+                }
+                if let Some(content) = obj.get("content") {
+                    stack.push((content, depth + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    state.truncated
 }
 
 fn extract_tool_result_text<T: serde::Serialize>(result: &T) -> String {
     if let Ok(json) = serde_json::to_value(result) {
         let mut parts = Vec::new();
-        collect_tool_result_text(&json, &mut parts);
+        let traversal_truncated = collect_tool_result_text(&json, &mut parts);
         let deduped = dedupe_preserve_order(parts);
         if !deduped.is_empty() {
-            return maybe_filter_web_content(&deduped.join("\n"));
+            let filtered = maybe_filter_web_content(&deduped.join("\n"));
+            let (mut limited, output_truncated) =
+                truncate_chars(&filtered, TOOL_RESULT_MAX_OUTPUT_CHARS);
+            if traversal_truncated || output_truncated {
+                limited.push_str(TOOL_RESULT_TRUNCATED_NOTICE);
+            }
+            return limited;
         }
     }
     String::new()
@@ -256,51 +319,68 @@ fn collect_tool_result_images(
     value: &serde_json::Value,
     target: &mut Vec<TauriToolImage>,
     seen_sources: &mut std::collections::HashSet<String>,
-) {
-    collect_tool_result_images_with_depth(value, target, seen_sources, 0);
-}
+) -> bool {
+    let mut stack = vec![(value, 0usize)];
+    let mut visited_nodes = 0usize;
+    let mut truncated = false;
 
-fn collect_tool_result_images_with_depth(
-    value: &serde_json::Value,
-    target: &mut Vec<TauriToolImage>,
-    seen_sources: &mut std::collections::HashSet<String>,
-    depth: usize,
-) {
-    if depth >= JSON_RECURSION_LIMIT {
-        return;
-    }
+    while let Some((current, depth)) = stack.pop() {
+        visited_nodes += 1;
+        if visited_nodes > JSON_TRAVERSAL_NODE_LIMIT {
+            truncated = true;
+            break;
+        }
+        if depth >= JSON_RECURSION_LIMIT {
+            truncated = true;
+            continue;
+        }
+        if target.len() >= TOOL_RESULT_MAX_IMAGES {
+            truncated = true;
+            break;
+        }
 
-    match value {
-        serde_json::Value::String(text) => {
-            for data_url in extract_data_urls_from_text(text) {
-                push_tool_image_if_new(
-                    target,
-                    seen_sources,
-                    build_tool_image_from_data_url(&data_url, "data_url"),
-                );
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items {
-                collect_tool_result_images_with_depth(item, target, seen_sources, depth + 1);
-            }
-        }
-        serde_json::Value::Object(obj) => {
-            for key in ["image_url", "url", "data"] {
-                if let Some(serde_json::Value::String(raw)) = obj.get(key) {
+        match current {
+            serde_json::Value::String(text) => {
+                for data_url in extract_data_urls_from_text(text) {
+                    if target.len() >= TOOL_RESULT_MAX_IMAGES {
+                        truncated = true;
+                        break;
+                    }
                     push_tool_image_if_new(
                         target,
                         seen_sources,
-                        build_tool_image_from_data_url(raw, "tool_payload"),
+                        build_tool_image_from_data_url(&data_url, "data_url"),
                     );
                 }
             }
-            for nested in obj.values() {
-                collect_tool_result_images_with_depth(nested, target, seen_sources, depth + 1);
+            serde_json::Value::Array(items) => {
+                for item in items.iter().rev() {
+                    stack.push((item, depth + 1));
+                }
             }
+            serde_json::Value::Object(obj) => {
+                for key in ["image_url", "url", "data"] {
+                    if target.len() >= TOOL_RESULT_MAX_IMAGES {
+                        truncated = true;
+                        break;
+                    }
+                    if let Some(serde_json::Value::String(raw)) = obj.get(key) {
+                        push_tool_image_if_new(
+                            target,
+                            seen_sources,
+                            build_tool_image_from_data_url(raw, "tool_payload"),
+                        );
+                    }
+                }
+                for nested in obj.values() {
+                    stack.push((nested, depth + 1));
+                }
+            }
+            _ => {}
         }
-        _ => {}
     }
+
+    truncated
 }
 
 fn extract_tool_result_data<T: serde::Serialize>(result: &T) -> ExtractedToolResult {
@@ -317,7 +397,7 @@ fn extract_tool_result_data<T: serde::Serialize>(result: &T) -> ExtractedToolRes
     }
 
     if let Ok(json) = serde_json::to_value(result) {
-        collect_tool_result_images(&json, &mut images, &mut seen_sources);
+        let _ = collect_tool_result_images(&json, &mut images, &mut seen_sources);
     }
 
     ExtractedToolResult { output, images }
@@ -910,5 +990,37 @@ mod tests {
 
         let text = extract_tool_result_text(&nested);
         assert_eq!(text, "");
+    }
+
+    #[test]
+    fn test_extract_tool_result_text_should_truncate_large_payload() {
+        let payload = serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "A".repeat(TOOL_RESULT_MAX_OUTPUT_CHARS + 128)
+                }
+            ]
+        });
+
+        let text = extract_tool_result_text(&payload);
+        assert!(text.contains("[event_converter] 工具输出已截断"));
+        assert!(text.chars().count() <= TOOL_RESULT_MAX_OUTPUT_CHARS + 64);
+    }
+
+    #[test]
+    fn test_extract_tool_result_data_should_limit_image_count() {
+        let payload = serde_json::json!({
+            "images": (0..(TOOL_RESULT_MAX_IMAGES + 4))
+                .map(|index| {
+                    serde_json::json!({
+                        "data": format!("data:image/png;base64,image{index}")
+                    })
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let extracted = extract_tool_result_data(&payload);
+        assert_eq!(extracted.images.len(), TOOL_RESULT_MAX_IMAGES);
     }
 }

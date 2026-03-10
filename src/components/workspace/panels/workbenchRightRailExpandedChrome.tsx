@@ -44,9 +44,11 @@ export function WorkbenchRightRailCollapseBar({
 }
 
 export function WorkbenchRightRailHeadingCard({
+  eyebrow,
   heading,
   subheading,
 }: {
+  eyebrow?: string;
   heading?: string | null;
   subheading?: string | null;
 }) {
@@ -57,7 +59,7 @@ export function WorkbenchRightRailHeadingCard({
   return (
     <div className="rounded-xl border border-border/70 bg-muted/35 px-3 py-2">
       <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        独立右栏
+        {eyebrow ?? "独立右栏"}
       </div>
       <div className="mt-1 text-sm font-medium text-foreground">{heading}</div>
       {subheading ? (

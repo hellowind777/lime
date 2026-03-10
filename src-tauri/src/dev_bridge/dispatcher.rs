@@ -1249,6 +1249,17 @@ pub async fn handle_command(
             Ok(serde_json::to_value(service.check_installed().await?)?)
         }
 
+        "openclaw_get_environment_status" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service =
+                app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let service = service.0.lock().await;
+            Ok(serde_json::to_value(service.get_environment_status().await?)?)
+        }
+
         "openclaw_check_node_version" => {
             let app_handle = state
                 .app_handle
@@ -1313,6 +1324,20 @@ pub async fn handle_command(
             Ok(serde_json::to_value(service.install(app_handle).await?)?)
         }
 
+        "openclaw_install_dependency" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let args = args.unwrap_or_default();
+            let kind = get_string_arg(&args, "kind", "kind")?;
+            let service =
+                app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            service.clear_progress_logs();
+            Ok(serde_json::to_value(service.install_dependency(app_handle, &kind).await?)?)
+        }
+
         "openclaw_uninstall" => {
             let app_handle = state
                 .app_handle
@@ -1322,6 +1347,17 @@ pub async fn handle_command(
             let mut service = service.0.lock().await;
             service.clear_progress_logs();
             Ok(serde_json::to_value(service.uninstall(app_handle).await?)?)
+        }
+
+        "openclaw_cleanup_temp_artifacts" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?;
+            let service =
+                app_handle.state::<crate::services::openclaw_service::OpenClawServiceState>();
+            let mut service = service.0.lock().await;
+            Ok(serde_json::to_value(service.cleanup_temp_artifacts(Some(app_handle)).await?)?)
         }
 
         "openclaw_start_gateway" => {

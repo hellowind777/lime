@@ -983,6 +983,7 @@ pub fn run() {
             commands::config_cmd::download_update,
             // OpenClaw commands
             commands::openclaw_cmd::openclaw_check_installed,
+            commands::openclaw_cmd::openclaw_get_environment_status,
             commands::openclaw_cmd::openclaw_check_node_version,
             commands::openclaw_cmd::openclaw_check_git_available,
             commands::openclaw_cmd::openclaw_get_node_download_url,
@@ -990,7 +991,9 @@ pub fn run() {
             commands::openclaw_cmd::openclaw_get_command_preview,
             commands::openclaw_cmd::openclaw_get_progress_logs,
             commands::openclaw_cmd::openclaw_install,
+            commands::openclaw_cmd::openclaw_install_dependency,
             commands::openclaw_cmd::openclaw_uninstall,
+            commands::openclaw_cmd::openclaw_cleanup_temp_artifacts,
             commands::openclaw_cmd::openclaw_start_gateway,
             commands::openclaw_cmd::openclaw_stop_gateway,
             commands::openclaw_cmd::openclaw_restart_gateway,

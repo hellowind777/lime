@@ -17,6 +17,7 @@ import {
   type OpenClawBinaryAvailabilityStatus,
   type OpenClawBinaryInstallStatus,
   type OpenClawChannelInfo,
+  type OpenClawEnvironmentStatus,
   type OpenClawGatewayStatus,
   type OpenClawHealthInfo,
   type OpenClawInstallProgressEvent,
@@ -56,6 +57,7 @@ const SUPPORTED_PROVIDER_TYPES = new Set([
 const progressSubpageByAction: Record<OpenClawOperationKind, OpenClawSubpage> =
   {
     install: "installing",
+    repair: "installing",
     uninstall: "uninstalling",
     restart: "restarting",
   };
@@ -138,6 +140,8 @@ function openClawOperationLabel(kind: OpenClawOperationKind | null): string {
   switch (kind) {
     case "install":
       return "安装";
+    case "repair":
+      return "修复环境";
     case "uninstall":
       return "卸载";
     case "restart":
@@ -299,6 +303,8 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
   const [statusResolved, setStatusResolved] = useState(false);
   const [installedStatus, setInstalledStatus] =
     useState<OpenClawBinaryInstallStatus | null>(null);
+  const [environmentStatus, setEnvironmentStatus] =
+    useState<OpenClawEnvironmentStatus | null>(null);
   const [nodeStatus, setNodeStatus] = useState<OpenClawNodeCheckResult | null>(
     null,
   );
@@ -315,9 +321,14 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [checkingHealth, setCheckingHealth] = useState(false);
+  const [cleaningTemp, setCleaningTemp] = useState(false);
+  const [handingOffToAgent, setHandingOffToAgent] = useState(false);
   const [operationState, setOperationState] = useState<OpenClawOperationState>({
     kind: null,
+    target: null,
     running: false,
+    title: null,
+    description: null,
     message: null,
     returnSubpage: "install",
   });
@@ -521,14 +532,24 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [installedResult, nodeResult, gitResult] = await Promise.all([
-        openclawApi.checkInstalled(),
-        openclawApi.checkNodeVersion(),
-        openclawApi.checkGitAvailable(),
-      ]);
-      setInstalledStatus(installedResult);
-      setNodeStatus(nodeResult);
-      setGitStatus(gitResult);
+      const environment = await openclawApi.getEnvironmentStatus();
+      setEnvironmentStatus(environment);
+      setInstalledStatus({
+        installed: environment.openclaw.status === "ok",
+        path: environment.openclaw.path,
+      });
+      setNodeStatus({
+        status:
+          environment.node.status === "missing"
+            ? "not_found"
+            : environment.node.status,
+        version: environment.node.version,
+        path: environment.node.path,
+      });
+      setGitStatus({
+        available: environment.git.status === "ok",
+        path: environment.git.path,
+      });
       await Promise.all([
         refreshGatewayRuntime(),
         refreshDashboardWindowState(),
@@ -645,18 +666,36 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
   );
 
   const runProgressOperation = useCallback(
-    async (
-      kind: OpenClawOperationKind,
-      action: () => Promise<{ success: boolean; message: string }>,
-      successSubpage: OpenClawSubpage,
-      returnSubpage: OpenClawSubpage,
-      initialLogs: OpenClawInstallProgressEvent[] = [],
-      onSuccess?: () => void,
-    ) => {
+    async (options: {
+      kind: OpenClawOperationKind;
+      target?: OpenClawOperationState["target"];
+      title?: string;
+      description?: string;
+      action: () => Promise<{ success: boolean; message: string }>;
+      successSubpage: OpenClawSubpage;
+      returnSubpage: OpenClawSubpage;
+      initialLogs?: OpenClawInstallProgressEvent[];
+      onSuccess?: () => void;
+    }) => {
+      const {
+        kind,
+        target = "environment",
+        title = null,
+        description = null,
+        action,
+        successSubpage,
+        returnSubpage,
+        initialLogs = [],
+        onSuccess,
+      } = options;
+
       setInstallLogs(initialLogs);
       setOperationState({
         kind,
+        target,
         running: true,
+        title,
+        description,
         message: null,
         returnSubpage,
       });
@@ -667,7 +706,10 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
         const result = await action();
         setOperationState({
           kind,
+          target,
           running: false,
+          title,
+          description,
           message: result.message,
           returnSubpage,
         });
@@ -686,7 +728,10 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
         const message = error instanceof Error ? error.message : String(error);
         setOperationState({
           kind,
+          target,
           running: false,
+          title,
+          description,
           message,
           returnSubpage,
         });
@@ -698,28 +743,22 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
   );
 
   const handleInstall = useCallback(async () => {
-    const preview = await openclawApi
-      .getCommandPreview("install")
-      .catch(() => null);
-    await runProgressOperation(
-      "install",
-      () => openclawApi.install(),
-      "runtime",
-      "install",
-      preview
-        ? [
-            { level: "info", message: preview.title },
-            ...preview.command
-              .split("\n")
-              .map((line) => ({ level: "info" as const, message: line })),
-          ]
-        : [
-            {
-              level: "info",
-              message: "已发送安装请求，正在等待后端返回安装命令...",
-            },
-          ],
-    );
+    await runProgressOperation({
+      kind: "install",
+      target: "openclaw",
+      title: "正在修复环境并安装 OpenClaw",
+      description:
+        "ProxyCast 会先自动检查并修复 Node.js / Git，再继续安装 OpenClaw。",
+      action: () => openclawApi.install(),
+      successSubpage: "runtime",
+      returnSubpage: "install",
+      initialLogs: [
+        {
+          level: "info",
+          message: "已发送安装请求，正在检查并修复 OpenClaw 运行环境...",
+        },
+      ],
+    });
   }, [runProgressOperation]);
 
   const handleUninstall = useCallback(async () => {
@@ -732,12 +771,13 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
       .getCommandPreview("uninstall")
       .catch(() => null);
 
-    await runProgressOperation(
-      "uninstall",
-      () => openclawApi.uninstall(),
-      "install",
-      installed ? "configure" : "install",
-      preview
+    await runProgressOperation({
+      kind: "uninstall",
+      target: "openclaw",
+      action: () => openclawApi.uninstall(),
+      successSubpage: "install",
+      returnSubpage: installed ? "configure" : "install",
+      initialLogs: preview
         ? [
             { level: "info", message: preview.title },
             ...preview.command
@@ -750,11 +790,11 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
               message: "已发送卸载请求，正在等待后端返回卸载命令...",
             },
           ],
-      () => {
+      onSuccess: () => {
         clearLastSynced();
         setSelectedModelId("");
       },
-    );
+    });
   }, [
     clearLastSynced,
     closeDashboardWindowSilently,
@@ -769,12 +809,13 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
       .getCommandPreview("restart", gatewayPort)
       .catch(() => null);
 
-    await runProgressOperation(
-      "restart",
-      () => openclawApi.restartGateway(),
-      "runtime",
-      "runtime",
-      preview
+    await runProgressOperation({
+      kind: "restart",
+      target: "openclaw",
+      action: () => openclawApi.restartGateway(),
+      successSubpage: "runtime",
+      returnSubpage: "runtime",
+      initialLogs: preview
         ? [
             { level: "info", message: preview.title },
             ...preview.command
@@ -787,8 +828,44 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
               message: "已发送重启请求，正在停止并重新拉起 Gateway...",
             },
           ],
-    );
+    });
   }, [closeDashboardWindowSilently, gatewayPort, runProgressOperation]);
+
+  const handleInstallNode = useCallback(async () => {
+    await runProgressOperation({
+      kind: "repair",
+      target: "node",
+      title: "正在安装 Node.js 环境",
+      description: "ProxyCast 会优先尝试应用内一键安装或修复 Node.js。",
+      action: () => openclawApi.installDependency("node"),
+      successSubpage: "install",
+      returnSubpage: "install",
+      initialLogs: [
+        {
+          level: "info",
+          message: "已发送 Node.js 修复请求，正在准备安装流程...",
+        },
+      ],
+    });
+  }, [runProgressOperation]);
+
+  const handleInstallGit = useCallback(async () => {
+    await runProgressOperation({
+      kind: "repair",
+      target: "git",
+      title: "正在安装 Git 环境",
+      description: "ProxyCast 会优先尝试应用内一键安装或修复 Git。",
+      action: () => openclawApi.installDependency("git"),
+      successSubpage: "install",
+      returnSubpage: "install",
+      initialLogs: [
+        {
+          level: "info",
+          message: "已发送 Git 修复请求，正在准备安装流程...",
+        },
+      ],
+    });
+  }, [runProgressOperation]);
 
   const handleSync = useCallback(async () => {
     await syncProviderConfig();
@@ -889,6 +966,23 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
       setCheckingHealth(false);
     }
   }, []);
+
+  const handleCleanupTempArtifacts = useCallback(async () => {
+    setCleaningTemp(true);
+    try {
+      const result = await openclawApi.cleanupTempArtifacts();
+      if (result.success) {
+        toast.success(result.message);
+      } else {
+        toast.warning(result.message);
+      }
+      await refreshAll();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setCleaningTemp(false);
+    }
+  }, [refreshAll]);
 
   const handleCopyPath = useCallback(async () => {
     const path = installedStatus?.path;
@@ -1051,10 +1145,16 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
       return;
     }
 
+    setHandingOffToAgent(true);
+    toast.info("正在创建新话题并转交给 AI...", {
+      id: "openclaw-agent-handoff",
+    });
+
     const project = await getOrCreateDefaultProject().catch((error) => {
       toast.error(
         error instanceof Error ? error.message : "创建默认项目失败。",
       );
+      setHandingOffToAgent(false);
       return null;
     });
 
@@ -1065,10 +1165,13 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
     onNavigate?.("agent", {
       projectId: project.id,
       initialUserPrompt: prompt,
+      initialSessionName: "OpenClaw 修复",
+      entryBannerMessage: "已从 OpenClaw 故障诊断进入，诊断请求已自动发送。",
       newChatAt: Date.now(),
       theme: "general",
       lockTheme: false,
     });
+    setHandingOffToAgent(false);
   }, [onNavigate, openClawRepairPrompt]);
 
   if (!statusResolved && !operationState.running) {
@@ -1090,11 +1193,29 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
   if (currentSubpage === "install") {
     return (
       <OpenClawInstallPage
-        binaryPath={installedStatus?.path}
-        nodeStatusText={formatNodeStatus(nodeStatus)}
-        gitStatusText={formatBinaryStatus(gitStatus, "可用", "未检测到 Git")}
-        installing={operationState.running && operationState.kind === "install"}
+        environmentStatus={environmentStatus}
+        busy={operationState.running}
+        installing={
+          operationState.running &&
+          operationState.kind === "install" &&
+          operationState.target === "openclaw"
+        }
+        installingNode={
+          operationState.running &&
+          operationState.kind === "repair" &&
+          operationState.target === "node"
+        }
+        installingGit={
+          operationState.running &&
+          operationState.kind === "repair" &&
+          operationState.target === "git"
+        }
+        cleaningTemp={cleaningTemp}
         onInstall={() => void handleInstall()}
+        onInstallNode={() => void handleInstallNode()}
+        onInstallGit={() => void handleInstallGit()}
+        onRefresh={() => void refreshAll()}
+        onCleanupTemp={() => void handleCleanupTempArtifacts()}
         onOpenDocs={() => void openUrl(OPENCLAW_DOCS_URL)}
         onDownloadNode={() =>
           void openclawApi
@@ -1120,13 +1241,17 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
     return (
       <OpenClawProgressPage
         kind={
-          progressActionBySubpage[currentSubpage] ??
           operationState.kind ??
+          progressActionBySubpage[currentSubpage] ??
           "install"
         }
+        title={operationState.title}
+        description={operationState.description}
+        handingOffToAgent={handingOffToAgent}
         running={
           operationState.running &&
-          operationState.kind === progressActionBySubpage[currentSubpage]
+          currentSubpage ===
+            progressSubpageByAction[operationState.kind ?? "install"]
         }
         message={operationState.message}
         logs={installLogs}
@@ -1143,11 +1268,29 @@ export function OpenClawPage({ pageParams, onNavigate }: OpenClawPageProps) {
   if (!installed) {
     return (
       <OpenClawInstallPage
-        binaryPath={installedStatus?.path}
-        nodeStatusText={formatNodeStatus(nodeStatus)}
-        gitStatusText={formatBinaryStatus(gitStatus, "可用", "未检测到 Git")}
-        installing={operationState.running && operationState.kind === "install"}
+        environmentStatus={environmentStatus}
+        busy={operationState.running}
+        installing={
+          operationState.running &&
+          operationState.kind === "install" &&
+          operationState.target === "openclaw"
+        }
+        installingNode={
+          operationState.running &&
+          operationState.kind === "repair" &&
+          operationState.target === "node"
+        }
+        installingGit={
+          operationState.running &&
+          operationState.kind === "repair" &&
+          operationState.target === "git"
+        }
+        cleaningTemp={cleaningTemp}
         onInstall={() => void handleInstall()}
+        onInstallNode={() => void handleInstallNode()}
+        onInstallGit={() => void handleInstallGit()}
+        onRefresh={() => void refreshAll()}
+        onCleanupTemp={() => void handleCleanupTempArtifacts()}
         onOpenDocs={() => void openUrl(OPENCLAW_DOCS_URL)}
         onDownloadNode={() =>
           void openclawApi

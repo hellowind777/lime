@@ -539,6 +539,12 @@ function AppContent() {
               initialUserPrompt={
                 (pageParams as AgentPageParams).initialUserPrompt
               }
+              initialSessionName={
+                (pageParams as AgentPageParams).initialSessionName
+              }
+              entryBannerMessage={
+                (pageParams as AgentPageParams).entryBannerMessage
+              }
               theme={(pageParams as AgentPageParams).theme}
               lockTheme={(pageParams as AgentPageParams).lockTheme}
               fromResources={(pageParams as AgentPageParams).fromResources}

@@ -8,6 +8,7 @@ import {
 } from "./workbenchRightRailExpandedChrome";
 import { useWorkbenchRightRailCapabilityController } from "./useWorkbenchRightRailCapabilityController";
 import type { WorkbenchRightRailCapabilitySection } from "./workbenchRightRailTypes";
+import type { WorkspaceTheme } from "@/types/page";
 
 export function WorkbenchRightRailExpandedPanel({
   onCollapse,
@@ -22,6 +23,7 @@ export function WorkbenchRightRailExpandedPanel({
   sections,
   heading,
   subheading,
+  theme,
 }: {
   onCollapse: () => void;
   projectId?: string | null;
@@ -35,6 +37,7 @@ export function WorkbenchRightRailExpandedPanel({
   sections: WorkbenchRightRailCapabilitySection[];
   heading?: string | null;
   subheading?: string | null;
+  theme?: WorkspaceTheme;
 }) {
   const controller = useWorkbenchRightRailCapabilityController({
     projectId,
@@ -56,19 +59,23 @@ export function WorkbenchRightRailExpandedPanel({
 
       <div className="flex flex-1 min-h-0 flex-col gap-4 overflow-y-auto px-3 py-3">
         <WorkbenchRightRailHeadingCard
+          eyebrow={theme === "video" ? "视频助手" : undefined}
           heading={heading}
           subheading={subheading}
         />
-        <WorkbenchRightRailStyleGuideCard
-          projectId={projectId}
-          onOpen={() => {
-            controller.setStyleGuideSourceEntryId(null);
-            controller.handleStyleGuideDialogOpenChange(true);
-          }}
-        />
+        {theme === "video" ? null : (
+          <WorkbenchRightRailStyleGuideCard
+            projectId={projectId}
+            onOpen={() => {
+              controller.setStyleGuideSourceEntryId(null);
+              controller.handleStyleGuideDialogOpenChange(true);
+            }}
+          />
+        )}
         <WorkbenchRightRailActionSections
           sections={sections}
           controller={controller}
+          theme={theme}
         />
       </div>
 

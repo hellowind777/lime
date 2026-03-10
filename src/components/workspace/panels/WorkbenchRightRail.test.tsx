@@ -47,6 +47,26 @@ describe("WorkbenchRightRail", () => {
     expect(container.querySelector("[data-testid='workbench-right-rail-expanded']")).not.toBeNull();
   });
 
+  it("视频主题右侧栏不再默认显示项目风格策略", () => {
+    const { container } = mountHarness(
+      WorkbenchRightRail,
+      {
+        shouldRender: true,
+        isCreateWorkspaceView: true,
+        projectId: "project-1",
+        theme: "video",
+        onBackToCreateView: vi.fn(),
+        onCreateContentFromPrompt: vi.fn(),
+      },
+      mountedRoots,
+    );
+
+    expect(container.textContent).toContain("视频助手");
+    expect(container.textContent).not.toContain("风格策略");
+    expect(container.textContent).not.toContain("编辑项目风格");
+    expect(container.textContent).not.toContain("生成的素材输出将保存在此处");
+  });
+
   it("存在评审状态时应切换为评审专家团面板，关闭后恢复能力面板", () => {
     const closeSpy = vi.fn();
 

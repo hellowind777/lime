@@ -6,6 +6,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{HashSet, VecDeque};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::OnceLock;
@@ -25,6 +26,8 @@ const OPENCLAW_DEFAULT_PACKAGE: &str = "openclaw@latest";
 const NPM_MIRROR_CN: &str = "https://registry.npmmirror.com";
 const NODE_MIN_VERSION: (u64, u64, u64) = (22, 0, 0);
 const OPENCLAW_PROGRESS_LOG_LIMIT: usize = 400;
+const OPENCLAW_INSTALLER_USER_AGENT: &str = "ProxyCast-OpenClaw";
+const OPENCLAW_TEMP_CARGO_CHECK_DIR: &str = "/tmp/proxycast-cargo-check";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +56,28 @@ pub struct NodeCheckResult {
 pub struct ActionResult {
     pub success: bool,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyStatus {
+    pub status: String,
+    pub version: Option<String>,
+    pub path: Option<String>,
+    pub message: String,
+    pub auto_install_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentStatus {
+    pub node: DependencyStatus,
+    pub git: DependencyStatus,
+    pub openclaw: DependencyStatus,
+    pub recommended_action: String,
+    pub summary: String,
+    #[serde(default)]
+    pub temp_artifacts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +134,27 @@ pub struct SyncModelEntry {
     pub id: String,
     pub name: String,
     pub context_window: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DependencyKind {
+    Node,
+    Git,
+}
+
+impl DependencyKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Node => "Node.js",
+            Self::Git => "Git",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct InstallerAsset {
+    filename: String,
+    download_url: String,
 }
 
 #[derive(Debug)]
@@ -175,61 +221,40 @@ impl OpenClawService {
         }
     }
 
+    pub async fn get_environment_status(&self) -> Result<EnvironmentStatus, String> {
+        let node = inspect_node_dependency_status().await?;
+        let git = inspect_git_dependency_status().await?;
+        let openclaw = inspect_openclaw_dependency_status().await?;
+
+        Ok(build_environment_status(node, git, openclaw))
+    }
+
     pub async fn check_installed(&self) -> Result<BinaryInstallStatus, String> {
-        let path = find_command_in_shell("openclaw").await?;
+        let openclaw = inspect_openclaw_dependency_status().await?;
         Ok(BinaryInstallStatus {
-            installed: path.is_some(),
-            path,
+            installed: openclaw.status == "ok",
+            path: openclaw.path,
         })
     }
 
     pub async fn check_git_available(&self) -> Result<BinaryAvailabilityStatus, String> {
-        let path = find_command_in_shell("git").await?;
+        let git = inspect_git_dependency_status().await?;
         Ok(BinaryAvailabilityStatus {
-            available: path.is_some(),
-            path,
+            available: git.status == "ok",
+            path: git.path,
         })
     }
 
     pub async fn check_node_version(&self) -> Result<NodeCheckResult, String> {
-        let Some(path) = find_command_in_shell("node").await? else {
-            return Ok(NodeCheckResult {
-                status: "not_found".to_string(),
-                version: None,
-                path: None,
-            });
-        };
-
-        let output = Command::new(&path)
-            .arg("--version")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| format!("检查 Node.js 版本失败: {e}"))?;
-
-        let version_text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        let Some(version) = parse_semver(&version_text) else {
-            return Ok(NodeCheckResult {
-                status: "version_low".to_string(),
-                version: Some(version_text),
-                path: Some(path),
-            });
-        };
-
-        if version >= NODE_MIN_VERSION {
-            Ok(NodeCheckResult {
-                status: "ok".to_string(),
-                version: Some(format_semver(version)),
-                path: Some(path),
-            })
-        } else {
-            Ok(NodeCheckResult {
-                status: "version_low".to_string(),
-                version: Some(format_semver(version)),
-                path: Some(path),
-            })
-        }
+        let node = inspect_node_dependency_status().await?;
+        Ok(NodeCheckResult {
+            status: match node.status.as_str() {
+                "missing" => "not_found".to_string(),
+                other => other.to_string(),
+            },
+            version: node.version,
+            path: node.path,
+        })
     }
 
     pub fn get_node_download_url(&self) -> String {
@@ -256,7 +281,23 @@ impl OpenClawService {
         }
     }
 
-    pub async fn install(&self, app: &AppHandle) -> Result<ActionResult, String> {
+    pub async fn install(&mut self, app: &AppHandle) -> Result<ActionResult, String> {
+        emit_install_progress(app, "开始准备 OpenClaw 环境。", "info");
+
+        let node_result = self
+            .ensure_dependency_ready(app, DependencyKind::Node)
+            .await?;
+        if !node_result.success {
+            return Ok(node_result);
+        }
+
+        let git_result = self
+            .ensure_dependency_ready(app, DependencyKind::Git)
+            .await?;
+        if !git_result.success {
+            return Ok(git_result);
+        }
+
         let (_, npm_path, npm_prefix, cleanup_command, install_command) =
             self.resolve_install_commands(app).await?;
         let command = format!("{cleanup_command}\n{install_command}");
@@ -268,7 +309,102 @@ impl OpenClawService {
         emit_install_progress(app, "安装前先清理已有 OpenClaw 全局包。", "info");
 
         emit_install_progress(app, &format!("执行安装命令: {install_command}"), "info");
-        run_shell_command_with_progress(app, &command).await
+        let result = run_shell_command_with_progress(app, &command).await?;
+        if !result.success {
+            return Ok(result);
+        }
+
+        let installed = self.check_installed().await?;
+        if installed.installed {
+            emit_install_progress(app, "已检测到 OpenClaw 可执行文件。", "info");
+            return Ok(ActionResult {
+                success: true,
+                message: installed
+                    .path
+                    .map(|path| format!("OpenClaw 安装完成：{path}"))
+                    .unwrap_or_else(|| "OpenClaw 安装完成。".to_string()),
+            });
+        }
+
+        Ok(ActionResult {
+            success: false,
+            message:
+                "安装命令执行完成，但仍未检测到 OpenClaw 可执行文件，请检查 npm 全局目录或权限设置。"
+                    .to_string(),
+        })
+    }
+
+    pub async fn install_dependency(
+        &mut self,
+        app: &AppHandle,
+        kind: &str,
+    ) -> Result<ActionResult, String> {
+        let dependency = match kind {
+            "node" => DependencyKind::Node,
+            "git" => DependencyKind::Git,
+            _ => return Err(format!("不支持的依赖类型: {kind}")),
+        };
+
+        self.ensure_dependency_ready(app, dependency).await
+    }
+
+    pub async fn cleanup_temp_artifacts(
+        &mut self,
+        app: Option<&AppHandle>,
+    ) -> Result<ActionResult, String> {
+        let mut removed = Vec::new();
+        let mut failed = Vec::new();
+
+        for target in collect_temp_artifact_paths(app) {
+            if !target.exists() {
+                continue;
+            }
+
+            let result = if target.is_dir() {
+                std::fs::remove_dir_all(&target)
+            } else {
+                std::fs::remove_file(&target)
+            };
+
+            match result {
+                Ok(_) => {
+                    if let Some(app) = app {
+                        emit_install_progress(
+                            app,
+                            &format!("已清理临时文件：{}", target.display()),
+                            "info",
+                        );
+                    }
+                    removed.push(target.display().to_string());
+                }
+                Err(error) => {
+                    if let Some(app) = app {
+                        emit_install_progress(
+                            app,
+                            &format!("清理临时文件失败({}): {error}", target.display()),
+                            "warn",
+                        );
+                    }
+                    failed.push(format!("{}: {error}", target.display()));
+                }
+            }
+        }
+
+        if failed.is_empty() {
+            Ok(ActionResult {
+                success: true,
+                message: if removed.is_empty() {
+                    "未发现需要清理的 OpenClaw 临时文件。".to_string()
+                } else {
+                    format!("已清理 {} 项临时文件。", removed.len())
+                },
+            })
+        } else {
+            Ok(ActionResult {
+                success: false,
+                message: format!("部分临时文件清理失败：{}", failed.join("；")),
+            })
+        }
     }
 
     pub async fn uninstall(&mut self, app: &AppHandle) -> Result<ActionResult, String> {
@@ -284,6 +420,300 @@ impl OpenClawService {
         }
         emit_install_progress(app, &format!("执行卸载命令: {command}"), "info");
         run_shell_command_with_progress(app, &command).await
+    }
+
+    async fn ensure_dependency_ready(
+        &mut self,
+        app: &AppHandle,
+        dependency: DependencyKind,
+    ) -> Result<ActionResult, String> {
+        let status = self.inspect_dependency_status(dependency).await?;
+        if status.status == "ok" {
+            emit_install_progress(
+                app,
+                &format!(
+                    "{} 已就绪{}。",
+                    dependency.label(),
+                    status
+                        .version
+                        .as_deref()
+                        .map(|version| format!(" · {version}"))
+                        .unwrap_or_default()
+                ),
+                "info",
+            );
+            return Ok(ActionResult {
+                success: true,
+                message: format!("{} 已满足要求。", dependency.label()),
+            });
+        }
+
+        emit_install_progress(
+            app,
+            &format!("{}，开始修复 {} 环境。", status.message, dependency.label()),
+            "warn",
+        );
+
+        match dependency {
+            DependencyKind::Node => self.install_node_runtime(app).await,
+            DependencyKind::Git => self.install_git_runtime(app).await,
+        }
+    }
+
+    async fn inspect_dependency_status(
+        &self,
+        dependency: DependencyKind,
+    ) -> Result<DependencyStatus, String> {
+        match dependency {
+            DependencyKind::Node => inspect_node_dependency_status().await,
+            DependencyKind::Git => inspect_git_dependency_status().await,
+        }
+    }
+
+    async fn install_node_runtime(&mut self, app: &AppHandle) -> Result<ActionResult, String> {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(winget_path) = find_command_in_shell("winget").await? {
+                emit_install_progress(app, "检测到 winget，准备通过 winget 安装 Node.js。", "info");
+                let command = format!(
+                    "{}{} install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements",
+                    shell_path_assignment(&winget_path),
+                    shell_command_escape(&winget_path)
+                );
+                let result = run_shell_command_with_progress(app, &command).await?;
+                if !result.success {
+                    return Ok(result);
+                }
+                return self
+                    .verify_dependency_after_install(app, DependencyKind::Node)
+                    .await;
+            }
+
+            emit_install_progress(
+                app,
+                "未检测到 winget，准备下载官方 Node.js 安装器。",
+                "warn",
+            );
+            let asset = resolve_node_installer_asset().await?;
+            let installer_path = download_installer_asset(app, &asset).await?;
+            launch_installer(&installer_path)?;
+            return self
+                .wait_for_dependency_ready(app, DependencyKind::Node, 900)
+                .await;
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(brew_path) = find_command_in_shell("brew").await? {
+                emit_install_progress(
+                    app,
+                    "检测到 Homebrew，准备通过 Homebrew 安装 Node.js。",
+                    "info",
+                );
+                let brew_cmd = shell_command_escape(&brew_path);
+                let path_env = shell_path_assignment(&brew_path);
+                let command = format!(
+                    "{path_env}{brew_cmd} install node || {path_env}{brew_cmd} upgrade node"
+                );
+                let result = run_shell_command_with_progress(app, &command).await?;
+                if !result.success {
+                    return Ok(result);
+                }
+                return self
+                    .verify_dependency_after_install(app, DependencyKind::Node)
+                    .await;
+            }
+
+            emit_install_progress(
+                app,
+                "未检测到 Homebrew，准备下载官方 Node.js 安装器。",
+                "warn",
+            );
+            let asset = resolve_node_installer_asset().await?;
+            let installer_path = download_installer_asset(app, &asset).await?;
+            launch_installer(&installer_path)?;
+            return self
+                .wait_for_dependency_ready(app, DependencyKind::Node, 900)
+                .await;
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let message = "当前平台暂不支持应用内自动安装 Node.js，请手动安装 Node.js 22+ 后重试。"
+                .to_string();
+            emit_install_progress(app, &message, "warn");
+            Ok(ActionResult {
+                success: false,
+                message,
+            })
+        }
+    }
+
+    async fn install_git_runtime(&mut self, app: &AppHandle) -> Result<ActionResult, String> {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(winget_path) = find_command_in_shell("winget").await? {
+                emit_install_progress(app, "检测到 winget，准备通过 winget 安装 Git。", "info");
+                let command = format!(
+                    "{}{} install --id Git.Git -e --accept-source-agreements --accept-package-agreements",
+                    shell_path_assignment(&winget_path),
+                    shell_command_escape(&winget_path)
+                );
+                let result = run_shell_command_with_progress(app, &command).await?;
+                if !result.success {
+                    return Ok(result);
+                }
+                return self
+                    .verify_dependency_after_install(app, DependencyKind::Git)
+                    .await;
+            }
+
+            let message =
+                "当前系统缺少 winget，暂时无法一键安装 Git，请点击“手动下载 Git”完成安装后重试。"
+                    .to_string();
+            emit_install_progress(app, &message, "warn");
+            return Ok(ActionResult {
+                success: false,
+                message,
+            });
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(brew_path) = find_command_in_shell("brew").await? {
+                emit_install_progress(app, "检测到 Homebrew，准备通过 Homebrew 安装 Git。", "info");
+                let brew_cmd = shell_command_escape(&brew_path);
+                let path_env = shell_path_assignment(&brew_path);
+                let command =
+                    format!("{path_env}{brew_cmd} install git || {path_env}{brew_cmd} upgrade git");
+                let result = run_shell_command_with_progress(app, &command).await?;
+                if !result.success {
+                    return Ok(result);
+                }
+                return self
+                    .verify_dependency_after_install(app, DependencyKind::Git)
+                    .await;
+            }
+
+            emit_install_progress(
+                app,
+                "未检测到 Homebrew，准备拉起 macOS Command Line Tools 安装器。",
+                "warn",
+            );
+            let trigger_result = trigger_macos_command_line_tools_install().await?;
+            emit_install_progress(app, &trigger_result, "info");
+            return self
+                .wait_for_dependency_ready(app, DependencyKind::Git, 1200)
+                .await;
+        }
+
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            let message = "当前平台暂不支持应用内自动安装 Git，请使用系统包管理器手动安装后重试。"
+                .to_string();
+            emit_install_progress(app, &message, "warn");
+            Ok(ActionResult {
+                success: false,
+                message,
+            })
+        }
+    }
+
+    async fn verify_dependency_after_install(
+        &self,
+        app: &AppHandle,
+        dependency: DependencyKind,
+    ) -> Result<ActionResult, String> {
+        let status = self.inspect_dependency_status(dependency).await?;
+        if status.status == "ok" {
+            emit_install_progress(
+                app,
+                &format!(
+                    "{} 已准备完成{}。",
+                    dependency.label(),
+                    status
+                        .version
+                        .as_deref()
+                        .map(|version| format!(" · {version}"))
+                        .unwrap_or_default()
+                ),
+                "info",
+            );
+            return Ok(ActionResult {
+                success: true,
+                message: format!("{} 已安装完成。", dependency.label()),
+            });
+        }
+
+        Ok(ActionResult {
+            success: false,
+            message: format!(
+                "{} 安装完成后仍未通过校验：{}",
+                dependency.label(),
+                status.message
+            ),
+        })
+    }
+
+    async fn wait_for_dependency_ready(
+        &self,
+        app: &AppHandle,
+        dependency: DependencyKind,
+        timeout_secs: u64,
+    ) -> Result<ActionResult, String> {
+        emit_install_progress(
+            app,
+            &format!(
+                "已拉起 {} 安装器，正在等待安装完成（最长 {} 秒）。",
+                dependency.label(),
+                timeout_secs
+            ),
+            "info",
+        );
+
+        let start = tokio::time::Instant::now();
+        let mut last_notice_at = 0_u64;
+        while start.elapsed() < Duration::from_secs(timeout_secs) {
+            let elapsed = start.elapsed().as_secs();
+            if elapsed >= last_notice_at + 15 {
+                last_notice_at = elapsed;
+                emit_install_progress(
+                    app,
+                    &format!("正在等待 {} 安装完成…", dependency.label()),
+                    "info",
+                );
+            }
+
+            sleep(Duration::from_secs(2)).await;
+            let status = self.inspect_dependency_status(dependency).await?;
+            if status.status == "ok" {
+                emit_install_progress(
+                    app,
+                    &format!(
+                        "{} 已检测通过{}。",
+                        dependency.label(),
+                        status
+                            .version
+                            .as_deref()
+                            .map(|version| format!(" · {version}"))
+                            .unwrap_or_default()
+                    ),
+                    "info",
+                );
+                return Ok(ActionResult {
+                    success: true,
+                    message: format!("{} 已安装完成。", dependency.label()),
+                });
+            }
+        }
+
+        Ok(ActionResult {
+            success: false,
+            message: format!(
+                "等待 {} 安装完成超时，请完成安装后重新点击重试。",
+                dependency.label()
+            ),
+        })
     }
 
     pub async fn start_gateway(
@@ -342,6 +772,7 @@ impl OpenClawService {
             );
         }
         let mut command = Command::new(&binary);
+        apply_binary_runtime_path(&mut command, &binary);
         command
             .arg("gateway")
             .arg("--port")
@@ -438,6 +869,7 @@ impl OpenClawService {
             let binary = find_command_in_shell("openclaw").await?;
             if let Some(openclaw_path) = binary.as_deref() {
                 let mut cmd = Command::new(openclaw_path);
+                apply_binary_runtime_path(&mut cmd, openclaw_path);
                 cmd.arg("gateway")
                     .arg("stop")
                     .arg("--url")
@@ -724,7 +1156,9 @@ impl OpenClawService {
             return Ok(false);
         };
 
-        let output = Command::new(openclaw_path)
+        let mut command = Command::new(openclaw_path);
+        apply_binary_runtime_path(&mut command, &openclaw_path);
+        let output = command
             .arg("gateway")
             .arg("status")
             .arg("--url")
@@ -755,7 +1189,9 @@ impl OpenClawService {
             return Ok(None);
         };
 
-        let output = Command::new(binary)
+        let mut command = Command::new(&binary);
+        apply_binary_runtime_path(&mut command, &binary);
+        let output = command
             .arg("--version")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -805,7 +1241,9 @@ impl OpenClawService {
             return None;
         };
 
-        let output = Command::new(openclaw_path)
+        let mut command = Command::new(&openclaw_path);
+        apply_binary_runtime_path(&mut command, &openclaw_path);
+        let output = command
             .arg("gateway")
             .arg("health")
             .arg("--url")
@@ -925,18 +1363,21 @@ impl OpenClawService {
         } else {
             OPENCLAW_DEFAULT_PACKAGE
         };
+        let path_env = shell_path_assignment(&npm_path);
         let prefix_env = npm_prefix
             .as_deref()
-            .map(shell_env_assignment)
+            .map(shell_npm_prefix_assignment)
             .unwrap_or_default();
-        let npm_cmd = shell_escape(&npm_path);
+        let npm_cmd = shell_command_escape(&npm_path);
         let cleanup_command = format!(
-            "{prefix_env}{npm_cmd} uninstall -g openclaw @qingchencloud/openclaw-zh || true"
+            "{path_env}{prefix_env}{npm_cmd} uninstall -g openclaw @qingchencloud/openclaw-zh || true"
         );
         let install_command = if should_use_china_package(app).await {
-            format!("{prefix_env}{npm_cmd} install -g {package} --registry={NPM_MIRROR_CN}")
+            format!(
+                "{path_env}{prefix_env}{npm_cmd} install -g {package} --registry={NPM_MIRROR_CN}"
+            )
         } else {
-            format!("{prefix_env}{npm_cmd} install -g {package}")
+            format!("{path_env}{prefix_env}{npm_cmd} install -g {package}")
         };
         Ok((
             package.to_string(),
@@ -952,14 +1393,16 @@ impl OpenClawService {
             .await?
             .ok_or_else(|| "未检测到 npm，可先安装或修复 Node.js 环境。".to_string())?;
         let npm_prefix = detect_npm_global_prefix(&npm_path).await;
+        let path_env = shell_path_assignment(&npm_path);
         let prefix_env = npm_prefix
             .as_deref()
-            .map(shell_env_assignment)
+            .map(shell_npm_prefix_assignment)
             .unwrap_or_default();
         let command = format!(
-            "{}{} uninstall -g openclaw @qingchencloud/openclaw-zh",
+            "{}{}{} uninstall -g openclaw @qingchencloud/openclaw-zh",
+            path_env,
             prefix_env,
-            shell_escape(&npm_path)
+            shell_command_escape(&npm_path)
         );
         Ok((npm_path, npm_prefix, command))
     }
@@ -1072,6 +1515,431 @@ fn openclaw_original_config_path() -> PathBuf {
 
 fn openclaw_proxycast_config_path() -> PathBuf {
     openclaw_config_dir().join("openclaw.proxycast.json")
+}
+
+fn openclaw_installer_download_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取应用数据目录: {e}"))?;
+    let dir = app_data_dir.join("downloads").join("openclaw-installers");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建 OpenClaw 下载目录失败: {e}"))?;
+    Ok(dir)
+}
+
+fn collect_temp_artifact_paths(app: Option<&AppHandle>) -> Vec<PathBuf> {
+    let mut targets = Vec::new();
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        targets.push(PathBuf::from(OPENCLAW_TEMP_CARGO_CHECK_DIR));
+    }
+
+    if let Some(app) = app {
+        if let Ok(dir) = openclaw_installer_download_dir(app) {
+            targets.push(dir);
+        }
+    }
+
+    targets
+}
+
+fn build_environment_status(
+    node: DependencyStatus,
+    git: DependencyStatus,
+    mut openclaw: DependencyStatus,
+) -> EnvironmentStatus {
+    let node_ready = node.status == "ok";
+    let git_ready = git.status == "ok";
+    openclaw.auto_install_supported = node_ready && git_ready;
+
+    let (recommended_action, summary) = if !node_ready {
+        (
+            "install_node".to_string(),
+            "当前缺少可用的 Node.js 22+ 运行时，建议先一键安装或修复 Node.js。".to_string(),
+        )
+    } else if !git_ready {
+        (
+            "install_git".to_string(),
+            "当前缺少可用的 Git，建议先一键安装或修复 Git。".to_string(),
+        )
+    } else if openclaw.status != "ok" {
+        (
+            "install_openclaw".to_string(),
+            "运行环境已就绪，可以继续一键安装 OpenClaw。".to_string(),
+        )
+    } else {
+        (
+            "ready".to_string(),
+            "Node.js、Git 和 OpenClaw 均已就绪，可以继续配置与启动。".to_string(),
+        )
+    };
+
+    EnvironmentStatus {
+        node,
+        git,
+        openclaw,
+        recommended_action,
+        summary,
+        temp_artifacts: collect_temp_artifact_paths(None)
+            .into_iter()
+            .filter(|path| path.exists())
+            .map(|path| path.display().to_string())
+            .collect(),
+    }
+}
+
+async fn inspect_node_dependency_status() -> Result<DependencyStatus, String> {
+    let Some(path) = find_command_in_shell("node").await? else {
+        return Ok(DependencyStatus {
+            status: "missing".to_string(),
+            version: None,
+            path: None,
+            message: format!(
+                "未检测到 Node.js，需要安装 {}+。",
+                format_semver(NODE_MIN_VERSION)
+            ),
+            auto_install_supported: cfg!(target_os = "windows") || cfg!(target_os = "macos"),
+        });
+    };
+
+    let version_text = read_command_version_text(&path, &["--version"]).await?;
+    let Some(version) = parse_semver_from_text(&version_text) else {
+        return Ok(DependencyStatus {
+            status: "version_low".to_string(),
+            version: Some(version_text.clone()),
+            path: Some(path),
+            message: format!(
+                "检测到 Node.js，但无法识别版本：{version_text}。请安装 {}+。",
+                format_semver(NODE_MIN_VERSION)
+            ),
+            auto_install_supported: cfg!(target_os = "windows") || cfg!(target_os = "macos"),
+        });
+    };
+
+    let normalized = format_semver(version);
+    if version >= NODE_MIN_VERSION {
+        Ok(DependencyStatus {
+            status: "ok".to_string(),
+            version: Some(normalized.clone()),
+            path: Some(path),
+            message: format!("Node.js 已就绪：{normalized}"),
+            auto_install_supported: cfg!(target_os = "windows") || cfg!(target_os = "macos"),
+        })
+    } else {
+        Ok(DependencyStatus {
+            status: "version_low".to_string(),
+            version: Some(normalized.clone()),
+            path: Some(path),
+            message: format!(
+                "Node.js 版本过低：{normalized}，需要 {}+。",
+                format_semver(NODE_MIN_VERSION)
+            ),
+            auto_install_supported: cfg!(target_os = "windows") || cfg!(target_os = "macos"),
+        })
+    }
+}
+
+async fn inspect_git_dependency_status() -> Result<DependencyStatus, String> {
+    let Some(path) = find_command_in_shell("git").await? else {
+        return Ok(DependencyStatus {
+            status: "missing".to_string(),
+            version: None,
+            path: None,
+            message: "未检测到 Git。".to_string(),
+            auto_install_supported: git_auto_install_supported().await?,
+        });
+    };
+
+    let version_text = read_command_version_text(&path, &["--version"]).await?;
+    let version = parse_semver_from_text(&version_text).map(format_semver);
+    let detail = version.clone().unwrap_or(version_text);
+
+    Ok(DependencyStatus {
+        status: "ok".to_string(),
+        version,
+        path: Some(path),
+        message: format!("Git 已就绪：{detail}"),
+        auto_install_supported: git_auto_install_supported().await?,
+    })
+}
+
+async fn inspect_openclaw_dependency_status() -> Result<DependencyStatus, String> {
+    let Some(path) = find_command_in_shell("openclaw").await? else {
+        return Ok(DependencyStatus {
+            status: "missing".to_string(),
+            version: None,
+            path: None,
+            message: "未检测到 OpenClaw，可在环境就绪后一键安装。".to_string(),
+            auto_install_supported: false,
+        });
+    };
+
+    let version_text = read_command_version_text(&path, &["--version"]).await?;
+    Ok(DependencyStatus {
+        status: "ok".to_string(),
+        version: if version_text.is_empty() {
+            None
+        } else {
+            Some(version_text.clone())
+        },
+        path: Some(path),
+        message: if version_text.is_empty() {
+            "已检测到 OpenClaw。".to_string()
+        } else {
+            format!("已检测到 OpenClaw：{version_text}")
+        },
+        auto_install_supported: false,
+    })
+}
+
+async fn git_auto_install_supported() -> Result<bool, String> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(find_command_in_shell("winget").await?.is_some())
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        Ok(true)
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Ok(false)
+    }
+}
+
+async fn read_command_version_text(command_path: &str, args: &[&str]) -> Result<String, String> {
+    let mut command = Command::new(command_path);
+    apply_binary_runtime_path(&mut command, command_path);
+    for arg in args {
+        command.arg(arg);
+    }
+    let output = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| format!("执行命令失败({command_path}): {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stdout.is_empty() {
+        Ok(stdout)
+    } else {
+        Ok(stderr)
+    }
+}
+
+async fn resolve_node_installer_asset() -> Result<InstallerAsset, String> {
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://nodejs.org/dist/index.json")
+        .header("User-Agent", OPENCLAW_INSTALLER_USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| format!("请求 Node.js 版本列表失败: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "获取 Node.js 版本列表失败: HTTP {}",
+            response.status()
+        ));
+    }
+
+    let releases: Vec<Value> = response
+        .json()
+        .await
+        .map_err(|e| format!("解析 Node.js 版本列表失败: {e}"))?;
+
+    let select_version = |only_lts: bool| -> Option<String> {
+        releases.iter().find_map(|release| {
+            let version = release.get("version")?.as_str()?;
+            let parsed = parse_semver(version)?;
+            let is_lts = release
+                .get("lts")
+                .map(|value| match value {
+                    Value::Bool(flag) => *flag,
+                    Value::String(text) => !text.trim().is_empty() && text != "false",
+                    _ => false,
+                })
+                .unwrap_or(false);
+            if parsed >= NODE_MIN_VERSION && (!only_lts || is_lts) {
+                Some(version.to_string())
+            } else {
+                None
+            }
+        })
+    };
+
+    let version = select_version(true)
+        .or_else(|| select_version(false))
+        .ok_or_else(|| "未找到满足要求的 Node.js 官方安装包版本。".to_string())?;
+
+    #[cfg(target_os = "windows")]
+    let filename = {
+        #[cfg(target_arch = "aarch64")]
+        {
+            format!("node-{version}-arm64.msi")
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            format!("node-{version}-x64.msi")
+        }
+    };
+
+    #[cfg(target_os = "macos")]
+    let filename = format!("node-{version}.pkg");
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let filename = String::new();
+
+    if filename.is_empty() {
+        return Err("当前平台暂不支持自动下载官方 Node.js 安装器。".to_string());
+    }
+
+    Ok(InstallerAsset {
+        download_url: format!("https://nodejs.org/dist/{version}/{filename}"),
+        filename,
+    })
+}
+
+async fn download_installer_asset(
+    app: &AppHandle,
+    asset: &InstallerAsset,
+) -> Result<PathBuf, String> {
+    let download_dir = openclaw_installer_download_dir(app)?;
+    let installer_path = download_dir.join(&asset.filename);
+    if installer_path.exists() {
+        let _ = std::fs::remove_file(&installer_path);
+    }
+
+    emit_install_progress(
+        app,
+        &format!("开始下载安装器：{}", asset.download_url),
+        "info",
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&asset.download_url)
+        .header("User-Agent", OPENCLAW_INSTALLER_USER_AGENT)
+        .send()
+        .await
+        .map_err(|e| format!("下载官方安装器失败: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("下载安装器失败: HTTP {}", response.status()));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("读取安装器文件失败: {e}"))?;
+    std::fs::write(&installer_path, bytes)
+        .map_err(|e| format!("保存安装器失败({}): {e}", installer_path.display()))?;
+
+    emit_install_progress(
+        app,
+        &format!("安装器已保存到：{}", installer_path.display()),
+        "info",
+    );
+
+    Ok(installer_path)
+}
+
+fn launch_installer(file_path: &Path) -> Result<(), String> {
+    let extension = file_path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    match extension.as_str() {
+        "exe" => {
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new(file_path)
+                    .spawn()
+                    .map_err(|e| format!("启动安装程序失败: {e}"))?;
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                return Err("EXE 安装器只能在 Windows 上运行。".to_string());
+            }
+        }
+        "msi" => {
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("msiexec")
+                    .arg("/i")
+                    .arg(file_path)
+                    .spawn()
+                    .map_err(|e| format!("启动 MSI 安装程序失败: {e}"))?;
+            }
+
+            #[cfg(not(target_os = "windows"))]
+            {
+                return Err("MSI 安装器只能在 Windows 上运行。".to_string());
+            }
+        }
+        "pkg" | "dmg" => {
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open")
+                    .arg(file_path)
+                    .spawn()
+                    .map_err(|e| format!("打开 macOS 安装器失败: {e}"))?;
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err("该安装器只能在 macOS 上运行。".to_string());
+            }
+        }
+        _ => return Err(format!("不支持的安装器文件类型: {extension}")),
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+async fn trigger_macos_command_line_tools_install() -> Result<String, String> {
+    let output = Command::new("/usr/bin/xcode-select")
+        .arg("--install")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| format!("拉起 macOS 开发者工具安装器失败: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let combined = if !stderr.is_empty() { stderr } else { stdout };
+    let lower = combined.to_ascii_lowercase();
+
+    if output.status.success()
+        || lower.contains("install requested")
+        || lower.contains("already been requested")
+    {
+        return Ok("已拉起 macOS 开发者工具安装器。".to_string());
+    }
+
+    if lower.contains("already installed") {
+        return Err(
+            "系统提示 Command Line Tools 已安装，但当前仍未检测到 Git，请先执行系统更新或安装 Homebrew 后重试。"
+                .to_string(),
+        );
+    }
+
+    Err(format!("拉起 macOS 开发者工具安装器失败: {combined}"))
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn trigger_macos_command_line_tools_install() -> Result<String, String> {
+    Err("当前平台不支持拉起 macOS 开发者工具安装器。".to_string())
 }
 
 fn read_base_openclaw_config() -> Result<Value, String> {
@@ -1264,7 +2132,9 @@ async fn should_use_china_package(app: &AppHandle) -> bool {
 }
 
 async fn detect_npm_global_prefix(npm_path: &str) -> Option<String> {
-    let output = Command::new(npm_path)
+    let mut command = Command::new(npm_path);
+    apply_binary_runtime_path(&mut command, npm_path);
+    let output = command
         .arg("config")
         .arg("get")
         .arg("prefix")
@@ -1290,8 +2160,52 @@ fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn shell_env_assignment(value: &str) -> String {
-    format!("NPM_CONFIG_PREFIX={} ", shell_escape(value))
+fn shell_command_escape(value: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        shell_escape(value)
+    }
+}
+
+fn shell_npm_prefix_assignment(value: &str) -> String {
+    if cfg!(target_os = "windows") {
+        format!(
+            "set \"NPM_CONFIG_PREFIX={}\" && ",
+            value.replace('"', "\"\"")
+        )
+    } else {
+        format!("NPM_CONFIG_PREFIX={} ", shell_escape(value))
+    }
+}
+
+fn shell_path_assignment(binary_path: &str) -> String {
+    let Some(bin_dir) = Path::new(binary_path).parent() else {
+        return String::new();
+    };
+    let bin_dir = bin_dir.to_string_lossy();
+    if cfg!(target_os = "windows") {
+        format!("set \"PATH={};%PATH%\" && ", bin_dir.replace('"', "\"\""))
+    } else {
+        format!("PATH={}:$PATH ", shell_escape(bin_dir.as_ref()))
+    }
+}
+
+fn prepend_path(dir: &Path) -> Option<OsString> {
+    let mut paths = vec![dir.to_path_buf()];
+    if let Some(current) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&current));
+    }
+    std::env::join_paths(paths).ok()
+}
+
+fn apply_binary_runtime_path(command: &mut Command, binary_path: &str) {
+    let Some(bin_dir) = Path::new(binary_path).parent() else {
+        return;
+    };
+    if let Some(path) = prepend_path(bin_dir) {
+        command.env("PATH", path);
+    }
 }
 
 async fn find_command_in_shell(command_name: &str) -> Result<Option<String>, String> {
@@ -1318,37 +2232,33 @@ async fn find_command_in_shell(command_name: &str) -> Result<Option<String>, Str
         }
 
         return Ok(find_command_in_known_locations(command_name)
+            .await?
             .map(|path| path.to_string_lossy().to_string()));
     }
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let output = Command::new(shell)
-        .arg("-lc")
-        .arg(format!("command -v {command_name}"))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|e| format!("查找命令失败: {e}"))?;
-
-    if output.status.success() {
-        let result = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map(str::to_string);
-        if result.is_some() {
-            return Ok(result);
-        }
-    }
-
-    Ok(
-        find_command_in_known_locations(command_name)
-            .map(|path| path.to_string_lossy().to_string()),
-    )
+    Ok(find_command_in_known_locations(command_name)
+        .await?
+        .map(|path| path.to_string_lossy().to_string()))
 }
 
-fn find_command_in_known_locations(command_name: &str) -> Option<PathBuf> {
+async fn find_command_in_known_locations(command_name: &str) -> Result<Option<PathBuf>, String> {
+    let candidates = find_all_commands_in_known_locations(command_name);
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    if command_name == "node" {
+        return select_best_node_candidate(candidates).await;
+    }
+
+    if matches!(command_name, "npm" | "npx" | "openclaw") {
+        return select_node_runtime_candidate(candidates).await;
+    }
+
+    Ok(candidates.into_iter().next())
+}
+
+fn find_all_commands_in_known_locations(command_name: &str) -> Vec<PathBuf> {
     let mut search_dirs = Vec::new();
     let mut seen = HashSet::new();
 
@@ -1371,12 +2281,22 @@ fn find_command_in_known_locations(command_name: &str) -> Option<PathBuf> {
         push_dir(home.join(".npm-global/bin"));
         push_dir(home.join(".local/bin"));
         push_dir(home.join(".bun/bin"));
+        push_dir(home.join(".volta/bin"));
+        push_dir(home.join(".asdf/shims"));
+        push_dir(home.join(".local/share/mise/shims"));
         push_dir(home.join("Library/PhpWebStudy/env/node/bin"));
 
         let nvm_versions = home.join(".nvm/versions/node");
         if let Ok(entries) = std::fs::read_dir(nvm_versions) {
             for entry in entries.flatten() {
                 push_dir(entry.path().join("bin"));
+            }
+        }
+
+        let fnm_versions = home.join(".fnm/node-versions");
+        if let Ok(entries) = std::fs::read_dir(fnm_versions) {
+            for entry in entries.flatten() {
+                push_dir(entry.path().join("installation/bin"));
             }
         }
     }
@@ -1388,10 +2308,10 @@ fn find_command_in_known_locations(command_name: &str) -> Option<PathBuf> {
         push_dir(PathBuf::from("/bin"));
     }
 
-    find_command_in_paths(command_name, &search_dirs)
+    find_all_commands_in_paths(command_name, &search_dirs)
 }
 
-fn find_command_in_paths(command_name: &str, search_dirs: &[PathBuf]) -> Option<PathBuf> {
+fn find_all_commands_in_paths(command_name: &str, search_dirs: &[PathBuf]) -> Vec<PathBuf> {
     #[cfg(target_os = "windows")]
     let candidates = [
         format!("{command_name}.exe"),
@@ -1403,16 +2323,103 @@ fn find_command_in_paths(command_name: &str, search_dirs: &[PathBuf]) -> Option<
     #[cfg(not(target_os = "windows"))]
     let candidates = [command_name.to_string()];
 
+    let mut matches = Vec::new();
+    let mut seen = HashSet::new();
     for dir in search_dirs {
         for candidate in &candidates {
             let path = dir.join(candidate);
-            if path.is_file() {
-                return Some(path);
+            if path.is_file() && seen.insert(path.clone()) {
+                matches.push(path);
             }
         }
     }
 
-    None
+    matches
+}
+
+async fn select_best_node_candidate(candidates: Vec<PathBuf>) -> Result<Option<PathBuf>, String> {
+    let mut versioned = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let version = read_binary_semver(&candidate).await;
+        versioned.push((candidate, version));
+    }
+    Ok(select_best_semver_candidate(versioned))
+}
+
+async fn select_node_runtime_candidate(
+    candidates: Vec<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
+    let preferred_node =
+        select_best_node_candidate(find_all_commands_in_known_locations("node")).await?;
+    if let Some(preferred_bin_dir) = preferred_node.as_deref().and_then(Path::parent) {
+        if let Some(candidate) = candidates
+            .iter()
+            .find(|candidate| candidate.parent() == Some(preferred_bin_dir))
+        {
+            return Ok(Some(candidate.clone()));
+        }
+    }
+
+    let mut versioned = Vec::with_capacity(candidates.len());
+    for candidate in &candidates {
+        let version = match sibling_node_path(candidate) {
+            Some(node_path) => read_binary_semver(&node_path).await,
+            None => None,
+        };
+        versioned.push((candidate.clone(), version));
+    }
+
+    Ok(select_best_semver_candidate(versioned).or_else(|| candidates.into_iter().next()))
+}
+
+fn sibling_node_path(command_path: &Path) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    let node_name = "node.exe";
+
+    #[cfg(not(target_os = "windows"))]
+    let node_name = "node";
+
+    let node_path = command_path.parent()?.join(node_name);
+    node_path.is_file().then_some(node_path)
+}
+
+async fn read_binary_semver(path: &Path) -> Option<(u64, u64, u64)> {
+    let output = Command::new(path)
+        .arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    parse_semver(stdout.trim()).or_else(|| parse_semver(stderr.trim()))
+}
+
+fn select_best_semver_candidate(
+    candidates: Vec<(PathBuf, Option<(u64, u64, u64)>)>,
+) -> Option<PathBuf> {
+    candidates
+        .iter()
+        .filter_map(|(path, version)| {
+            version
+                .filter(|version| *version >= NODE_MIN_VERSION)
+                .map(|version| (path.clone(), version))
+        })
+        .max_by_key(|(_, version)| *version)
+        .map(|(path, _)| path)
+        .or_else(|| {
+            candidates
+                .iter()
+                .filter_map(|(path, version)| version.map(|version| (path.clone(), version)))
+                .max_by_key(|(_, version)| *version)
+                .map(|(path, _)| path)
+        })
+        .or_else(|| candidates.into_iter().next().map(|(path, _)| path))
 }
 
 async fn run_shell_command_with_progress(
@@ -1607,6 +2614,14 @@ fn parse_semver(value: &str) -> Option<(u64, u64, u64)> {
     Some((major, minor, patch))
 }
 
+fn parse_semver_from_text(value: &str) -> Option<(u64, u64, u64)> {
+    parse_semver(value).or_else(|| {
+        value
+            .split(|ch: char| ch.is_whitespace() || ch == ',' || ch == '(' || ch == ')')
+            .find_map(parse_semver)
+    })
+}
+
 fn format_semver(version: (u64, u64, u64)) -> String {
     format!("{}.{}.{}", version.0, version.1, version.2)
 }
@@ -1614,8 +2629,9 @@ fn format_semver(version: (u64, u64, u64)) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        determine_api_type, extract_gateway_auth_token, format_provider_base_url, has_api_version,
-        trim_trailing_slash,
+        build_environment_status, determine_api_type, extract_gateway_auth_token,
+        format_provider_base_url, has_api_version, parse_semver_from_text, trim_trailing_slash,
+        DependencyStatus,
     };
     use crate::database::dao::api_key_provider::{ApiKeyProvider, ApiProviderType, ProviderGroup};
     use chrono::Utc;
@@ -1746,5 +2762,43 @@ mod tests {
         });
 
         assert_eq!(extract_gateway_auth_token(&config), None);
+    }
+
+    #[test]
+    fn parses_semver_from_git_version_text() {
+        assert_eq!(
+            parse_semver_from_text("git version 2.39.5 (Apple Git-154)"),
+            Some((2, 39, 5))
+        );
+    }
+
+    #[test]
+    fn environment_status_prioritizes_missing_node() {
+        let env = build_environment_status(
+            DependencyStatus {
+                status: "missing".to_string(),
+                version: None,
+                path: None,
+                message: "missing node".to_string(),
+                auto_install_supported: true,
+            },
+            DependencyStatus {
+                status: "ok".to_string(),
+                version: Some("2.43.0".to_string()),
+                path: Some("/usr/bin/git".to_string()),
+                message: "git ok".to_string(),
+                auto_install_supported: true,
+            },
+            DependencyStatus {
+                status: "missing".to_string(),
+                version: None,
+                path: None,
+                message: "openclaw missing".to_string(),
+                auto_install_supported: false,
+            },
+        );
+
+        assert_eq!(env.recommended_action, "install_node");
+        assert_eq!(env.openclaw.auto_install_supported, false);
     }
 }

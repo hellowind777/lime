@@ -137,6 +137,10 @@ export interface AgentPageParams {
   contentId?: string;
   /** 进入 Agent 时自动发送的首条用户消息 */
   initialUserPrompt?: string;
+  /** 进入 Agent 时优先创建的话题名称 */
+  initialSessionName?: string;
+  /** 一次性入口提示文案 */
+  entryBannerMessage?: string;
   /** 首屏主题（用于左侧导航直达创作主题） */
   theme?: string;
   /** 是否锁定主题（锁定后不在首屏显示主题切换） */

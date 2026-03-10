@@ -1973,3 +1973,26 @@ describe("AgentChatPage 自动引导", () => {
     );
   });
 });
+
+describe("AgentChatPage 视频主题工作台", () => {
+  it("视频主题工作台不应渲染底部通用输入条，也不应自动发送首条请求", async () => {
+    mockUseThemeContextWorkspace.mockReturnValue(
+      createMockThemeContextWorkspaceState({
+        enabled: true,
+      }),
+    );
+
+    const container = renderPage({
+      projectId: "project-video",
+      contentId: "content-video",
+      theme: "video",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(container.querySelector('[data-testid="inputbar"]')).toBeNull();
+    expect(container.querySelector('[data-testid="theme-workbench-sidebar"]')).toBeNull();
+    expect(sharedTriggerAIGuideMock).not.toHaveBeenCalled();
+    expect(sharedSendMessageMock).not.toHaveBeenCalled();
+  });
+});

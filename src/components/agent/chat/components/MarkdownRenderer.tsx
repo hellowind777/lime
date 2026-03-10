@@ -14,6 +14,8 @@ import { CHAT_A2UI_TASK_CARD_PRESET } from "@/components/content-creator/a2ui/ta
 import { ArtifactPlaceholder } from "./ArtifactPlaceholder";
 import { A2UITaskCard, A2UITaskLoadingCard } from "./A2UITaskCard";
 
+const STREAMING_LIGHT_RENDER_THRESHOLD = 2_000;
+
 // Custom styles for markdown content to match Cherry Studio
 const MarkdownContainer = styled.div`
   font-size: 15px;
@@ -245,6 +247,19 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
     isStreaming = false,
   }) => {
     const [copied, setCopied] = React.useState<string | null>(null);
+    const useLightweightStreamingRender =
+      isStreaming && content.length >= STREAMING_LIGHT_RENDER_THRESHOLD;
+
+    const remarkPlugins = React.useMemo(
+      () =>
+        useLightweightStreamingRender ? [remarkGfm] : [remarkGfm, remarkMath],
+      [useLightweightStreamingRender],
+    );
+
+    const rehypePlugins = React.useMemo(
+      () => (useLightweightStreamingRender ? [] : [rehypeRaw, rehypeKatex]),
+      [useLightweightStreamingRender],
+    );
 
     const handleCopy = (code: string) => {
       navigator.clipboard.writeText(code);
@@ -353,8 +368,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
         {/* 如果还有其他内容，渲染 markdown */}
         {!hasOnlyPlaceholders && processedContent.text.trim() && (
           <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[rehypeRaw, rehypeKatex]}
+            remarkPlugins={remarkPlugins}
+            rehypePlugins={rehypePlugins}
+            skipHtml={useLightweightStreamingRender}
             components={{
               // 使用 pre 组件来处理代码块，以便更好地控制 a2ui 的渲染
               pre({ children, ...props }: any) {
@@ -412,6 +428,14 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
                       isStreaming={isStreaming}
                       onClick={() => onCodeBlockClick?.(language, codeContent)}
                     />
+                  );
+                }
+
+                if (useLightweightStreamingRender) {
+                  return (
+                    <pre {...props}>
+                      <code className={className}>{codeContent}</code>
+                    </pre>
                   );
                 }
 

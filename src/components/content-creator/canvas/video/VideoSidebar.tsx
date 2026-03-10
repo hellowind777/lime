@@ -246,6 +246,24 @@ const UploadPrompt = styled.div`
   }
 `;
 
+const UploadActionButton = styled.button`
+  margin-top: 8px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    border-color: hsl(var(--primary));
+    color: hsl(var(--primary));
+  }
+`;
+
 const PreviewBox = styled.div`
   width: 100%;
   min-height: 116px;
@@ -288,6 +306,24 @@ const RemovePreviewButton = styled.button`
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  cursor: pointer;
+`;
+
+const ReplacePreviewButton = styled.button`
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: hsl(var(--background) / 0.92);
+  color: hsl(var(--foreground));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
 `;
 
@@ -759,6 +795,12 @@ export const VideoSidebar: React.FC<VideoSidebarProps> = memo(
       onStateChange({ ...state, endImage: value });
     };
 
+    const openFramePicker = (field: FrameImageField) => {
+      const inputRef =
+        field === "startImage" ? startFileInputRef : endFileInputRef;
+      inputRef.current?.click();
+    };
+
     const handleUploadFiles = async (
       field: FrameImageField,
       files: FileList | null,
@@ -863,7 +905,6 @@ export const VideoSidebar: React.FC<VideoSidebarProps> = memo(
               <SectionTitle>{frame.title}</SectionTitle>
               <ImageUploadArea
                 $dragging={draggingArea === frame.area}
-                onClick={() => inputRef.current?.click()}
                 onDragOver={(event) => {
                   event.preventDefault();
                   setDraggingArea(frame.area);
@@ -890,6 +931,15 @@ export const VideoSidebar: React.FC<VideoSidebarProps> = memo(
                 {previewImage ? (
                   <PreviewBox>
                     <img src={previewImage} alt={`${frame.title}预览`} />
+                    <ReplacePreviewButton
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openFramePicker(frame.field);
+                      }}
+                    >
+                      更换
+                    </ReplacePreviewButton>
                     <RemovePreviewButton
                       type="button"
                       onClick={(event) => {
@@ -897,15 +947,24 @@ export const VideoSidebar: React.FC<VideoSidebarProps> = memo(
                         setFrameImage(frame.field, undefined);
                       }}
                     >
-                      <X size={14} />
-                    </RemovePreviewButton>
-                    <ReplaceHint>点击或拖拽替换图片</ReplaceHint>
+                        <X size={14} />
+                      </RemovePreviewButton>
+                    <ReplaceHint>拖拽上传可替换图片</ReplaceHint>
                   </PreviewBox>
                 ) : (
                   <UploadPrompt>
                     <ImagePlus size={18} />
                     <div>添加图片</div>
-                    <div>点击或拖拽上传</div>
+                    <div>拖拽上传参考图</div>
+                    <UploadActionButton
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openFramePicker(frame.field);
+                      }}
+                    >
+                      选择图片
+                    </UploadActionButton>
                   </UploadPrompt>
                 )}
               </ImageUploadArea>

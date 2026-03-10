@@ -1,5 +1,6 @@
 import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { WorkspaceTheme } from "@/types/page";
 import { GeneratedOutputsPanel } from "./workbenchRightRailGeneratedOutputs";
 import {
   GenerateBgmPanel,
@@ -266,10 +267,15 @@ function renderExpandedActionPanel(
 export function WorkbenchRightRailActionSections({
   sections,
   controller,
+  theme,
 }: {
   sections: WorkbenchRightRailCapabilitySection[];
   controller: WorkbenchRightRailCapabilityController;
+  theme?: WorkspaceTheme;
 }) {
+  const shouldRenderGeneratedOutputs =
+    theme !== "video" || controller.generatedOutputs.length > 0;
+
   return (
     <>
       {sections.map((section) => {
@@ -323,7 +329,9 @@ export function WorkbenchRightRailActionSections({
         );
       })}
 
-      <GeneratedOutputsPanel items={controller.generatedOutputs} />
+      {shouldRenderGeneratedOutputs ? (
+        <GeneratedOutputsPanel items={controller.generatedOutputs} />
+      ) : null}
     </>
   );
 }

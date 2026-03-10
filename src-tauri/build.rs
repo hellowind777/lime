@@ -1,3 +1,5 @@
+const WINDOWS_STACK_SIZE_BYTES: usize = 10 * 1024 * 1024;
+
 fn main() {
     configure_windows_stack_size();
 
@@ -16,10 +18,13 @@ fn main() {
 }
 
 fn configure_windows_stack_size() {
-    #[cfg(target_os = "windows")]
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+
     match std::env::var("CARGO_CFG_TARGET_ENV").as_deref() {
-        Ok("msvc") => println!("cargo:rustc-link-arg=/STACK:8388608"),
-        Ok("gnu") => println!("cargo:rustc-link-arg=-Wl,--stack,8388608"),
+        Ok("msvc") => println!("cargo:rustc-link-arg=/STACK:{WINDOWS_STACK_SIZE_BYTES}"),
+        Ok("gnu") => println!("cargo:rustc-link-arg=-Wl,--stack,{WINDOWS_STACK_SIZE_BYTES}"),
         _ => {}
     }
 }

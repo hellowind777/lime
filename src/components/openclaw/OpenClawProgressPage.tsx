@@ -5,7 +5,10 @@ import { OpenClawMark } from "./OpenClawMark";
 
 interface OpenClawProgressPageProps {
   kind: OpenClawOperationKind;
+  title?: string | null;
+  description?: string | null;
   running: boolean;
+  handingOffToAgent?: boolean;
   message: string | null;
   logs: OpenClawInstallProgressEvent[];
   repairPrompt: string;
@@ -17,20 +20,25 @@ interface OpenClawProgressPageProps {
 }
 
 const titleMap: Record<OpenClawOperationKind, string> = {
-  install: "正在安装 OpenClaw",
+  install: "正在修复环境并安装 OpenClaw",
   uninstall: "正在卸载 OpenClaw",
   restart: "正在重启 Gateway",
+  repair: "正在修复 OpenClaw 环境",
 };
 
 const descriptionMap: Record<OpenClawOperationKind, string> = {
-  install: "正在安装 OpenClaw，请保持当前页面并等待安装完成。",
+  install: "正在准备 Node.js、Git 和 OpenClaw 环境，请保持当前页面并等待完成。",
   uninstall: "正在卸载 OpenClaw，请等待进度完成后返回安装页。",
   restart: "正在重启 Gateway，完成后将返回运行页。",
+  repair: "正在修复 OpenClaw 依赖环境，请保持当前页面并等待完成。",
 };
 
 export function OpenClawProgressPage({
   kind,
+  title,
+  description,
   running,
+  handingOffToAgent = false,
   message,
   logs,
   repairPrompt,
@@ -46,10 +54,10 @@ export function OpenClawProgressPage({
         <div className="flex flex-col items-center text-center">
           <OpenClawMark size="lg" />
           <h1 className="mt-6 text-4xl font-semibold tracking-tight">
-            {titleMap[kind]}
+            {title || titleMap[kind]}
           </h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-muted-foreground">
-            {descriptionMap[kind]}
+            {description || descriptionMap[kind]}
           </p>
         </div>
 
@@ -92,11 +100,15 @@ export function OpenClawProgressPage({
               <button
                 type="button"
                 onClick={onAskAgentFix}
-                disabled={!repairPrompt.trim()}
+                disabled={!repairPrompt.trim() || handingOffToAgent}
                 className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
               >
-                <Bot className="h-4 w-4" />
-                交给 AI 修复
+                {handingOffToAgent ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Bot className="h-4 w-4" />
+                )}
+                {handingOffToAgent ? "转交中..." : "交给 AI 修复"}
               </button>
               <button
                 type="button"

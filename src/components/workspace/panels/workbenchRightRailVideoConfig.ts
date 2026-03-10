@@ -36,21 +36,21 @@ const VIDEO_CAPABILITY_SECTIONS_BY_CREATION_MODE: Record<
   guided: [
     {
       key: "video-script",
-      title: "脚本策划",
+      title: "前期准备",
       tone: "violet",
       items: [
-        { key: "search-material", label: "搜灵感", icon: Search, tone: "violet" },
-        { key: "generate-title", label: "起标题", icon: Type, tone: "violet" },
-        { key: "generate-storyboard", label: "拆分镜", icon: Film, tone: "violet" },
+        { key: "search-material", label: "找参考", icon: Search, tone: "violet" },
+        { key: "generate-title", label: "开场钩子", icon: Type, tone: "violet" },
+        { key: "generate-storyboard", label: "分镜草案", icon: Film, tone: "violet" },
       ],
     },
     {
       key: "video-visual",
-      title: "画面制作",
+      title: "画面生成",
       tone: "blue",
       items: [
-        { key: "generate-video-assets", label: "做素材", icon: Clapperboard, tone: "blue" },
-        { key: "generate-ai-video", label: "生成视频", icon: Video, tone: "blue" },
+        { key: "generate-video-assets", label: "补素材", icon: Clapperboard, tone: "blue" },
+        { key: "generate-ai-video", label: "开始生成", icon: Video, tone: "blue" },
       ],
     },
     {
@@ -67,11 +67,11 @@ const VIDEO_CAPABILITY_SECTIONS_BY_CREATION_MODE: Record<
   fast: [
     {
       key: "video-fast-plan",
-      title: "快速成稿",
+      title: "快速准备",
       tone: "violet",
       items: [
-        { key: "generate-title", label: "起标题", icon: Type, tone: "violet" },
-        { key: "generate-storyboard", label: "生成分镜", icon: Film, tone: "violet" },
+        { key: "generate-title", label: "开场钩子", icon: Type, tone: "violet" },
+        { key: "generate-storyboard", label: "分镜草案", icon: Film, tone: "violet" },
       ],
     },
     {
@@ -79,7 +79,7 @@ const VIDEO_CAPABILITY_SECTIONS_BY_CREATION_MODE: Record<
       title: "快速出片",
       tone: "blue",
       items: [
-        { key: "generate-ai-video", label: "生成视频", icon: Video, tone: "blue" },
+        { key: "generate-ai-video", label: "开始生成", icon: Video, tone: "blue" },
         { key: "generate-video-assets", label: "补素材", icon: Clapperboard, tone: "blue" },
       ],
     },
@@ -96,21 +96,21 @@ const VIDEO_CAPABILITY_SECTIONS_BY_CREATION_MODE: Record<
   hybrid: [
     {
       key: "video-hybrid-plan",
-      title: "协同策划",
+      title: "协同准备",
       tone: "violet",
       items: [
-        { key: "search-material", label: "搜灵感", icon: Search, tone: "violet" },
-        { key: "generate-title", label: "起标题", icon: Type, tone: "violet" },
-        { key: "generate-storyboard", label: "生成分镜", icon: Film, tone: "violet" },
+        { key: "search-material", label: "找参考", icon: Search, tone: "violet" },
+        { key: "generate-title", label: "开场钩子", icon: Type, tone: "violet" },
+        { key: "generate-storyboard", label: "分镜草案", icon: Film, tone: "violet" },
       ],
     },
     {
       key: "video-hybrid-visual",
-      title: "画面协作",
+      title: "画面补全",
       tone: "blue",
       items: [
-        { key: "generate-video-assets", label: "做素材", icon: Clapperboard, tone: "blue" },
-        { key: "generate-ai-video", label: "生成视频", icon: Video, tone: "blue" },
+        { key: "generate-video-assets", label: "补素材", icon: Clapperboard, tone: "blue" },
+        { key: "generate-ai-video", label: "开始生成", icon: Video, tone: "blue" },
       ],
     },
     {
@@ -130,8 +130,8 @@ const VIDEO_CAPABILITY_SECTIONS_BY_CREATION_MODE: Record<
       title: "结构搭建",
       tone: "violet",
       items: [
-        { key: "generate-title", label: "起标题", icon: Type, tone: "violet" },
-        { key: "generate-storyboard", label: "生成分镜", icon: Film, tone: "violet" },
+        { key: "generate-title", label: "开场钩子", icon: Type, tone: "violet" },
+        { key: "generate-storyboard", label: "分镜草案", icon: Film, tone: "violet" },
       ],
     },
     {
@@ -139,8 +139,8 @@ const VIDEO_CAPABILITY_SECTIONS_BY_CREATION_MODE: Record<
       title: "执行制作",
       tone: "blue",
       items: [
-        { key: "generate-video-assets", label: "视频素材", icon: Clapperboard, tone: "blue" },
-        { key: "generate-ai-video", label: "生成视频", icon: Video, tone: "blue" },
+        { key: "generate-video-assets", label: "补素材", icon: Clapperboard, tone: "blue" },
+        { key: "generate-ai-video", label: "开始生成", icon: Video, tone: "blue" },
       ],
     },
     {
@@ -167,7 +167,7 @@ const VIDEO_CAPABILITY_SECTIONS_BY_TYPE: Record<
       tone: "violet",
       items: [
         { key: "search-material", label: "找选题", icon: Search, tone: "violet" },
-        { key: "generate-title", label: "起标题", icon: Type, tone: "violet" },
+        { key: "generate-title", label: "开场钩子", icon: Type, tone: "violet" },
         { key: "generate-storyboard", label: "拆口播分镜", icon: Film, tone: "violet" },
       ],
     },
@@ -198,7 +198,7 @@ const VIDEO_CAPABILITY_SECTIONS_BY_TYPE: Record<
       title: "剧情脚本",
       tone: "violet",
       items: [
-        { key: "generate-title", label: "故事标题", icon: Type, tone: "violet" },
+        { key: "generate-title", label: "故事卖点", icon: Type, tone: "violet" },
         { key: "generate-storyboard", label: "剧情分镜", icon: Film, tone: "violet" },
       ],
     },
@@ -229,7 +229,7 @@ const VIDEO_CAPABILITY_SECTIONS_BY_TYPE: Record<
       tone: "violet",
       items: [
         { key: "search-material", label: "查资料", icon: FileSearch, tone: "violet" },
-        { key: "generate-title", label: "起标题", icon: Type, tone: "violet" },
+        { key: "generate-title", label: "测评钩子", icon: Type, tone: "violet" },
         { key: "generate-storyboard", label: "对比分镜", icon: Film, tone: "violet" },
       ],
     },
@@ -260,7 +260,7 @@ const VIDEO_CAPABILITY_SECTIONS_BY_TYPE: Record<
       tone: "violet",
       items: [
         { key: "search-material", label: "找亮点", icon: Search, tone: "violet" },
-        { key: "generate-title", label: "店铺标题", icon: Type, tone: "violet" },
+        { key: "generate-title", label: "探店钩子", icon: Type, tone: "violet" },
         { key: "generate-storyboard", label: "动线分镜", icon: Film, tone: "violet" },
       ],
     },
@@ -292,7 +292,7 @@ const VIDEO_CAPABILITY_SECTIONS_BY_TYPE: Record<
       tone: "violet",
       items: [
         { key: "search-material", label: "查步骤", icon: Search, tone: "violet" },
-        { key: "generate-title", label: "教程标题", icon: Type, tone: "violet" },
+        { key: "generate-title", label: "教程开场", icon: Type, tone: "violet" },
         { key: "generate-storyboard", label: "步骤分镜", icon: Film, tone: "violet" },
       ],
     },
@@ -358,9 +358,9 @@ export function getVideoWorkbenchRightRailHeading(
 ): string {
   const normalizedType = creationType?.trim();
   if (normalizedType) {
-    return `短视频 · ${normalizedType}`;
+    return `视频制作 · ${normalizedType}`;
   }
-  return `短视频 · ${VIDEO_CREATION_MODE_LABELS[creationMode]}`;
+  return `视频制作 · ${VIDEO_CREATION_MODE_LABELS[creationMode]}`;
 }
 
 export function getVideoWorkbenchRightRailSubheading(

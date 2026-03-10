@@ -2,7 +2,11 @@ import type { OpenClawSubpage } from "@/types/page";
 
 export type { OpenClawSubpage };
 
-export type OpenClawOperationKind = "install" | "uninstall" | "restart";
+export type OpenClawOperationKind =
+  | "install"
+  | "uninstall"
+  | "restart"
+  | "repair";
 export type OpenClawScene = "setup" | "sync" | "dashboard";
 
 export interface OpenClawLastSynced {
@@ -12,7 +16,10 @@ export interface OpenClawLastSynced {
 
 export interface OpenClawOperationState {
   kind: OpenClawOperationKind | null;
+  target: "openclaw" | "node" | "git" | "cleanup" | "environment" | null;
   running: boolean;
+  title: string | null;
+  description: string | null;
   message: string | null;
   returnSubpage: OpenClawSubpage;
 }

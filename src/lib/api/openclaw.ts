@@ -22,6 +22,23 @@ export interface OpenClawNodeCheckResult {
   path?: string | null;
 }
 
+export interface OpenClawDependencyStatus {
+  status: "ok" | "missing" | "version_low" | string;
+  version?: string | null;
+  path?: string | null;
+  message: string;
+  autoInstallSupported: boolean;
+}
+
+export interface OpenClawEnvironmentStatus {
+  node: OpenClawDependencyStatus;
+  git: OpenClawDependencyStatus;
+  openclaw: OpenClawDependencyStatus;
+  recommendedAction: string;
+  summary: string;
+  tempArtifacts: string[];
+}
+
 export interface OpenClawActionResult {
   success: boolean;
   message: string;
@@ -74,6 +91,10 @@ export async function openclawCheckInstalled(): Promise<OpenClawBinaryInstallSta
   return safeInvoke("openclaw_check_installed");
 }
 
+export async function openclawGetEnvironmentStatus(): Promise<OpenClawEnvironmentStatus> {
+  return safeInvoke("openclaw_get_environment_status");
+}
+
 export async function openclawCheckNodeVersion(): Promise<OpenClawNodeCheckResult> {
   return safeInvoke("openclaw_check_node_version");
 }
@@ -94,6 +115,12 @@ export async function openclawInstall(): Promise<OpenClawActionResult> {
   return safeInvoke("openclaw_install");
 }
 
+export async function openclawInstallDependency(
+  kind: "node" | "git",
+): Promise<OpenClawActionResult> {
+  return safeInvoke("openclaw_install_dependency", { kind });
+}
+
 export async function openclawGetCommandPreview(
   operation: "install" | "uninstall" | "start" | "stop" | "restart",
   port?: number,
@@ -103,6 +130,10 @@ export async function openclawGetCommandPreview(
 
 export async function openclawUninstall(): Promise<OpenClawActionResult> {
   return safeInvoke("openclaw_uninstall");
+}
+
+export async function openclawCleanupTempArtifacts(): Promise<OpenClawActionResult> {
+  return safeInvoke("openclaw_cleanup_temp_artifacts");
 }
 
 export async function openclawStartGateway(
@@ -158,13 +189,16 @@ export async function openclawGetProgressLogs(): Promise<
 
 export const openclawApi = {
   checkInstalled: openclawCheckInstalled,
+  getEnvironmentStatus: openclawGetEnvironmentStatus,
   checkNodeVersion: openclawCheckNodeVersion,
   checkGitAvailable: openclawCheckGitAvailable,
   getNodeDownloadUrl: openclawGetNodeDownloadUrl,
   getGitDownloadUrl: openclawGetGitDownloadUrl,
   install: openclawInstall,
+  installDependency: openclawInstallDependency,
   getCommandPreview: openclawGetCommandPreview,
   uninstall: openclawUninstall,
+  cleanupTempArtifacts: openclawCleanupTempArtifacts,
   startGateway: openclawStartGateway,
   stopGateway: openclawStopGateway,
   restartGateway: openclawRestartGateway,

@@ -10,6 +10,7 @@ export interface UseWorkbenchQuickActionsParams {
   hasWorkflowWorkspaceView: boolean;
   hasPublishWorkspaceView: boolean;
   hasSettingsWorkspaceView: boolean;
+  workspaceViewLabels?: Partial<Record<ThemeWorkspaceView, string>>;
   selectedContentId: string | null;
   onSwitchWorkspaceView: (view: ThemeWorkspaceView) => void;
   onQuickSaveCurrent: () => Promise<void> | void;
@@ -21,6 +22,7 @@ export function useWorkbenchQuickActions({
   hasWorkflowWorkspaceView,
   hasPublishWorkspaceView,
   hasSettingsWorkspaceView,
+  workspaceViewLabels,
   selectedContentId,
   onSwitchWorkspaceView,
   onQuickSaveCurrent,
@@ -33,7 +35,7 @@ export function useWorkbenchQuickActions({
     const actions: WorkbenchQuickAction[] = [
       {
         key: "to-create",
-        label: "返回创作视图",
+        label: `返回${workspaceViewLabels?.create ?? "创作"}视图`,
         icon: Bot,
         onClick: () => onSwitchWorkspaceView("create"),
       },
@@ -42,7 +44,7 @@ export function useWorkbenchQuickActions({
     if (hasWorkflowWorkspaceView && activeWorkspaceView !== "workflow") {
       actions.push({
         key: "to-workflow",
-        label: "前往流程视图",
+        label: `前往${workspaceViewLabels?.workflow ?? "流程"}视图`,
         icon: Sparkles,
         onClick: () => onSwitchWorkspaceView("workflow"),
       });
@@ -51,7 +53,7 @@ export function useWorkbenchQuickActions({
     if (hasPublishWorkspaceView && activeWorkspaceView !== "publish") {
       actions.push({
         key: "to-publish",
-        label: "前往发布视图",
+        label: `前往${workspaceViewLabels?.publish ?? "发布"}视图`,
         icon: Send,
         onClick: () => onSwitchWorkspaceView("publish"),
       });
@@ -60,7 +62,7 @@ export function useWorkbenchQuickActions({
     if (hasSettingsWorkspaceView && activeWorkspaceView !== "settings") {
       actions.push({
         key: "to-settings",
-        label: "前往设置视图",
+        label: `前往${workspaceViewLabels?.settings ?? "设置"}视图`,
         icon: Wrench,
         onClick: () => onSwitchWorkspaceView("settings"),
       });
@@ -86,6 +88,7 @@ export function useWorkbenchQuickActions({
     onQuickSaveCurrent,
     onSwitchWorkspaceView,
     selectedContentId,
+    workspaceViewLabels,
     workspaceMode,
   ]);
 

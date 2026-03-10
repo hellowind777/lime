@@ -40,6 +40,7 @@ export interface OpenProjectWritingOptions {
 export interface ThemeCapabilities {
   workspaceKind: ThemeWorkspaceKind;
   workspaceNotice?: ThemeWorkspaceNotice;
+  showWorkspaceRightRailInWorkspace?: boolean;
 }
 
 export interface ThemeWorkspaceRendererProps {

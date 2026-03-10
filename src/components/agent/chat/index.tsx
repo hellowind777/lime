@@ -18,7 +18,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import styled from "styled-components";
-import { PanelLeftOpen } from "lucide-react";
+import { Info, PanelLeftOpen } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { safeListen } from "@/lib/dev-bridge";
@@ -225,6 +225,28 @@ const ChatContainerInner = styled.div`
   min-height: 0;
   height: 100%;
   overflow: hidden;
+`;
+
+const EntryBanner = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--primary) / 0.18);
+  background: hsl(var(--primary) / 0.08);
+  color: hsl(var(--foreground));
+  font-size: 13px;
+`;
+
+const EntryBannerClose = styled.button`
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  font-size: 13px;
 `;
 
 const ChatContent = styled.div`
@@ -1542,6 +1564,8 @@ export function AgentChatPage({
   hideInlineStepProgress = false,
   onWorkflowProgressChange,
   initialUserPrompt,
+  initialSessionName,
+  entryBannerMessage,
   onInitialUserPromptConsumed,
   newChatAt,
   onRecommendationClick: _onRecommendationClick,
@@ -1565,6 +1589,8 @@ export function AgentChatPage({
     snapshot: WorkflowProgressSnapshot | null,
   ) => void;
   initialUserPrompt?: string;
+  initialSessionName?: string;
+  entryBannerMessage?: string;
   onInitialUserPromptConsumed?: () => void;
   newChatAt?: number;
   onRecommendationClick?: (shortLabel: string, fullPrompt: string) => void;
@@ -1577,6 +1603,9 @@ export function AgentChatPage({
     useState(false);
   const [input, setInput] = useState("");
   const [selectedText, setSelectedText] = useState("");
+  const [entryBannerVisible, setEntryBannerVisible] = useState(
+    Boolean(entryBannerMessage),
+  );
   const [chatToolPreferences, setChatToolPreferences] =
     useState<ChatToolPreferences>(() => loadChatToolPreferences());
 
@@ -1608,6 +1637,10 @@ export function AgentChatPage({
     if (!initialCreationMode) return;
     setCreationMode(initialCreationMode);
   }, [initialCreationMode]);
+
+  useEffect(() => {
+    setEntryBannerVisible(Boolean(entryBannerMessage));
+  }, [entryBannerMessage]);
 
   useEffect(() => {
     saveChatToolPreferences(chatToolPreferences);
@@ -2124,6 +2157,7 @@ export function AgentChatPage({
     triggerAIGuide,
     topics,
     sessionId,
+    createFreshSession,
     switchTopic: originalSwitchTopic,
     deleteTopic,
     renameTopic,
@@ -3988,7 +4022,27 @@ export function AgentChatPage({
       setActiveTheme(normalizeInitialTheme(initialTheme));
       setCreationMode(initialCreationMode ?? "guided");
     }
+
+    const toastId = initialSessionName
+      ? "openclaw-agent-handoff"
+      : "agent-new-chat";
+
+    void (async () => {
+      const newSessionId = await createFreshSession(initialSessionName);
+      if (newSessionId) {
+        toast.success(
+          initialSessionName
+            ? `已创建新话题：${initialSessionName}`
+            : "已创建新话题",
+          { id: toastId },
+        );
+      } else {
+        toast.error("创建新话题失败，请重试。", { id: toastId });
+      }
+    })();
   }, [
+    createFreshSession,
+    initialSessionName,
     newChatAt,
     clearMessages,
     externalProjectId,
@@ -4832,6 +4886,10 @@ export function AgentChatPage({
 
   // 当从项目进入且有 contentId 时，自动启动创作引导
   useEffect(() => {
+    if (mappedTheme === "video") {
+      return;
+    }
+
     // 条件：
     // - 有 contentId（从项目创建内容进入）
     // - 没有消息（messages.length === 0）
@@ -4941,8 +4999,10 @@ export function AgentChatPage({
   useEffect(() => {
     const pendingInitialPrompt = (initialUserPrompt || "").trim();
     if (
+      mappedTheme === "video" ||
       !pendingInitialPrompt ||
       contentId ||
+      !sessionId ||
       messages.length > 0 ||
       isSending
     ) {
@@ -4969,8 +5029,10 @@ export function AgentChatPage({
     handleSend,
     initialUserPrompt,
     isSending,
+    mappedTheme,
     messages.length,
     onInitialUserPromptConsumed,
+    sessionId,
   ]);
 
   // 当 contentId 变化时重置引导状态
@@ -5025,14 +5087,19 @@ export function AgentChatPage({
 
   // 主题工作台始终使用聊天布局与浮层输入，不走旧 EmptyState 输入流程
   const showChatLayout = hasMessages || isThemeWorkbench;
+  const shouldHideThemeWorkbenchInputForTheme =
+    isThemeWorkbench && mappedTheme === "video";
+  const shouldShowThemeWorkbenchSidebarForTheme = mappedTheme !== "video";
   const showThemeWorkbenchSidebar =
     showChatPanel &&
     showSidebar &&
     isThemeWorkbench &&
+    shouldShowThemeWorkbenchSidebarForTheme &&
     (!enableThemeWorkbenchPanelCollapse || !themeWorkbenchSidebarCollapsed);
   const showThemeWorkbenchLeftExpandButton =
     showChatPanel &&
     showSidebar &&
+    shouldShowThemeWorkbenchSidebarForTheme &&
     enableThemeWorkbenchPanelCollapse &&
     themeWorkbenchSidebarCollapsed;
   const handleThemeWorkbenchDeleteTopic = useCallback(() => {}, []);
@@ -5437,6 +5504,19 @@ export function AgentChatPage({
     () => (
       <ChatContainer>
         <ChatContainerInner>
+          {entryBannerVisible && entryBannerMessage ? (
+            <EntryBanner>
+              <Info className="h-4 w-4 shrink-0" />
+              <span>{entryBannerMessage}</span>
+              <EntryBannerClose
+                type="button"
+                onClick={() => setEntryBannerVisible(false)}
+                aria-label="关闭入口提示"
+              >
+                关闭
+              </EntryBannerClose>
+            </EntryBanner>
+          ) : null}
           {!hideInlineStepProgress &&
             isContentCreationMode &&
             hasMessages &&
@@ -5582,7 +5662,10 @@ export function AgentChatPage({
                   </button>
                 </div>
               )}
-              {!contextWorkspace.enabled ? inputbarNode : null}
+              {!contextWorkspace.enabled &&
+              !shouldHideThemeWorkbenchInputForTheme
+                ? inputbarNode
+                : null}
             </>
           )}
         </ChatContainerInner>
@@ -5598,6 +5681,8 @@ export function AgentChatPage({
       currentStepIndex,
       deleteMessage,
       dismissWorkspacePathError,
+      entryBannerMessage,
+      entryBannerVisible,
       editMessage,
       executionStrategy,
       generalCanvasState.content,
@@ -5632,6 +5717,7 @@ export function AgentChatPage({
       setWorkspaceHealthError,
       shouldCollapseCodeBlocks,
       selectedText,
+      setEntryBannerVisible,
       showChatLayout,
       handleRunStyleAudit,
       handleRunStyleRewrite,
@@ -5643,6 +5729,7 @@ export function AgentChatPage({
       workspaceHealthError,
       workspacePathMissing,
       resolvedCanvasState,
+      shouldHideThemeWorkbenchInputForTheme,
     ],
   );
 
@@ -5875,7 +5962,9 @@ export function AgentChatPage({
 
         <ThemeWorkbenchLayoutShell
           $bottomInset={
-            isThemeWorkbench && showChatLayout
+            isThemeWorkbench &&
+            showChatLayout &&
+            !shouldHideThemeWorkbenchInputForTheme
               ? canvasContent
                 ? themeWorkbenchRunState === "auto_running"
                   ? "24px"
@@ -5896,7 +5985,9 @@ export function AgentChatPage({
             canvasContent={canvasContent}
           />
         </ThemeWorkbenchLayoutShell>
-        {isThemeWorkbench && showChatLayout ? (
+        {isThemeWorkbench &&
+        showChatLayout &&
+        !shouldHideThemeWorkbenchInputForTheme ? (
           <ThemeWorkbenchInputOverlay
             $hasPendingA2UIForm={Boolean(pendingA2UIForm)}
           >
@@ -5930,6 +6021,7 @@ export function AgentChatPage({
       onBackToProjectManagement,
       pendingA2UIForm,
       projectId,
+      shouldHideThemeWorkbenchInputForTheme,
       showChatLayout,
       showChatPanel,
       showNovelNavbarControls,

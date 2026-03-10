@@ -2,9 +2,6 @@ import React, { memo, useEffect, useMemo, useState } from "react";
 import styled from "styled-components";
 import { toast } from "sonner";
 import {
-  ChevronLeft,
-  ChevronRight,
-  LayoutGrid,
   PanelLeftClose,
   PanelLeftOpen,
 } from "lucide-react";
@@ -151,60 +148,6 @@ const WorkspaceFrame = styled.div`
   overflow: hidden;
 `;
 
-const TopicPanel = styled.div<{ $collapsed: boolean }>`
-  position: relative;
-  width: ${({ $collapsed }) => ($collapsed ? "0px" : "90px")};
-  min-width: ${({ $collapsed }) => ($collapsed ? "0px" : "90px")};
-  height: 100%;
-  border-left: ${({ $collapsed }) =>
-    $collapsed ? "none" : "1px solid hsl(var(--border))"};
-  background: hsl(var(--background));
-  overflow: visible;
-  transition:
-    width 0.2s ease,
-    min-width 0.2s ease;
-`;
-
-const TopicPanelHandle = styled.button`
-  position: absolute;
-  left: -14px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 28px;
-  height: 50px;
-  border: 1px solid hsl(var(--border));
-  border-right: none;
-  border-radius: 12px 0 0 12px;
-  background: hsl(var(--background));
-  color: hsl(var(--muted-foreground));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  z-index: 6;
-
-  &:hover {
-    color: hsl(var(--foreground));
-  }
-`;
-
-const MainAction = styled.button`
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 5;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: default;
-`;
-
 export const VideoCanvas: React.FC<VideoCanvasProps> = memo(
   ({
     state,
@@ -214,7 +157,6 @@ export const VideoCanvas: React.FC<VideoCanvasProps> = memo(
     onClose: _onClose,
   }) => {
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-    const [topicPanelCollapsed, setTopicPanelCollapsed] = useState(false);
     const [providers, setProviders] = useState<VideoProviderOption[]>([]);
 
     useEffect(() => {
@@ -373,30 +315,12 @@ export const VideoCanvas: React.FC<VideoCanvasProps> = memo(
 
           <WorkspaceFrame>
             <MainContainer>
-              <MainAction>
-                <LayoutGrid size={12} />
-              </MainAction>
               <VideoWorkspace
                 state={state}
                 projectId={projectId}
                 onStateChange={onStateChange}
               />
             </MainContainer>
-            <TopicPanel $collapsed={topicPanelCollapsed}>
-              <TopicPanelHandle
-                type="button"
-                title={topicPanelCollapsed ? "展开右侧栏" : "收起右侧栏"}
-                onClick={() =>
-                  setTopicPanelCollapsed((previous) => !previous)
-                }
-              >
-                {topicPanelCollapsed ? (
-                  <ChevronLeft size={12} />
-                ) : (
-                  <ChevronRight size={12} />
-                )}
-              </TopicPanelHandle>
-            </TopicPanel>
           </WorkspaceFrame>
         </Body>
       </Root>

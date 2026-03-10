@@ -18,6 +18,7 @@ import type {
   NovelQuickCreateOptions,
   NovelQuickCreateResult,
   OpenProjectWritingOptions,
+  ThemeWorkspaceView,
 } from "@/features/themes/types";
 import type { CreationMode } from "@/components/content-creator/types";
 import type { WorkflowProgressSnapshot } from "@/components/agent/chat";
@@ -197,8 +198,9 @@ export function useWorkbenchController({
   const isAgentChatWorkspace =
     themeModule.capabilities.workspaceKind === "agent-chat";
   const shouldRenderWorkspaceRightRailInWorkspace =
-    themeModule.capabilities.workspaceKind === "video-canvas" ||
-    (isAgentChatWorkspace && !PrimaryWorkspaceRenderer);
+    themeModule.capabilities.showWorkspaceRightRailInWorkspace ??
+    (themeModule.capabilities.workspaceKind === "video-canvas" ||
+      (isAgentChatWorkspace && !PrimaryWorkspaceRenderer));
 
   const {
     projects,
@@ -508,6 +510,17 @@ export function useWorkbenchController({
     activeWorkspaceView,
     panelRenderers,
   });
+  const workspaceViewLabels = useMemo(
+    () =>
+      themeModule.navigation.items.reduce<Partial<Record<ThemeWorkspaceView, string>>>(
+        (labels, item) => {
+          labels[item.key] = item.label;
+          return labels;
+        },
+        {},
+      ),
+    [themeModule.navigation.items],
+  );
 
   const { nonCreateQuickActions } = useWorkbenchQuickActions({
     workspaceMode,
@@ -515,6 +528,7 @@ export function useWorkbenchController({
     hasWorkflowWorkspaceView,
     hasPublishWorkspaceView,
     hasSettingsWorkspaceView,
+    workspaceViewLabels,
     selectedContentId,
     onSwitchWorkspaceView: handleSwitchWorkspaceView,
     onQuickSaveCurrent: handleQuickSaveCurrent,

@@ -45,6 +45,12 @@ function createHarnessProps(
     hasWorkflowWorkspaceView: true,
     hasPublishWorkspaceView: true,
     hasSettingsWorkspaceView: true,
+    workspaceViewLabels: {
+      create: "创作",
+      workflow: "流程",
+      publish: "发布",
+      settings: "设置",
+    },
     selectedContentId: "content-1",
     onSwitchWorkspaceView: vi.fn(),
     onQuickSaveCurrent: vi.fn(),
@@ -142,5 +148,21 @@ describe("useWorkbenchQuickActions", () => {
       container.querySelector("[data-testid='action-labels']")?.textContent ?? "";
     expect(labels).toContain("前往发布视图");
     expect(labels).not.toContain("快速保存当前文稿");
+  });
+
+  it("应优先使用主题导航中的视图标签", () => {
+    const { container } = renderHarness({
+      activeWorkspaceView: "material",
+      workspaceViewLabels: {
+        create: "创作",
+        publish: "任务",
+        settings: "设置",
+      },
+    });
+
+    const labels =
+      container.querySelector("[data-testid='action-labels']")?.textContent ?? "";
+    expect(labels).toContain("返回创作视图");
+    expect(labels).toContain("前往任务视图");
   });
 });

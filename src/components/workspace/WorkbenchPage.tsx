@@ -138,6 +138,9 @@ export function WorkbenchPage({
   const selectedContentCreationType = selectedContentId
     ? contentCreationTypes[selectedContentId]
     : undefined;
+  const shouldHideVideoSidebarInWorkspace =
+    themeModule.capabilities.workspaceKind === "video-canvas" &&
+    workspaceMode === "workspace";
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -159,7 +162,9 @@ export function WorkbenchPage({
         }
         leftSidebar={
           <WorkbenchLeftSidebar
-            shouldRender={shouldRenderLeftSidebar}
+            shouldRender={
+              shouldRenderLeftSidebar && !shouldHideVideoSidebarInWorkspace
+            }
             leftSidebarCollapsed={leftSidebarCollapsed}
             theme={theme as ProjectType}
             projectsLoading={projectsLoading}

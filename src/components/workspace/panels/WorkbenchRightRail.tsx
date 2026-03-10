@@ -85,6 +85,7 @@ export function WorkbenchRightRail({
       sections={capabilitySections}
       heading={railHeading}
       subheading={railSubheading}
+      theme={theme}
       onCollapse={() => setCollapsed(true)}
       projectId={projectId}
       onCreateContentFromPrompt={onCreateContentFromPrompt}
