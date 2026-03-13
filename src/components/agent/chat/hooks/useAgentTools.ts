@@ -94,16 +94,16 @@ export function useAgentTools(options: UseAgentToolsOptions) {
 
           if (pendingAction?.isFallback) {
             const fallbackPromptKey = resolveActionPromptKey(pendingAction);
-            const resolvedAction = pendingActions.find((item) => {
-              if (item.requestId === pendingAction.requestId) return false;
-              if (item.isFallback) return false;
-              if (item.actionType !== pendingAction.actionType) return false;
-              if (!fallbackPromptKey) return false;
-              return resolveActionPromptKey(item) === fallbackPromptKey;
-            });
+            if (fallbackPromptKey) {
+              const resolvedAction = pendingActions.find((item) => {
+                if (item.requestId === pendingAction.requestId) return false;
+                if (item.isFallback) return false;
+                if (item.actionType !== pendingAction.actionType) return false;
+                return resolveActionPromptKey(item) === fallbackPromptKey;
+              });
 
-            if (!resolvedAction) {
-              queuedFallbackResponsesRef.current.set(fallbackPromptKey, {
+              if (!resolvedAction) {
+                queuedFallbackResponsesRef.current.set(fallbackPromptKey, {
                 ...response,
                 actionType,
                 requestId: pendingAction.requestId,
@@ -156,6 +156,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
 
             effectiveRequestId = resolvedAction.requestId;
             acknowledgedRequestIds.add(resolvedAction.requestId);
+            }
           }
 
           await runtime.respondToAction({
