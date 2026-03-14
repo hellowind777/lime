@@ -86,7 +86,7 @@ jobs:
           cache-all-crates: true
           save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
 
-      - name: Sync version from tag to tauri.conf.json
+      - name: Sync version from tag to tauri configs
         shell: bash
         run: |
           VERSION="${{ github.event.inputs.version || github.ref_name }}"
@@ -95,11 +95,14 @@ jobs:
           cd src-tauri
           node -e "
             const fs = require('fs');
-            const conf = JSON.parse(fs.readFileSync('tauri.conf.json', 'utf8'));
-            conf.version = '$VERSION';
-            fs.writeFileSync('tauri.conf.json', JSON.stringify(conf, null, 2) + '\n');
+            for (const file of ['tauri.conf.json', 'tauri.conf.headless.json']) {
+              const conf = JSON.parse(fs.readFileSync(file, 'utf8'));
+              conf.version = '$VERSION';
+              fs.writeFileSync(file, JSON.stringify(conf, null, 2) + '\n');
+            }
           "
           echo "tauri.conf.json version is now: $(node -e "console.log(JSON.parse(require('fs').readFileSync('tauri.conf.json','utf8')).version)")"
+          echo "tauri.conf.headless.json version is now: $(node -e "console.log(JSON.parse(require('fs').readFileSync('tauri.conf.headless.json','utf8')).version)")"
 
       - name: Load release notes
         shell: bash

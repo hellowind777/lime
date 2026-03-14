@@ -1,16 +1,24 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import {
+  Activity,
+  AlertCircle,
   Play,
   Copy,
   Check,
   ChevronDown,
   ChevronUp,
+  Globe2,
   RefreshCw,
+  Server,
+  ShieldCheck,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 import * as Select from "@radix-ui/react-select";
 import { invoke } from "@tauri-apps/api/core";
 import { LogsTab } from "./LogsTab";
 import { ProviderIcon } from "@/icons/providers";
+import { cn } from "@/lib/utils";
 import { reloadCredentials } from "@/lib/api/providerRuntime";
 import { revealPathInFinder } from "@/lib/api/fileSystem";
 import {
@@ -83,6 +91,74 @@ interface ApiServerPageProps {
 }
 
 type GatewayMode = "local" | "lan";
+
+interface GatewayPanelProps {
+  icon: LucideIcon;
+  title: string;
+  description?: string;
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}
+
+interface GatewayStatCardProps {
+  label: string;
+  value: string;
+  description: string;
+}
+
+const PANEL_CLASS_NAME =
+  "rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5";
+const INPUT_CLASS_NAME =
+  "h-11 rounded-[16px] border border-slate-200 bg-white px-3.5 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:bg-slate-100/80 disabled:text-slate-400";
+const BUTTON_SECONDARY_CLASS_NAME =
+  "inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50";
+const BUTTON_PRIMARY_CLASS_NAME =
+  "inline-flex items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50";
+
+function GatewayPanel({
+  icon: Icon,
+  title,
+  description,
+  aside,
+  children,
+  className,
+}: GatewayPanelProps) {
+  return (
+    <article className={cn(PANEL_CLASS_NAME, className)}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Icon className="h-4 w-4 text-sky-600" />
+            {title}
+          </div>
+          {description ? (
+            <p className="text-sm leading-6 text-slate-500">{description}</p>
+          ) : null}
+        </div>
+        {aside ? (
+          <div className="flex flex-wrap items-center gap-2">{aside}</div>
+        ) : null}
+      </div>
+
+      <div className="mt-5">{children}</div>
+    </article>
+  );
+}
+
+function GatewayStatCard({ label, value, description }: GatewayStatCardProps) {
+  return (
+    <div className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm">
+      <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
 
 const getGatewayModeByHost = (host?: string | null): GatewayMode => {
   const normalized = (host || "").trim().toLowerCase();
@@ -221,7 +297,7 @@ export function ApiServerPage({ hideHeader = false }: ApiServerPageProps) {
     typeof window !== "undefined" &&
     Boolean(
       (window as any).__TAURI__?.core?.invoke ||
-        (window as any).__TAURI__?.invoke,
+      (window as any).__TAURI__?.invoke,
     );
 
   const fetchStatus = async () => {
@@ -1213,149 +1289,628 @@ export function ApiServerPage({ hideHeader = false }: ApiServerPageProps) {
 
   const getStatusBadge = (result?: TestState) => {
     if (!result || result.status === "idle") {
-      return <span className="text-xs text-gray-400">未测试</span>;
+      return (
+        <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
+          未测试
+        </span>
+      );
     }
     if (result.status === "loading") {
-      return <span className="text-xs text-blue-500">测试中...</span>;
+      return (
+        <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-medium text-sky-700">
+          测试中...
+        </span>
+      );
     }
     if (result.status === "success") {
-      return <span className="text-xs text-green-600">{result.time}ms</span>;
+      return (
+        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+          {result.time}ms
+        </span>
+      );
     }
     return (
-      <span className="text-xs text-red-500">
+      <span className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700">
         失败 {result.httpStatus ? `(${result.httpStatus})` : ""}
       </span>
     );
   };
 
+  const activeProviderLabel =
+    availableProviders.find((provider) => provider.id === defaultProvider)
+      ?.label ||
+    providerLabels[defaultProvider] ||
+    defaultProvider;
+  const gatewayModeLabel = gatewayMode === "local" ? "仅本机" : "内网共享";
+  const gatewayStatusLabel = status?.running ? "运行中" : "已停止";
+
   return (
-    <div className="space-y-4">
-      {!hideHeader && (
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <div className="flex items-end gap-3">
-              <h2 className="text-2xl font-bold">团队共享网关（内网）</h2>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground pb-0.5">
-                <span className="flex items-center gap-1.5">
-                  <span
-                    className={`inline-block h-2 w-2 rounded-full ${status?.running ? "bg-green-500" : "bg-red-500"}`}
-                  />
-                  {status?.running ? "运行中" : "已停止"}
+    <div className="space-y-6 pb-8">
+      {message ? (
+        <div
+          className={cn(
+            "flex items-center justify-between gap-4 rounded-[20px] border px-4 py-3 text-sm shadow-sm shadow-slate-950/5",
+            message.type === "success"
+              ? "border-emerald-200 bg-emerald-50/90 text-emerald-700"
+              : "border-rose-200 bg-rose-50/90 text-rose-700",
+          )}
+        >
+          <div className="flex items-center gap-2">
+            {message.type === "success" ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <AlertCircle className="h-4 w-4" />
+            )}
+            <span>{message.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={fetchDiagnostics}
+            disabled={diagnosticsLoading}
+            className="rounded-full border border-current/15 bg-white/80 px-3 py-1.5 text-xs font-medium transition hover:bg-white disabled:opacity-50"
+          >
+            {diagnosticsLoading ? "刷新中..." : "刷新诊断"}
+          </button>
+        </div>
+      ) : null}
+
+      <section className="relative overflow-hidden rounded-[30px] border border-emerald-200/70 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+        <div className="pointer-events-none absolute -left-20 top-[-72px] h-56 w-56 rounded-full bg-emerald-200/30 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-76px] top-[-24px] h-56 w-56 rounded-full bg-sky-200/28 blur-3xl" />
+
+        <div className="relative flex flex-col gap-6 p-6 lg:p-8">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(380px,0.92fr)] xl:items-stretch">
+            <div className="max-w-3xl space-y-5">
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-emerald-700 shadow-sm">
+                GATEWAY CONTROL
+              </span>
+              <div className="space-y-2">
+                <p className="text-[28px] font-semibold tracking-tight text-slate-900">
+                  {hideHeader
+                    ? "统一控制内网共享、默认 Provider 与兼容性测试"
+                    : "团队共享网关（内网）"}
+                </p>
+                <p className="max-w-2xl text-sm leading-7 text-slate-600">
+                  Agent 默认直连 Provider。只有在需要让同网段设备复用这套服务、
+                  默认模型和兼容接口时，再开启共享网关即可。
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm",
+                    status?.running
+                      ? "border-emerald-200 bg-white/90 text-emerald-700"
+                      : "border-slate-200 bg-white/88 text-slate-600",
+                  )}
+                >
+                  共享状态：{gatewayStatusLabel}
                 </span>
-                <span>·</span>
-                <span>{status?.requests || 0} 请求</span>
-                <span>·</span>
-                <span className="capitalize">{defaultProvider}</span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  共享模式：{gatewayModeLabel}
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  默认 Provider：{activeProviderLabel}
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  测试地址：{serverUrl}
+                </span>
               </div>
             </div>
-            <p className="text-muted-foreground text-sm mt-1">
-              Agent 默认直连 Provider；需要给内网同事接入时再开启共享网关
-            </p>
+
+            <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 xl:content-start">
+              <GatewayStatCard
+                label="共享状态"
+                value={gatewayStatusLabel}
+                description={
+                  status?.running
+                    ? "网关正在对外提供兼容接口。"
+                    : "当前未对外开放，可先完成配置再启动。"
+                }
+              />
+              <GatewayStatCard
+                label="累计请求"
+                value={(status?.requests ?? 0).toString()}
+                description="用于快速观察当前网关是否处于活跃使用状态。"
+              />
+              <GatewayStatCard
+                label="可测端点"
+                value={testEndpoints.length.toString()}
+                description="会随默认 Provider 和模型协议类型自动切换。"
+              />
+            </div>
           </div>
         </div>
-      )}
+      </section>
 
-      {message && (
-        <div
-          className={`flex items-center gap-2 rounded-lg border p-3 text-sm ${
-            message.type === "success"
-              ? "border-green-500 bg-green-50 text-green-700 dark:bg-green-950/30"
-              : "border-red-500 bg-red-50 text-red-700 dark:bg-red-950/30"
-          }`}
-        >
-          {message.type === "success" ? (
-            <Check className="h-4 w-4" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-          {message.text}
-        </div>
-      )}
-
-      {/* Tabs */}
-      <div className="flex gap-2 border-b overflow-x-auto">
+      <div className="inline-flex flex-wrap gap-1 rounded-[20px] border border-slate-200/80 bg-white p-1 shadow-sm shadow-slate-950/5">
         {[
           { id: "server" as TabId, name: "网关控制" },
           { id: "logs" as TabId, name: "网关日志" },
         ].map((tab) => (
           <button
             key={tab.id}
+            type="button"
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px whitespace-nowrap ${
+            className={cn(
+              "rounded-full px-4 py-2 text-sm font-medium transition",
               activeTab === tab.id
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
+                ? "bg-slate-900 text-white"
+                : "text-slate-500 hover:text-slate-900",
+            )}
           >
             {tab.name}
           </button>
         ))}
       </div>
 
-      {/* Server Control Tab */}
-      {activeTab === "server" && (
-        <div className="flex flex-col gap-4">
-          {/* Server Control - 紧凑版 */}
-          <div className="rounded-lg border bg-card p-4">
-            <div className="flex flex-wrap items-center gap-4">
-              <button
-                className={`shrink-0 whitespace-nowrap rounded-lg px-4 py-1.5 text-sm font-medium leading-none text-white disabled:opacity-50 ${
-                  status?.running
-                    ? "bg-red-600 hover:bg-red-700"
-                    : "bg-green-600 hover:bg-green-700"
-                }`}
-                onClick={status?.running ? handleStop : handleStart}
-                disabled={loading}
-              >
-                {loading
-                  ? "处理中..."
-                  : status?.running
-                    ? "关闭共享"
-                    : "开启共享"}
-              </button>
-              <div className="flex items-center gap-3 text-sm flex-wrap">
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">共享模式:</span>
-                  <div className="inline-flex rounded-md border border-input p-0.5">
-                    <button
-                      onClick={() => {
-                        void handleGatewayModeChange("local");
-                      }}
-                      disabled={status?.running}
-                      className={`whitespace-nowrap rounded px-2 py-1 text-xs transition-colors ${
-                        gatewayMode === "local"
-                          ? "bg-primary/10 text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      } disabled:cursor-not-allowed disabled:opacity-50`}
-                    >
-                      仅本机
-                    </button>
-                    <button
-                      onClick={() => {
-                        void handleGatewayModeChange("lan");
-                      }}
-                      disabled={status?.running}
-                      className={`whitespace-nowrap rounded px-2 py-1 text-xs transition-colors ${
-                        gatewayMode === "lan"
-                          ? "bg-primary/10 text-primary"
-                          : "text-muted-foreground hover:text-foreground"
-                      } disabled:cursor-not-allowed disabled:opacity-50`}
-                    >
-                      内网共享
-                    </button>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">共享地址:</span>
-                  <Select.Root
-                    value={
-                      status?.running ? status.host : editHost || "127.0.0.1"
-                    }
-                    onValueChange={handleHostChange}
-                    disabled={status?.running}
+      {activeTab === "server" ? (
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(340px,0.82fr)]">
+          <div className="space-y-6">
+            <GatewayPanel
+              icon={Server}
+              title="网关控制"
+              description="把启动、共享模式、监听地址和鉴权配置集中在同一个控制区。"
+              aside={
+                <span
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium",
+                    status?.running
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-slate-100 text-slate-600",
+                  )}
+                >
+                  {status?.running ? "已对外共享" : "待启动"}
+                </span>
+              }
+            >
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    className={cn(
+                      "inline-flex items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:opacity-50",
+                      status?.running
+                        ? "bg-rose-600 hover:bg-rose-700"
+                        : "bg-emerald-600 hover:bg-emerald-700",
+                    )}
+                    onClick={status?.running ? handleStop : handleStart}
+                    disabled={loading}
                   >
-                    <Select.Trigger className="inline-flex min-w-[200px] items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
-                      <Select.Value />
+                    {loading ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : null}
+                    {loading
+                      ? "处理中..."
+                      : status?.running
+                        ? "关闭共享"
+                        : "开启共享"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveServerConfig}
+                    disabled={loading || status?.running}
+                    className={BUTTON_SECONDARY_CLASS_NAME}
+                    title={status?.running ? "请先关闭共享再修改配置" : ""}
+                  >
+                    保存配置
+                  </button>
+                  <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
+                    当前测试地址：{serverUrl}
+                  </span>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-900">
+                          共享模式
+                        </h3>
+                        <p className="mt-1 text-xs leading-5 text-slate-500">
+                          仅本机适合本地调试，内网共享适合同网段协作接入。
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                        当前：{gatewayModeLabel}
+                      </span>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleGatewayModeChange("local");
+                        }}
+                        disabled={status?.running}
+                        className={cn(
+                          "rounded-[18px] border px-4 py-3 text-left transition",
+                          gatewayMode === "local"
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                          status?.running && "cursor-not-allowed opacity-50",
+                        )}
+                      >
+                        <p className="text-sm font-semibold">仅本机</p>
+                        <p
+                          className={cn(
+                            "mt-1 text-xs leading-5",
+                            gatewayMode === "local"
+                              ? "text-white/70"
+                              : "text-slate-500",
+                          )}
+                        >
+                          只允许当前设备访问网关。
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleGatewayModeChange("lan");
+                        }}
+                        disabled={status?.running}
+                        className={cn(
+                          "rounded-[18px] border px-4 py-3 text-left transition",
+                          gatewayMode === "lan"
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                          status?.running && "cursor-not-allowed opacity-50",
+                        )}
+                      >
+                        <p className="text-sm font-semibold">内网共享</p>
+                        <p
+                          className={cn(
+                            "mt-1 text-xs leading-5",
+                            gatewayMode === "lan"
+                              ? "text-white/70"
+                              : "text-slate-500",
+                          )}
+                        >
+                          对同网段设备暴露兼容接口。
+                        </p>
+                      </button>
+                    </div>
+                  </article>
+
+                  <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        网关地址与鉴权
+                      </h3>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        运行中会锁定配置，避免协作接入过程中误改监听地址。
+                      </p>
+                    </div>
+
+                    <div className="mt-4 grid gap-3">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-slate-500">
+                          共享地址
+                        </label>
+                        <Select.Root
+                          value={
+                            status?.running
+                              ? status.host
+                              : editHost || "127.0.0.1"
+                          }
+                          onValueChange={handleHostChange}
+                          disabled={status?.running}
+                        >
+                          <Select.Trigger
+                            className={cn(
+                              INPUT_CLASS_NAME,
+                              "inline-flex w-full items-center justify-between gap-2",
+                            )}
+                          >
+                            <Select.Value />
+                            <Select.Icon>
+                              <ChevronDown className="h-4 w-4 opacity-50" />
+                            </Select.Icon>
+                          </Select.Trigger>
+                          <Select.Portal>
+                            <Select.Content
+                              position="popper"
+                              side="bottom"
+                              align="start"
+                              sideOffset={4}
+                              className="z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[18px] border border-slate-200 bg-white text-slate-700 shadow-lg"
+                            >
+                              <Select.Viewport className="p-1">
+                                {hostOptions.map((ip) => {
+                                  let label = "(局域网)";
+                                  if (ip === "127.0.0.1") {
+                                    label = "(仅本机)";
+                                  } else if (ip === "0.0.0.0") {
+                                    label = "(所有接口)";
+                                  } else if (
+                                    !networkInfo?.all_ips.includes(ip)
+                                  ) {
+                                    label = "(已配置)";
+                                  }
+
+                                  return (
+                                    <Select.Item
+                                      key={ip}
+                                      value={ip}
+                                      className="relative flex cursor-pointer select-none items-center rounded-[14px] px-8 py-2.5 text-sm outline-none transition hover:bg-slate-100 focus:bg-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                                    >
+                                      <Select.ItemIndicator className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+                                        <Check className="h-4 w-4" />
+                                      </Select.ItemIndicator>
+                                      <Select.ItemText>
+                                        <span className="flex items-center gap-2">
+                                          <span className="font-mono">
+                                            {ip}
+                                          </span>
+                                          <span className="text-xs text-slate-500">
+                                            {label}
+                                          </span>
+                                        </span>
+                                      </Select.ItemText>
+                                    </Select.Item>
+                                  );
+                                })}
+                              </Select.Viewport>
+                            </Select.Content>
+                          </Select.Portal>
+                        </Select.Root>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)]">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-500">
+                            端口
+                          </label>
+                          <input
+                            type="number"
+                            value={editPort}
+                            onChange={(e) => setEditPort(e.target.value)}
+                            className={INPUT_CLASS_NAME}
+                            disabled={status?.running}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-medium text-slate-500">
+                            API Key
+                          </label>
+                          <input
+                            type="text"
+                            value={editApiKey}
+                            onChange={(e) => setEditApiKey(e.target.value)}
+                            className={INPUT_CLASS_NAME}
+                            disabled={status?.running}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-[18px] border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs leading-5 text-slate-500">
+                    {!status?.running
+                      ? "仅本机模式只允许当前设备访问；内网共享模式会对同网段设备开放。建议完成地址与 API Key 配置后再开启共享。"
+                      : `当前处于${gatewayModeLabel}模式。为了避免影响协作者访问，修改配置前请先关闭共享。`}
+                  </div>
+                  {hostMismatch ? (
+                    <div className="rounded-[18px] border border-sky-200 bg-sky-50/80 px-4 py-3 text-xs leading-5 text-sky-700">
+                      配置的共享地址 {config?.server.host}{" "}
+                      当前不可用，运行时已自动切换到
+                      {status?.host}。关闭共享后可更新为新的可用地址。
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </GatewayPanel>
+
+            <GatewayPanel
+              icon={ShieldCheck}
+              title="默认 Provider"
+              description="选择网关默认转发的服务来源，并直接查看当前可用凭证。"
+              aside={
+                providerSwitchMsg ? (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+                    <Check className="h-3 w-3" />
+                    {providerSwitchMsg}
+                  </span>
+                ) : null
+              }
+            >
+              {availableProviders.length === 0 ? (
+                <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50/70 px-4 py-8 text-center text-sm text-slate-500">
+                  暂无可用凭证，请先在凭证池或 API Key 设置中添加凭证。
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  <div className="flex flex-wrap gap-2.5">
+                    {availableProviders.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => handleSetDefaultProvider(p.id)}
+                        disabled={loading}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-full border px-3.5 py-2 text-sm transition shadow-sm",
+                          defaultProvider === p.id
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900",
+                          loading && "cursor-not-allowed opacity-50",
+                        )}
+                      >
+                        <ProviderIcon
+                          providerType={
+                            p.iconType as Parameters<
+                              typeof ProviderIcon
+                            >[0]["providerType"]
+                          }
+                          size={14}
+                        />
+                        {p.label}
+                        <span
+                          className={cn(
+                            "text-xs",
+                            defaultProvider === p.id
+                              ? "text-white/70"
+                              : "text-slate-400",
+                          )}
+                        >
+                          {p.totalCount}
+                          {p.source === "both"
+                            ? " 混合"
+                            : p.source === "api_key"
+                              ? " Key"
+                              : ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {(() => {
+                    const poolProviderType =
+                      defaultProvider === "codex_oauth"
+                        ? "codex"
+                        : defaultProvider;
+                    const currentOverview = poolOverview.find(
+                      (o) => o.provider_type === poolProviderType,
+                    );
+                    const oauthCredentials = (
+                      currentOverview?.credentials || []
+                    ).filter((cred) => !cred.is_disabled);
+                    const matchingApiKeyProviders =
+                      defaultProvider === "codex_oauth"
+                        ? []
+                        : apiKeyProviders.filter((p) => {
+                            if (p.id === defaultProvider && p.enabled) {
+                              return true;
+                            }
+                            const mappedId = mapApiKeyProviderToId(p.type);
+                            return mappedId === defaultProvider && p.enabled;
+                          });
+                    const apiKeys = matchingApiKeyProviders.flatMap((p) =>
+                      p.api_keys.filter((k) => k.enabled),
+                    );
+
+                    if (oauthCredentials.length === 0 && apiKeys.length === 0) {
+                      return (
+                        <div className="rounded-[22px] border border-dashed border-slate-300 bg-slate-50/70 px-4 py-8 text-center text-sm text-slate-500">
+                          当前 Provider 暂无可用凭证，请先补充账号或 API Key。
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        {oauthCredentials.length > 0 ? (
+                          <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-semibold text-slate-900">
+                                OAuth 凭证
+                              </p>
+                              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                                {oauthCredentials.length} 个
+                              </span>
+                            </div>
+                            <div className="mt-4 space-y-2">
+                              {oauthCredentials.map((cred) => (
+                                <div
+                                  key={cred.uuid}
+                                  className="flex items-center justify-between rounded-[18px] border border-slate-200 bg-white px-3 py-3 text-sm"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={cn(
+                                        "h-2.5 w-2.5 rounded-full",
+                                        cred.is_healthy
+                                          ? "bg-emerald-500"
+                                          : "bg-amber-400",
+                                      )}
+                                    />
+                                    <span className="text-slate-700">
+                                      {cred.name || cred.uuid.slice(0, 8)}
+                                    </span>
+                                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                                      OAuth
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-slate-500">
+                                    使用 {cred.usage_count} 次
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </article>
+                        ) : null}
+
+                        {apiKeys.length > 0 ? (
+                          <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-semibold text-slate-900">
+                                API Key
+                              </p>
+                              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                                {apiKeys.length} 个
+                              </span>
+                            </div>
+                            <div className="mt-4 space-y-2">
+                              {apiKeys.map((key) => (
+                                <div
+                                  key={key.id}
+                                  className="flex items-center justify-between rounded-[18px] border border-slate-200 bg-white px-3 py-3 text-sm"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                                    <span className="text-slate-700">
+                                      {key.alias || key.api_key_masked}
+                                    </span>
+                                    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-medium text-violet-700">
+                                      API Key
+                                    </span>
+                                  </div>
+                                  <span className="text-xs text-slate-500">
+                                    使用 {key.usage_count} 次
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </article>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </GatewayPanel>
+
+            <GatewayPanel
+              icon={Zap}
+              title="网关 API 测试"
+              description="根据默认 Provider 自动切换协议与端点，直接验证当前网关是否可用。"
+              aside={
+                <button
+                  type="button"
+                  onClick={runAllTests}
+                  disabled={!status?.running || testEndpoints.length === 0}
+                  className={BUTTON_PRIMARY_CLASS_NAME}
+                >
+                  <Play className="h-4 w-4" />
+                  测试全部
+                </button>
+              }
+            >
+              <div className="space-y-5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+                  <span className="text-sm font-medium text-slate-500">
+                    测试模型
+                  </span>
+                  <Select.Root value={testModel} onValueChange={setTestModel}>
+                    <Select.Trigger
+                      className={cn(
+                        INPUT_CLASS_NAME,
+                        "inline-flex min-w-[320px] items-center justify-between gap-2",
+                      )}
+                    >
+                      <Select.Value placeholder="选择模型..." />
                       <Select.Icon>
                         <ChevronDown className="h-4 w-4 opacity-50" />
                       </Select.Icon>
@@ -1366,706 +1921,457 @@ export function ApiServerPage({ hideHeader = false }: ApiServerPageProps) {
                         side="bottom"
                         align="start"
                         sideOffset={4}
-                        className="z-50 min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-border bg-white dark:bg-gray-900 text-foreground shadow-lg"
+                        className="z-50 max-h-[300px] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-[18px] border border-slate-200 bg-white text-slate-700 shadow-lg"
                       >
-                        <Select.Viewport className="p-1 bg-white dark:bg-gray-900">
-                          {hostOptions.map((ip) => {
-                            // 确定 IP 类型标签
-                            let label = "(局域网)";
-                            if (ip === "127.0.0.1") {
-                              label = "(仅本机)";
-                            } else if (ip === "0.0.0.0") {
-                              label = "(所有接口)";
-                            } else if (!networkInfo?.all_ips.includes(ip)) {
-                              label = "(已配置)";
-                            }
-                            return (
-                              <Select.Item
-                                key={ip}
-                                value={ip}
-                                className="relative flex cursor-pointer select-none items-center rounded-sm px-8 py-2.5 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-                              >
-                                <Select.ItemIndicator className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-                                  <Check className="h-4 w-4" />
-                                </Select.ItemIndicator>
-                                <Select.ItemText>
-                                  <span className="flex items-center gap-2">
-                                    <span className="font-mono">{ip}</span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {label}
-                                    </span>
+                        <Select.Viewport className="p-1">
+                          {allModels.map((model) => (
+                            <Select.Item
+                              key={model.id}
+                              value={model.id}
+                              className="relative flex cursor-pointer select-none items-center rounded-[14px] px-8 py-2.5 text-sm outline-none transition hover:bg-slate-100 focus:bg-slate-100 data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                            >
+                              <Select.ItemIndicator className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+                                <Check className="h-4 w-4" />
+                              </Select.ItemIndicator>
+                              <Select.ItemText>
+                                <span className="flex items-center gap-2">
+                                  <span>{model.display_name}</span>
+                                  <span className="text-xs text-slate-400">
+                                    {model.provider_name}
                                   </span>
-                                </Select.ItemText>
-                              </Select.Item>
-                            );
-                          })}
+                                  <span
+                                    className={cn(
+                                      "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                                      model.tier === "max"
+                                        ? "bg-violet-100 text-violet-700"
+                                        : model.tier === "pro"
+                                          ? "bg-sky-100 text-sky-700"
+                                          : "bg-slate-100 text-slate-600",
+                                    )}
+                                  >
+                                    {model.tier}
+                                  </span>
+                                </span>
+                              </Select.ItemText>
+                            </Select.Item>
+                          ))}
                         </Select.Viewport>
                       </Select.Content>
                     </Select.Portal>
                   </Select.Root>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">端口:</span>
-                  <input
-                    type="number"
-                    value={editPort}
-                    onChange={(e) => setEditPort(e.target.value)}
-                    className="w-20 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={status?.running}
-                  />
+
+                <div className="space-y-3">
+                  {testEndpoints.map((endpoint) => {
+                    const result = testResults[endpoint.id];
+                    const isExpanded = expandedTest === endpoint.id;
+                    const curlCmd = getCurlCommand(endpoint);
+                    const proxycastDebugHeaders = Object.entries(
+                      result?.responseHeaders || {},
+                    ).filter(([key]) =>
+                      key.toLowerCase().startsWith("x-proxycast-"),
+                    );
+
+                    return (
+                      <article
+                        key={endpoint.id}
+                        className="rounded-[22px] border border-slate-200/80 bg-slate-50/60"
+                      >
+                        <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <span
+                              className={cn(
+                                "rounded-full px-2.5 py-1 text-xs font-medium",
+                                endpoint.method === "GET"
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-sky-100 text-sky-700",
+                              )}
+                            >
+                              {endpoint.method}
+                            </span>
+                            <span className="text-sm font-semibold text-slate-900">
+                              {endpoint.name}
+                            </span>
+                            <code className="text-xs text-slate-500">
+                              {endpoint.path}
+                            </code>
+                            {getStatusBadge(result)}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => copyCommand(endpoint.id, curlCmd)}
+                              className={cn(
+                                BUTTON_SECONDARY_CLASS_NAME,
+                                "h-10 rounded-full px-3",
+                              )}
+                              title="复制 curl 命令"
+                            >
+                              {copiedCmd === endpoint.id ? (
+                                <Check className="h-4 w-4 text-emerald-600" />
+                              ) : (
+                                <Copy className="h-4 w-4" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => runTest(endpoint)}
+                              disabled={
+                                !status?.running || result?.status === "loading"
+                              }
+                              className={BUTTON_PRIMARY_CLASS_NAME}
+                            >
+                              测试
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedTest(isExpanded ? null : endpoint.id)
+                              }
+                              className={cn(
+                                BUTTON_SECONDARY_CLASS_NAME,
+                                "h-10 rounded-full px-3",
+                              )}
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="h-4 w-4" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {isExpanded ? (
+                          <div className="border-t border-slate-200/80 p-4">
+                            <div className="space-y-3">
+                              <div>
+                                <p className="mb-1 text-xs font-medium text-slate-500">
+                                  curl 命令
+                                </p>
+                                <pre className="overflow-x-auto rounded-[18px] bg-white p-3 text-xs text-slate-700">
+                                  {curlCmd}
+                                </pre>
+                              </div>
+                              {result?.response ? (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium text-slate-500">
+                                    响应{" "}
+                                    {result.httpStatus &&
+                                      `(HTTP ${result.httpStatus})`}
+                                  </p>
+                                  <pre
+                                    className={cn(
+                                      "max-h-40 overflow-x-auto rounded-[18px] p-3 text-xs",
+                                      result.status === "success"
+                                        ? "bg-emerald-50 text-emerald-900"
+                                        : "bg-rose-50 text-rose-900",
+                                    )}
+                                  >
+                                    {(() => {
+                                      try {
+                                        return JSON.stringify(
+                                          JSON.parse(result.response),
+                                          null,
+                                          2,
+                                        );
+                                      } catch {
+                                        return result.response || "(空响应)";
+                                      }
+                                    })()}
+                                  </pre>
+                                </div>
+                              ) : null}
+                              {proxycastDebugHeaders.length > 0 ? (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium text-slate-500">
+                                    调试头（x-proxycast-*）
+                                  </p>
+                                  <div className="space-y-1 rounded-[18px] bg-white p-3 text-xs">
+                                    {proxycastDebugHeaders.map(
+                                      ([key, value]) => (
+                                        <div
+                                          key={key}
+                                          className="flex items-start justify-between gap-3"
+                                        >
+                                          <code className="text-slate-500">
+                                            {key}
+                                          </code>
+                                          <code className="break-all text-right text-slate-700">
+                                            {value}
+                                          </code>
+                                        </div>
+                                      ),
+                                    )}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
+                        ) : null}
+                      </article>
+                    );
+                  })}
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">API Key:</span>
-                  <input
-                    type="text"
-                    value={editApiKey}
-                    onChange={(e) => setEditApiKey(e.target.value)}
-                    className="w-40 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={status?.running}
-                  />
-                </div>
-                <button
-                  onClick={handleSaveServerConfig}
-                  disabled={loading || status?.running}
-                  className="rounded-md border border-input bg-background px-4 py-1.5 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  title={status?.running ? "请先关闭共享再修改配置" : ""}
-                >
-                  保存
-                </button>
               </div>
-            </div>
-            {!status?.running && (
-              <div className="mt-3 flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                <span>ℹ️</span>
-                <span>
-                  仅本机模式仅允许当前设备访问；内网共享模式会对同网段设备开放
-                </span>
-              </div>
-            )}
-            {status?.running && (
-              <div className="mt-3 flex items-center gap-2 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                <span>ℹ️</span>
-                <span>
-                  当前处于{gatewayMode === "local" ? "仅本机" : "内网共享"}
-                  模式。修改配置需要先关闭共享
-                </span>
-              </div>
-            )}
-            {hostMismatch && (
-              <div className="mt-3 flex items-center gap-2 rounded-md bg-blue-50 dark:bg-blue-950/20 px-3 py-2 text-xs text-blue-700 dark:text-blue-400">
-                <span>ℹ️</span>
-                <span>
-                  配置的共享地址 {config?.server.host} 不可用，已自动切换到{" "}
-                  {status?.host}。关闭共享后可更新配置。
-                </span>
-              </div>
-            )}
+            </GatewayPanel>
           </div>
 
-          {/* 观测面板（对标 ClawRouter） */}
-          <div className="order-last rounded-lg border bg-card p-4 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-medium">观测面板</h3>
-              <span className="text-xs text-muted-foreground">
-                实时统计（每 3 秒刷新）
-              </span>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="rounded-md border bg-muted/30 px-3 py-2">
-                <p className="text-xs text-muted-foreground">最近1分钟错误率</p>
-                <p className="text-sm font-medium">
-                  {((status?.error_rate_1m ?? 0) * 100).toFixed(1)}%
-                </p>
-              </div>
-              <div className="rounded-md border bg-muted/30 px-3 py-2">
-                <p className="text-xs text-muted-foreground">
-                  最近1分钟 P95 延迟
-                </p>
-                <p className="text-sm font-medium">
-                  {status?.p95_latency_ms_1m != null
-                    ? `${status.p95_latency_ms_1m}ms`
-                    : "-"}
-                </p>
-              </div>
-              <div className="rounded-md border bg-muted/30 px-3 py-2">
-                <p className="text-xs text-muted-foreground">
-                  活跃请求（近似）
-                </p>
-                <p className="text-sm font-medium">
-                  {status?.active_requests ?? 0}
-                </p>
-              </div>
-              <div className="rounded-md border bg-muted/30 px-3 py-2">
-                <p className="text-xs text-muted-foreground">
-                  熔断上游数（近似）
-                </p>
-                <p className="text-sm font-medium">
-                  {status?.open_circuit_count ?? 0}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
-              <div className="rounded-md border p-3 space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  响应缓存（非流式）
-                </p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>命中：{status?.response_cache?.hits ?? 0}</div>
-                  <div>未命中：{status?.response_cache?.misses ?? 0}</div>
-                  <div>缓存条目：{status?.response_cache?.size ?? 0}</div>
-                  <div>淘汰次数：{status?.response_cache?.evictions ?? 0}</div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  缓存命中率：{cacheHitRate.toFixed(1)}%
-                </p>
-              </div>
-
-              <div className="rounded-md border p-3 space-y-2">
-                <p className="text-xs text-muted-foreground">请求去重</p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    新请求：
-                    {status?.request_dedup?.check_new_total ?? 0}
+          <div className="space-y-6">
+            <GatewayPanel
+              icon={Activity}
+              title="观测面板"
+              description="按分钟观察错误率、延迟、缓存与能力路由状态，便于判断网关是否健康。"
+              aside={
+                <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
+                  每 3 秒刷新
+                </span>
+              }
+            >
+              <div className="space-y-5">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                    <p className="text-xs font-medium text-slate-500">
+                      最近 1 分钟错误率
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                      {((status?.error_rate_1m ?? 0) * 100).toFixed(1)}%
+                    </p>
                   </div>
-                  <div>
-                    In-Flight 等待：
-                    {status?.request_dedup?.check_in_progress_total ?? 0}
+                  <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                    <p className="text-xs font-medium text-slate-500">
+                      最近 1 分钟 P95 延迟
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                      {status?.p95_latency_ms_1m != null
+                        ? `${status.p95_latency_ms_1m}ms`
+                        : "-"}
+                    </p>
                   </div>
-                  <div>
-                    直接回放：
-                    {status?.request_dedup?.check_completed_total ?? 0}
+                  <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                    <p className="text-xs font-medium text-slate-500">
+                      活跃请求
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                      {status?.active_requests ?? 0}
+                    </p>
                   </div>
-                  <div>
-                    等待回放成功：
-                    {status?.request_dedup?.wait_success_total ?? 0}
-                  </div>
-                  <div>
-                    等待超时：
-                    {status?.request_dedup?.wait_timeout_total ?? 0}
-                  </div>
-                  <div>
-                    当前 In-Flight：
-                    {status?.request_dedup?.inflight_size ?? 0}
+                  <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                    <p className="text-xs font-medium text-slate-500">
+                      熔断上游
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                      {status?.open_circuit_count ?? 0}
+                    </p>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  去重回放率：{requestDedupReplayRate.toFixed(1)}%
-                </p>
-              </div>
 
-              <div className="rounded-md border p-3 space-y-2">
-                <p className="text-xs text-muted-foreground">幂等闭环</p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    新键：
-                    {status?.idempotency?.check_new_total ?? 0}
-                  </div>
-                  <div>
-                    处理中冲突：
-                    {status?.idempotency?.check_in_progress_total ?? 0}
-                  </div>
-                  <div>
-                    已完成回放：
-                    {status?.idempotency?.check_completed_total ?? 0}
-                  </div>
-                  <div>
-                    完成写入：
-                    {status?.idempotency?.complete_total ?? 0}
-                  </div>
-                  <div>
-                    当前 In-Progress：
-                    {status?.idempotency?.in_progress_size ?? 0}
-                  </div>
-                  <div>
-                    当前 Completed：
-                    {status?.idempotency?.completed_size ?? 0}
-                  </div>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  幂等回放率：{idempotencyReplayRate.toFixed(1)}%
-                </p>
-              </div>
+                <div className="grid gap-4">
+                  <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      响应缓存
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-600">
+                      <div>命中：{status?.response_cache?.hits ?? 0}</div>
+                      <div>未命中：{status?.response_cache?.misses ?? 0}</div>
+                      <div>缓存条目：{status?.response_cache?.size ?? 0}</div>
+                      <div>
+                        淘汰次数：{status?.response_cache?.evictions ?? 0}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                      缓存命中率：{cacheHitRate.toFixed(1)}%
+                    </p>
+                  </article>
 
-              <div className="rounded-md border p-3 space-y-2">
-                <p className="text-xs text-muted-foreground">能力路由与回退</p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div>
-                    过滤评估：
-                    {status?.capability_routing?.filter_eval_total ?? 0}
-                  </div>
-                  <div>
-                    过滤排除：
-                    {status?.capability_routing?.filter_excluded_total ?? 0}
-                  </div>
-                  <div>
-                    Provider 回退：
-                    {status?.capability_routing?.provider_fallback_total ?? 0}
-                  </div>
-                  <div>
-                    模型回退：
-                    {status?.capability_routing?.model_fallback_total ?? 0}
-                  </div>
-                  <div>
-                    候选全排空：
-                    {status?.capability_routing
-                      ?.all_candidates_excluded_total ?? 0}
-                  </div>
-                  <div>
-                    原因样本：
-                    {capabilityExcludedReasonTotal}
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                  <span>
-                    tools:{" "}
-                    {status?.capability_routing?.filter_excluded_tools_total ??
-                      0}
-                  </span>
-                  <span>
-                    vision:{" "}
-                    {status?.capability_routing?.filter_excluded_vision_total ??
-                      0}
-                  </span>
-                  <span>
-                    context:{" "}
-                    {status?.capability_routing
-                      ?.filter_excluded_context_total ?? 0}
-                  </span>
+                  <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      请求去重
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-600">
+                      <div>
+                        新请求：{status?.request_dedup?.check_new_total ?? 0}
+                      </div>
+                      <div>
+                        In-Flight 等待：
+                        {status?.request_dedup?.check_in_progress_total ?? 0}
+                      </div>
+                      <div>
+                        直接回放：
+                        {status?.request_dedup?.check_completed_total ?? 0}
+                      </div>
+                      <div>
+                        等待回放成功：
+                        {status?.request_dedup?.wait_success_total ?? 0}
+                      </div>
+                      <div>
+                        等待超时：
+                        {status?.request_dedup?.wait_timeout_total ?? 0}
+                      </div>
+                      <div>
+                        当前 In-Flight：
+                        {status?.request_dedup?.inflight_size ?? 0}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                      去重回放率：{requestDedupReplayRate.toFixed(1)}%
+                    </p>
+                  </article>
+
+                  <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      幂等闭环
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-600">
+                      <div>
+                        新键：{status?.idempotency?.check_new_total ?? 0}
+                      </div>
+                      <div>
+                        处理中冲突：
+                        {status?.idempotency?.check_in_progress_total ?? 0}
+                      </div>
+                      <div>
+                        已完成回放：
+                        {status?.idempotency?.check_completed_total ?? 0}
+                      </div>
+                      <div>
+                        完成写入：
+                        {status?.idempotency?.complete_total ?? 0}
+                      </div>
+                      <div>
+                        当前 In-Progress：
+                        {status?.idempotency?.in_progress_size ?? 0}
+                      </div>
+                      <div>
+                        当前 Completed：
+                        {status?.idempotency?.completed_size ?? 0}
+                      </div>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">
+                      幂等回放率：{idempotencyReplayRate.toFixed(1)}%
+                    </p>
+                  </article>
+
+                  <article className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      能力路由与回退
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-600">
+                      <div>
+                        过滤评估：
+                        {status?.capability_routing?.filter_eval_total ?? 0}
+                      </div>
+                      <div>
+                        过滤排除：
+                        {status?.capability_routing?.filter_excluded_total ?? 0}
+                      </div>
+                      <div>
+                        Provider 回退：
+                        {status?.capability_routing?.provider_fallback_total ??
+                          0}
+                      </div>
+                      <div>
+                        模型回退：
+                        {status?.capability_routing?.model_fallback_total ?? 0}
+                      </div>
+                      <div>
+                        候选全排空：
+                        {status?.capability_routing
+                          ?.all_candidates_excluded_total ?? 0}
+                      </div>
+                      <div>原因样本：{capabilityExcludedReasonTotal}</div>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500">
+                      <span>
+                        tools：
+                        {status?.capability_routing
+                          ?.filter_excluded_tools_total ?? 0}
+                      </span>
+                      <span>
+                        vision：
+                        {status?.capability_routing
+                          ?.filter_excluded_vision_total ?? 0}
+                      </span>
+                      <span>
+                        context：
+                        {status?.capability_routing
+                          ?.filter_excluded_context_total ?? 0}
+                      </span>
+                    </div>
+                  </article>
                 </div>
               </div>
-            </div>
+            </GatewayPanel>
 
-            <div className="rounded-md border p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">
-                  诊断接口（`/health?full=true` / `/cache` / `/stats`）
-                </p>
-                <div className="flex items-center gap-2 flex-wrap justify-end">
+            <GatewayPanel
+              icon={Globe2}
+              title="诊断与支持包"
+              description="统一查看诊断 JSON，并在需要时导出支持包协助排障。"
+            >
+              <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
+                    type="button"
                     onClick={fetchDiagnostics}
                     disabled={diagnosticsLoading}
-                    className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                    className={BUTTON_SECONDARY_CLASS_NAME}
                   >
                     {diagnosticsLoading ? "拉取中..." : "拉取诊断"}
                   </button>
                   <button
+                    type="button"
                     onClick={copyDiagnostics}
                     disabled={!diagnostics}
-                    className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                    className={BUTTON_SECONDARY_CLASS_NAME}
                   >
                     {diagnosticsCopied ? "已复制" : "复制 JSON"}
                   </button>
                   {canExportSupportBundle ? (
                     <>
                       <button
+                        type="button"
                         onClick={handleExportSupportBundle}
                         disabled={supportBundleLoading}
-                        className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                        className={BUTTON_SECONDARY_CLASS_NAME}
                       >
                         {supportBundleLoading ? "导出中..." : "导出支持包"}
                       </button>
                       <button
+                        type="button"
                         onClick={handleRevealSupportBundle}
                         disabled={!supportBundleResult?.bundle_path}
-                        className="rounded border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50"
+                        className={BUTTON_SECONDARY_CLASS_NAME}
                       >
                         打开目录
                       </button>
                     </>
                   ) : null}
                 </div>
-              </div>
-              <pre className="rounded bg-muted/40 p-2 text-xs overflow-auto max-h-48">
-                {diagnosticsJson || "点击“拉取诊断”获取当前服务诊断 JSON。"}
-              </pre>
-              <div className="text-xs text-muted-foreground break-all">
-                {canExportSupportBundle
-                  ? supportBundleResult?.bundle_path
-                    ? `最近一次支持包：${supportBundleResult.bundle_path}`
-                    : "支持包会默认导出到桌面；若桌面不可用，则回退到下载目录或系统临时目录。"
-                  : "支持包导出仅在桌面端可用。"}
-              </div>
-            </div>
-          </div>
 
-          {/* Default Provider - 动态显示有凭证的 Provider */}
-          <div className="rounded-lg border bg-card p-4">
-            <div className="flex items-center justify-between mb-3">
-              <span className="font-medium text-sm">默认 Provider</span>
-              {providerSwitchMsg && (
-                <span className="text-xs text-green-600 flex items-center gap-1">
-                  <Check className="h-3 w-3" />
-                  {providerSwitchMsg}
-                </span>
-              )}
-            </div>
+                <pre className="max-h-[360px] overflow-auto rounded-[22px] bg-slate-50/80 p-4 text-xs text-slate-700">
+                  {diagnosticsJson || "点击“拉取诊断”获取当前服务诊断 JSON。"}
+                </pre>
 
-            {availableProviders.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
-                暂无可用凭证，请先在凭证池或 API Key 设置中添加凭证
-              </div>
-            ) : (
-              <div className="flex flex-wrap gap-2">
-                {availableProviders.map((p) => (
-                  <button
-                    key={p.id}
-                    onClick={() => handleSetDefaultProvider(p.id)}
-                    disabled={loading}
-                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                      defaultProvider === p.id
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground"
-                    } disabled:opacity-50`}
-                  >
-                    <ProviderIcon
-                      providerType={
-                        p.iconType as Parameters<
-                          typeof ProviderIcon
-                        >[0]["providerType"]
-                      }
-                      size={14}
-                    />
-                    {p.label}
-                    <span className="text-xs opacity-70">
-                      ({p.totalCount}
-                      {p.source === "both" && (
-                        <span className="ml-0.5">混合</span>
-                      )}
-                      {p.source === "api_key" && (
-                        <span className="ml-0.5">Key</span>
-                      )}
-                      )
-                    </span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* 当前选中类型的凭证列表 */}
-            {(() => {
-              const _currentProvider = availableProviders.find(
-                (p) => p.id === defaultProvider,
-              );
-              // codex_oauth 在后端对应 codex 凭证池
-              const poolProviderType =
-                defaultProvider === "codex_oauth" ? "codex" : defaultProvider;
-              const currentOverview = poolOverview.find(
-                (o) => o.provider_type === poolProviderType,
-              );
-              const oauthCredentials = (
-                currentOverview?.credentials || []
-              ).filter((cred) => !cred.is_disabled);
-
-              // 获取 API Key 凭证 - 查找所有映射到当前 defaultProvider 的 API Key Provider
-              // 支持两种匹配方式：
-              // 1. 通过 provider.id 直接匹配（用于自定义 Provider）
-              // 2. 通过 type 映射匹配（用于内置 Provider）
-              // 注意：codex_oauth 只显示 OAuth 凭证，不显示 API Key
-              const matchingApiKeyProviders =
-                defaultProvider === "codex_oauth"
-                  ? []
-                  : apiKeyProviders.filter((p) => {
-                      // 首先尝试直接通过 id 匹配
-                      if (p.id === defaultProvider && p.enabled) {
-                        return true;
-                      }
-                      // 然后尝试通过 type 映射匹配
-                      const mappedId = mapApiKeyProviderToId(p.type);
-                      return mappedId === defaultProvider && p.enabled;
-                    });
-              const apiKeys = matchingApiKeyProviders.flatMap((p) =>
-                p.api_keys.filter((k) => k.enabled),
-              );
-
-              if (oauthCredentials.length === 0 && apiKeys.length === 0) {
-                // 只有当没有任何凭证时才显示提示
-                return (
-                  <div className="mt-4 rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
-                    当前类型无可用凭证，请先在凭证池中添加
-                  </div>
-                );
-              }
-
-              return (
-                <div className="mt-4 space-y-3">
-                  {/* OAuth 凭证 */}
-                  {oauthCredentials.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        OAuth 凭证 ({oauthCredentials.length}):
-                      </p>
-                      <div className="space-y-1">
-                        {oauthCredentials.map((cred) => (
-                          <div
-                            key={cred.uuid}
-                            className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={`h-2 w-2 rounded-full ${
-                                  cred.is_healthy
-                                    ? "bg-green-500"
-                                    : "bg-yellow-500"
-                                }`}
-                              />
-                              <span>{cred.name || cred.uuid.slice(0, 8)}</span>
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
-                                OAuth
-                              </span>
-                            </div>
-                            <span className="text-xs text-muted-foreground">
-                              使用 {cred.usage_count} 次
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* API Key 凭证 */}
-                  {apiKeys.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        API Key ({apiKeys.length}):
-                      </p>
-                      <div className="space-y-1">
-                        {apiKeys.map((key) => (
-                          <div
-                            key={key.id}
-                            className="flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className="h-2 w-2 rounded-full bg-green-500" />
-                              <span>{key.alias || key.api_key_masked}</span>
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
-                                API Key
-                              </span>
-                            </div>
-                            <span className="text-xs text-muted-foreground">
-                              使用 {key.usage_count} 次
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                <div className="rounded-[18px] border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs leading-5 text-slate-500">
+                  {canExportSupportBundle
+                    ? supportBundleResult?.bundle_path
+                      ? `最近一次支持包：${supportBundleResult.bundle_path}`
+                      : "支持包默认导出到桌面；若桌面不可用，则回退到下载目录或系统临时目录。"
+                    : "支持包导出仅在桌面端可用。"}
                 </div>
-              );
-            })()}
-          </div>
-
-          {/* API Testing */}
-          <div className="rounded-lg border bg-card p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-semibold">网关 API 测试</h3>
-              <button
-                onClick={runAllTests}
-                disabled={!status?.running || testEndpoints.length === 0}
-                className="flex items-center gap-2 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                <Play className="h-4 w-4" />
-                测试全部
-              </button>
-            </div>
-
-            {/* 模型选择器 */}
-            <div className="mb-4 flex items-center gap-3">
-              <span className="text-sm text-muted-foreground">测试模型:</span>
-              <Select.Root value={testModel} onValueChange={setTestModel}>
-                <Select.Trigger className="inline-flex min-w-[300px] items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1.5 text-sm shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50">
-                  <Select.Value placeholder="选择模型..." />
-                  <Select.Icon>
-                    <ChevronDown className="h-4 w-4 opacity-50" />
-                  </Select.Icon>
-                </Select.Trigger>
-                <Select.Portal>
-                  <Select.Content
-                    position="popper"
-                    side="bottom"
-                    align="start"
-                    sideOffset={4}
-                    className="z-50 max-h-[300px] min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-md border border-border bg-white dark:bg-gray-900 text-foreground shadow-lg"
-                  >
-                    <Select.Viewport className="p-1">
-                      {allModels.map((model) => (
-                        <Select.Item
-                          key={model.id}
-                          value={model.id}
-                          className="relative flex cursor-pointer select-none items-center rounded-sm px-8 py-2 text-sm outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
-                        >
-                          <Select.ItemIndicator className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
-                            <Check className="h-4 w-4" />
-                          </Select.ItemIndicator>
-                          <Select.ItemText>
-                            <span className="flex items-center gap-2">
-                              <span>{model.display_name}</span>
-                              <span className="text-xs opacity-60">
-                                {model.provider_name}
-                              </span>
-                              <span
-                                className={`text-xs px-1.5 py-0.5 rounded ${
-                                  model.tier === "max"
-                                    ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
-                                    : model.tier === "pro"
-                                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                                      : "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400"
-                                }`}
-                              >
-                                {model.tier}
-                              </span>
-                            </span>
-                          </Select.ItemText>
-                        </Select.Item>
-                      ))}
-                    </Select.Viewport>
-                  </Select.Content>
-                </Select.Portal>
-              </Select.Root>
-            </div>
-
-            <div className="space-y-3">
-              {testEndpoints.map((endpoint) => {
-                const result = testResults[endpoint.id];
-                const isExpanded = expandedTest === endpoint.id;
-                const curlCmd = getCurlCommand(endpoint);
-                const proxycastDebugHeaders = Object.entries(
-                  result?.responseHeaders || {},
-                ).filter(([key]) =>
-                  key.toLowerCase().startsWith("x-proxycast-"),
-                );
-
-                return (
-                  <div
-                    key={endpoint.id}
-                    className="rounded-lg border bg-background"
-                  >
-                    <div className="flex items-center justify-between p-3">
-                      <div className="flex items-center gap-3">
-                        <span
-                          className={`rounded px-2 py-0.5 text-xs font-medium ${
-                            endpoint.method === "GET"
-                              ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                              : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                          }`}
-                        >
-                          {endpoint.method}
-                        </span>
-                        <span className="font-medium">{endpoint.name}</span>
-                        <code className="text-xs text-muted-foreground">
-                          {endpoint.path}
-                        </code>
-                        {getStatusBadge(result)}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => copyCommand(endpoint.id, curlCmd)}
-                          className="rounded p-1.5 hover:bg-muted"
-                          title="复制 curl 命令"
-                        >
-                          {copiedCmd === endpoint.id ? (
-                            <Check className="h-4 w-4 text-green-500" />
-                          ) : (
-                            <Copy className="h-4 w-4" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => runTest(endpoint)}
-                          disabled={
-                            !status?.running || result?.status === "loading"
-                          }
-                          className="rounded bg-primary/10 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
-                        >
-                          测试
-                        </button>
-                        <button
-                          onClick={() =>
-                            setExpandedTest(isExpanded ? null : endpoint.id)
-                          }
-                          className="rounded p-1.5 hover:bg-muted"
-                        >
-                          {isExpanded ? (
-                            <ChevronUp className="h-4 w-4" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    </div>
-
-                    {isExpanded && (
-                      <div className="border-t p-3 space-y-3">
-                        <div>
-                          <p className="mb-1 text-xs font-medium text-muted-foreground">
-                            curl 命令
-                          </p>
-                          <pre className="rounded bg-muted p-2 text-xs overflow-x-auto">
-                            {curlCmd}
-                          </pre>
-                        </div>
-                        {result?.response && (
-                          <div>
-                            <p className="mb-1 text-xs font-medium text-muted-foreground">
-                              响应{" "}
-                              {result.httpStatus &&
-                                `(HTTP ${result.httpStatus})`}
-                            </p>
-                            <pre
-                              className={`rounded p-2 text-xs overflow-x-auto max-h-40 ${
-                                result.status === "success"
-                                  ? "bg-green-50 dark:bg-green-950/30"
-                                  : "bg-red-50 dark:bg-red-950/30"
-                              }`}
-                            >
-                              {(() => {
-                                try {
-                                  return JSON.stringify(
-                                    JSON.parse(result.response),
-                                    null,
-                                    2,
-                                  );
-                                } catch {
-                                  return result.response || "(空响应)";
-                                }
-                              })()}
-                            </pre>
-                          </div>
-                        )}
-                        {proxycastDebugHeaders.length > 0 && (
-                          <div>
-                            <p className="mb-1 text-xs font-medium text-muted-foreground">
-                              调试头（x-proxycast-*）
-                            </p>
-                            <div className="rounded bg-muted p-2 text-xs space-y-1">
-                              {proxycastDebugHeaders.map(([key, value]) => (
-                                <div
-                                  key={key}
-                                  className="flex items-start justify-between gap-3"
-                                >
-                                  <code className="text-muted-foreground">
-                                    {key}
-                                  </code>
-                                  <code className="text-right break-all">
-                                    {value}
-                                  </code>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+              </div>
+            </GatewayPanel>
           </div>
         </div>
+      ) : (
+        <GatewayPanel
+          icon={Activity}
+          title="网关日志"
+          description="查看网关与系统日志流，导出或清空当前记录。"
+        >
+          <LogsTab />
+        </GatewayPanel>
       )}
-
-      {/* Logs Tab */}
-      {activeTab === "logs" && <LogsTab />}
     </div>
   );
 }

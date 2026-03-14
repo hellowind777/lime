@@ -27,6 +27,7 @@ import { OpenClawPage } from "./components/openclaw";
 import { RecentImageInsertFloating } from "./components/image-gen/RecentImageInsertFloating";
 import { CreateProjectDialog } from "./components/projects/CreateProjectDialog";
 import { WorkbenchPage } from "./components/workspace";
+import { BrowserRuntimeWorkspace } from "@/features/browser-runtime";
 import {
   ProjectType,
   createProject,
@@ -64,9 +65,9 @@ import {
   ThemeWorkspacePage,
   WorkspaceTheme,
 } from "./types/page";
-import { SettingsTabs } from "./types/settings";
 import { toast } from "sonner";
 import { recordWorkspaceRepair } from "@/lib/workspaceHealthTelemetry";
+import { buildHomeAgentParams } from "@/lib/workspace/navigation";
 
 const AppContainer = styled.div`
   display: flex;
@@ -136,7 +137,9 @@ function isWindowsNavigatorPlatform(): boolean {
 function AppContent() {
   const [showSplash, setShowSplash] = useState(true);
   const [currentPage, setCurrentPage] = useState<Page>("agent");
-  const [pageParams, setPageParams] = useState<PageParams>({});
+  const [pageParams, setPageParams] = useState<PageParams>(() =>
+    buildHomeAgentParams(),
+  );
   const [agentHasMessages, setAgentHasMessages] = useState(false);
   const { needsOnboarding, completeOnboarding } = useOnboardingState();
 
@@ -181,35 +184,6 @@ function AppContent() {
       ) {
         setCurrentPage("style");
         setPageParams({ section: "library" } as StylePageParams);
-        return;
-      }
-
-      if (page === "workspace") {
-        setCurrentPage("agent");
-        setPageParams(
-          (params as AgentPageParams | undefined) || {
-            theme: "general",
-            lockTheme: false,
-          },
-        );
-        return;
-      }
-
-      if (page === "api-server") {
-        setCurrentPage("settings");
-        setPageParams({ tab: SettingsTabs.ApiServer } as SettingsPageParams);
-        return;
-      }
-
-      if (page === "provider-pool") {
-        setCurrentPage("settings");
-        setPageParams({ tab: SettingsTabs.Providers } as SettingsPageParams);
-        return;
-      }
-
-      if (page === "mcp") {
-        setCurrentPage("settings");
-        setPageParams({ tab: SettingsTabs.McpServer } as SettingsPageParams);
         return;
       }
 
@@ -509,7 +483,7 @@ function AppContent() {
         >
           {currentPage === "agent" ? (
             <AgentChatPage
-              key={`${(pageParams as AgentPageParams).projectId || ""}:${(pageParams as AgentPageParams).contentId || ""}:${(pageParams as AgentPageParams).theme || ""}:${(pageParams as AgentPageParams).lockTheme ? "1" : "0"}:${(pageParams as AgentPageParams).newChatAt ?? 0}`}
+              key={`${(pageParams as AgentPageParams).projectId || ""}:${(pageParams as AgentPageParams).contentId || ""}:${(pageParams as AgentPageParams).theme || ""}:${(pageParams as AgentPageParams).lockTheme ? "1" : "0"}:${(pageParams as AgentPageParams).agentEntry || "claw"}:${(pageParams as AgentPageParams).immersiveHome ? "immersive" : "standard"}:${(pageParams as AgentPageParams).newChatAt ?? 0}`}
               onNavigate={handleNavigate}
               projectId={(pageParams as AgentPageParams).projectId}
               contentId={(pageParams as AgentPageParams).contentId}
@@ -525,6 +499,11 @@ function AppContent() {
               theme={(pageParams as AgentPageParams).theme}
               lockTheme={(pageParams as AgentPageParams).lockTheme}
               fromResources={(pageParams as AgentPageParams).fromResources}
+              agentEntry={(pageParams as AgentPageParams).agentEntry}
+              showChatPanel={
+                (pageParams as AgentPageParams).agentEntry !== "new-task" &&
+                !(pageParams as AgentPageParams).immersiveHome
+              }
               newChatAt={(pageParams as AgentPageParams).newChatAt}
               onHasMessagesChange={setAgentHasMessages}
             />
@@ -572,6 +551,10 @@ function AppContent() {
 
         <PageWrapper $isActive={currentPage === "tools"}>
           <ToolsPage onNavigate={handleNavigate} />
+        </PageWrapper>
+
+        <PageWrapper $isActive={currentPage === "browser-runtime"}>
+          <BrowserRuntimeWorkspace active={currentPage === "browser-runtime"} />
         </PageWrapper>
 
         <PageWrapper $isActive={currentPage === "plugins"}>
@@ -659,6 +642,7 @@ function AppContent() {
   const shouldHideSidebarForAgent =
     currentPage === "agent" &&
     (Boolean(currentAgentParams.fromResources) ||
+      Boolean(currentAgentParams.immersiveHome) ||
       (agentHasMessages && Boolean(currentAgentParams.lockTheme)));
 
   const shouldShowAppSidebar =

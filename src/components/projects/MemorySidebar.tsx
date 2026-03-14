@@ -23,7 +23,12 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
   ProjectMemory,
@@ -32,7 +37,11 @@ import {
   StyleGuide,
   getProjectMemory,
 } from "@/lib/api/memory";
-import { buildStyleSummary, getStyleCategoryLabel, getStyleProfileFromGuide } from "@/lib/style-guide";
+import {
+  buildStyleSummary,
+  getStyleCategoryLabel,
+  getStyleProfileFromGuide,
+} from "@/lib/style-guide";
 import { StyleGuidePanel } from "./memory/StyleGuidePanel";
 
 interface MemorySidebarProps {
@@ -75,12 +84,17 @@ export function MemorySidebar({ projectId, className }: MemorySidebarProps) {
       return next;
     });
   };
+  const headerBadges = [
+    `${memory?.characters.length || 0} 个角色`,
+    memory?.world_building ? "已整理世界观" : "待补世界观",
+    memory?.style_guide ? "已配置项目风格" : "待设置项目风格",
+  ];
 
   if (loading) {
     return (
       <div
         className={cn(
-          "flex items-center justify-center h-40 border-l bg-muted/30",
+          "flex h-40 items-center justify-center border-l border-slate-200/70 bg-[linear-gradient(180deg,rgba(248,250,252,0.92)_0%,rgba(241,245,249,0.88)_100%)]",
           className,
         )}
       >
@@ -90,34 +104,62 @@ export function MemorySidebar({ projectId, className }: MemorySidebarProps) {
   }
 
   return (
-    <div className={cn("border-l bg-muted/30 flex flex-col", className)}>
-      {/* 头部 */}
-      <div className="flex items-center justify-between gap-2 p-3 border-b">
-        <span className="text-sm font-medium">项目记忆</span>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => setStyleGuideDialogOpen(true)}
-          >
-            风格
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={loadMemory}
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
+    <div
+      className={cn(
+        "flex h-full flex-col overflow-hidden border-l border-slate-200/70 bg-[linear-gradient(180deg,rgba(248,250,252,0.96)_0%,rgba(255,255,255,0.98)_34%,rgba(241,245,249,0.94)_100%)]",
+        className,
+      )}
+    >
+      <div className="relative border-b border-white/80 px-4 py-4">
+        <div className="pointer-events-none absolute -right-10 top-0 h-24 w-24 rounded-full bg-sky-200/20 blur-3xl" />
+        <div className="pointer-events-none absolute left-[-28px] top-[-18px] h-20 w-20 rounded-full bg-emerald-200/20 blur-3xl" />
+        <div className="relative space-y-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-xs font-medium text-slate-500">
+                项目记忆
+              </div>
+              <div className="text-sm font-semibold text-slate-900">
+                角色、世界观与风格基线
+              </div>
+              <p className="text-xs leading-5 text-slate-500">
+                编辑时快速查看项目事实，并随时进入默认风格工作台。
+              </p>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-full border-white/90 bg-white/85 px-3 text-xs text-slate-700 shadow-sm shadow-slate-950/5"
+                onClick={() => setStyleGuideDialogOpen(true)}
+              >
+                风格工作台
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 rounded-full text-slate-500 hover:bg-white/70 hover:text-slate-700"
+                onClick={loadMemory}
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {headerBadges.map((item) => (
+              <span
+                key={item}
+                className="rounded-full border border-white/90 bg-white/80 px-3 py-1 text-[11px] font-medium text-slate-600 shadow-sm shadow-slate-950/5"
+              >
+                {item}
+              </span>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* 内容 */}
       <ScrollArea className="flex-1">
-        <div className="p-2 space-y-2">
-          {/* 角色 */}
+        <div className="space-y-3 p-3">
           <SidebarSection
             title="角色"
             icon={<Users className="h-4 w-4" />}
@@ -132,11 +174,10 @@ export function MemorySidebar({ projectId, className }: MemorySidebarProps) {
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground py-2">暂无角色</p>
+              <p className="py-2 text-xs text-slate-500">暂无角色</p>
             )}
           </SidebarSection>
 
-          {/* 世界观 */}
           <SidebarSection
             title="世界观"
             icon={<Globe className="h-4 w-4" />}
@@ -146,13 +187,10 @@ export function MemorySidebar({ projectId, className }: MemorySidebarProps) {
             {memory?.world_building ? (
               <WorldBuildingItem worldBuilding={memory.world_building} />
             ) : (
-              <p className="text-xs text-muted-foreground py-2">
-                暂无世界观设定
-              </p>
+              <p className="py-2 text-xs text-slate-500">暂无世界观设定</p>
             )}
           </SidebarSection>
 
-          {/* 风格指南 */}
           <SidebarSection
             title="风格指南"
             icon={<Palette className="h-4 w-4" />}
@@ -165,12 +203,14 @@ export function MemorySidebar({ projectId, className }: MemorySidebarProps) {
                 onEdit={() => setStyleGuideDialogOpen(true)}
               />
             ) : (
-              <div className="py-2 space-y-2">
-                <p className="text-xs text-muted-foreground">暂无风格指南</p>
+              <div className="space-y-3 py-2">
+                <p className="text-xs leading-5 text-slate-500">
+                  暂无项目默认风格，建议先从风格库导入一套表达基线。
+                </p>
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-7 text-xs"
+                  className="h-8 rounded-full border-slate-200/80 bg-white text-xs text-slate-700"
                   onClick={() => setStyleGuideDialogOpen(true)}
                 >
                   立即设置风格
@@ -182,11 +222,11 @@ export function MemorySidebar({ projectId, className }: MemorySidebarProps) {
       </ScrollArea>
 
       <Dialog open={styleGuideDialogOpen} onOpenChange={setStyleGuideDialogOpen}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto p-0">
-          <DialogHeader className="border-b px-6 py-4">
+        <DialogContent className="max-h-[92vh] max-w-7xl overflow-y-auto border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96)_0%,rgba(255,255,255,1)_36%,rgba(241,245,249,0.95)_100%)] p-4 lg:p-5">
+          <DialogHeader className="sr-only">
             <DialogTitle>项目默认风格</DialogTitle>
           </DialogHeader>
-          <div className="p-6">
+          <div className="relative">
             <StyleGuidePanel projectId={projectId} />
           </div>
         </DialogContent>
@@ -214,20 +254,33 @@ function SidebarSection({
   children,
 }: SidebarSectionProps) {
   return (
-    <Collapsible open={expanded} onOpenChange={onToggle}>
-      <CollapsibleTrigger className="flex items-center gap-2 w-full p-2 rounded hover:bg-accent/50 text-sm">
+    <Collapsible
+      open={expanded}
+      onOpenChange={onToggle}
+      className="rounded-[22px] border border-white/90 bg-white/84 p-1.5 shadow-sm shadow-slate-950/5"
+    >
+      <CollapsibleTrigger
+        className={cn(
+          "flex w-full items-center gap-2 rounded-[18px] px-3 py-3 text-sm text-slate-700 transition",
+          expanded ? "bg-slate-50/80" : "hover:bg-slate-50/70",
+        )}
+      >
         {expanded ? (
-          <ChevronDown className="h-4 w-4" />
+          <ChevronDown className="h-4 w-4 text-slate-400" />
         ) : (
-          <ChevronRight className="h-4 w-4" />
+          <ChevronRight className="h-4 w-4 text-slate-400" />
         )}
         {icon}
-        <span className="flex-1 text-left">{title}</span>
+        <span className="flex-1 text-left font-medium">{title}</span>
         {count !== undefined && (
-          <span className="text-xs text-muted-foreground">{count}</span>
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">
+            {count}
+          </span>
         )}
       </CollapsibleTrigger>
-      <CollapsibleContent className="pl-8 pr-2">{children}</CollapsibleContent>
+      <CollapsibleContent className="px-2 pb-2 pt-1">
+        {children}
+      </CollapsibleContent>
     </Collapsible>
   );
 }
@@ -239,16 +292,16 @@ interface CharacterItemProps {
 
 function CharacterItem({ character }: CharacterItemProps) {
   return (
-    <div className="p-2 rounded bg-background border text-xs">
-      <div className="flex items-center gap-2 mb-1">
-        <User className="h-3 w-3 text-muted-foreground" />
-        <span className="font-medium">{character.name}</span>
+    <div className="rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-3 py-3 text-xs shadow-sm shadow-slate-950/5">
+      <div className="mb-1 flex items-center gap-2">
+        <User className="h-3 w-3 text-slate-400" />
+        <span className="font-medium text-slate-900">{character.name}</span>
         {character.is_main && (
           <Star className="h-3 w-3 text-yellow-500 fill-yellow-500" />
         )}
       </div>
       {character.description && (
-        <p className="text-muted-foreground line-clamp-2">
+        <p className="line-clamp-2 leading-5 text-slate-500">
           {character.description}
         </p>
       )}
@@ -263,23 +316,27 @@ interface WorldBuildingItemProps {
 
 function WorldBuildingItem({ worldBuilding }: WorldBuildingItemProps) {
   return (
-    <div className="p-2 rounded bg-background border text-xs space-y-2">
+    <div className="space-y-2 rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-3 py-3 text-xs shadow-sm shadow-slate-950/5">
       {worldBuilding.description && (
         <div>
-          <span className="text-muted-foreground">描述：</span>
-          <p className="line-clamp-3">{worldBuilding.description}</p>
+          <span className="text-slate-400">描述：</span>
+          <p className="line-clamp-3 leading-5 text-slate-700">
+            {worldBuilding.description}
+          </p>
         </div>
       )}
       {worldBuilding.era && (
         <div>
-          <span className="text-muted-foreground">时代：</span>
-          <span>{worldBuilding.era}</span>
+          <span className="text-slate-400">时代：</span>
+          <span className="text-slate-700">{worldBuilding.era}</span>
         </div>
       )}
       {worldBuilding.locations && (
         <div>
-          <span className="text-muted-foreground">地点：</span>
-          <p className="line-clamp-2">{worldBuilding.locations}</p>
+          <span className="text-slate-400">地点：</span>
+          <p className="line-clamp-2 leading-5 text-slate-700">
+            {worldBuilding.locations}
+          </p>
         </div>
       )}
     </div>
@@ -297,15 +354,23 @@ function StyleGuideItem({ styleGuide, onEdit }: StyleGuideItemProps) {
   const summary = buildStyleSummary(styleGuide);
 
   return (
-    <div className="p-2 rounded bg-background border text-xs space-y-2">
+    <div className="space-y-3 rounded-[18px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.86)_0%,rgba(255,255,255,0.96)_100%)] px-3 py-3 text-xs shadow-sm shadow-slate-950/5">
       {profile ? (
         <>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-sm">{profile.name}</span>
-            <Badge variant="secondary" className="text-[10px] font-normal">
+            <span className="text-sm font-medium text-slate-900">
+              {profile.name}
+            </span>
+            <Badge
+              variant="secondary"
+              className="border-0 bg-slate-100 text-[10px] font-normal text-slate-600"
+            >
               {getStyleCategoryLabel(profile.category)}
             </Badge>
-            <Badge variant="outline" className="text-[10px] font-normal">
+            <Badge
+              variant="outline"
+              className="border-slate-200/80 bg-white/80 text-[10px] font-normal text-slate-600"
+            >
               强度 {profile.simulationStrength}
             </Badge>
           </div>
@@ -313,7 +378,7 @@ function StyleGuideItem({ styleGuide, onEdit }: StyleGuideItemProps) {
           {summary.length > 0 && (
             <div className="space-y-1">
               {summary.map((item) => (
-                <p key={item} className="text-muted-foreground line-clamp-2">
+                <p key={item} className="line-clamp-2 leading-5 text-slate-500">
                   {item}
                 </p>
               ))}
@@ -323,7 +388,11 @@ function StyleGuideItem({ styleGuide, onEdit }: StyleGuideItemProps) {
           {profile.targetPlatforms.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {profile.targetPlatforms.map((platform) => (
-                <Badge key={platform} variant="outline" className="text-[10px]">
+                <Badge
+                  key={platform}
+                  variant="outline"
+                  className="border-slate-200/80 bg-white/75 text-[10px] text-slate-600"
+                >
                   {platform}
                 </Badge>
               ))}
@@ -332,8 +401,10 @@ function StyleGuideItem({ styleGuide, onEdit }: StyleGuideItemProps) {
 
           {profile.donts.length > 0 && (
             <div>
-              <span className="text-muted-foreground">避免：</span>
-              <span>{profile.donts.slice(0, 3).join("、")}</span>
+              <span className="text-slate-400">避免：</span>
+              <span className="text-slate-700">
+                {profile.donts.slice(0, 3).join("、")}
+              </span>
             </div>
           )}
           {onEdit && (
@@ -341,7 +412,7 @@ function StyleGuideItem({ styleGuide, onEdit }: StyleGuideItemProps) {
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 text-xs"
+                className="h-8 rounded-full border-slate-200/80 bg-white text-xs text-slate-700"
                 onClick={onEdit}
               >
                 编辑风格
@@ -351,12 +422,12 @@ function StyleGuideItem({ styleGuide, onEdit }: StyleGuideItemProps) {
         </>
       ) : (
         <div className="space-y-2">
-          <p className="text-muted-foreground">暂无风格摘要</p>
+          <p className="text-slate-500">暂无风格摘要</p>
           {onEdit && (
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-xs"
+              className="h-8 rounded-full border-slate-200/80 bg-white text-xs text-slate-700"
               onClick={onEdit}
             >
               去设置风格

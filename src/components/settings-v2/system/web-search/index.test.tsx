@@ -161,6 +161,13 @@ describe("WebSearchSettings", () => {
     await flushEffects();
     await flushEffects();
 
+    const text = container.textContent ?? "";
+    expect(text).toContain("SEARCH STACK");
+    expect(text).toContain("联网搜索配置");
+    expect(text).toContain("Provider 凭证");
+    expect(text).toContain("Multi Search Engine");
+    expect(text).toContain("联网图片搜索");
+
     const select = findSelect(container, "web-search-engine");
     expect(select.value).toBe("google");
     const provider = findSelect(container, "web-search-provider");

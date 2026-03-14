@@ -14,12 +14,10 @@ React 组件层，包含 UI 组件和业务组件。
 - `clients/` - 客户端管理组件
 - `config/` - 配置管理组件
 - `connect/` - ProxyCast Connect 组件（中转商 API Key 添加）
-- `extensions/` - 扩展功能组件
 - `flow-monitor/` - LLM 流量监控组件
 - `general-chat/` - 通用对话功能组件（三栏布局：会话列表 + 聊天区域 + 画布）
 - `mcp/` - MCP 服务器管理组件（配置管理、运行时控制、工具/提示词/资源浏览与调用）
 - `plugins/` - 插件管理组件
-- `prompts/` - Prompt 管理组件
 - `provider-pool/` - Provider 凭证池管理组件
 - `resilience/` - 弹性策略配置组件
 - `routing/` - 路由规则配置组件
@@ -38,7 +36,6 @@ React 组件层，包含 UI 组件和业务组件。
 - `HelpTip.tsx` - 帮助提示组件
 - `Modal.tsx` - 模态框组件
 - `Providers.tsx` - Provider 管理页面
-- `Sidebar.tsx` - 旧版侧边栏导航（已弃用）
 - `SplashScreen.tsx` - 启动画面组件
 
 ## 更新提醒

@@ -18,6 +18,8 @@ interface CanvasPanelProps {
   onClose: () => void;
   /** 内容变更回调 */
   onContentChange?: (content: string) => void;
+  /** 头部附加操作 */
+  toolbarActions?: React.ReactNode;
 }
 
 /**
@@ -27,6 +29,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({
   state,
   onClose,
   onContentChange,
+  toolbarActions,
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -61,8 +64,8 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({
     <div className="flex flex-col h-full bg-background border-r border-border">
       {/* 工具栏 */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-border bg-muted/50">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium text-foreground">
             {state.filename ||
               (state.contentType === "code" ? "代码预览" : "内容预览")}
           </span>
@@ -72,7 +75,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1">
           {/* 复制按钮 */}
           <button
             onClick={handleCopy}
@@ -129,6 +132,7 @@ export const CanvasPanel: React.FC<CanvasPanelProps> = ({
               />
             </svg>
           </button>
+          {toolbarActions}
           {/* 关闭按钮 */}
           <button
             onClick={onClose}

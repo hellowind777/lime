@@ -1,6 +1,10 @@
 import { act, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resolveBrowserAssistSessionScopeKey,
+  resolveBrowserAssistSessionStorageKey,
+} from "./utils/browserAssistSession";
 
 const {
   mockUseAgentChatUnified,
@@ -19,6 +23,9 @@ const {
   mockArtifactsAtom,
   mockSelectedArtifactAtom,
   mockSelectedArtifactIdAtom,
+  mockSetArtifactsAtom,
+  mockSetSelectedArtifactIdAtom,
+  mockJotaiState,
   mockGenerateContentCreationPrompt,
   mockIsContentCreationTheme,
   mockEmptyState,
@@ -28,6 +35,11 @@ const {
   mockExecutionRunListThemeWorkbenchHistory,
   mockExecutionRunGet,
   mockSkillExecutionGetDetail,
+  mockSkillsGetAll,
+  mockCanvasWorkbenchLayoutState,
+  mockCanvasWorkbenchLayout,
+  mockLaunchBrowserRuntimeAssist,
+  mockBrowserExecuteAction,
 } = vi.hoisted(() => ({
   mockUseAgentChatUnified: vi.fn(),
   mockUseArtifactAutoPreviewSync: vi.fn(),
@@ -50,6 +62,13 @@ const {
   mockArtifactsAtom: { key: "artifacts" },
   mockSelectedArtifactAtom: { key: "selectedArtifact" },
   mockSelectedArtifactIdAtom: { key: "selectedArtifactId" },
+  mockJotaiState: {
+    artifacts: [] as Array<Record<string, unknown>>,
+    selectedArtifact: null as Record<string, unknown> | null,
+    selectedArtifactId: null as string | null,
+  },
+  mockSetArtifactsAtom: vi.fn(),
+  mockSetSelectedArtifactIdAtom: vi.fn(),
   mockGenerateContentCreationPrompt: vi.fn(() => "mock-system-prompt"),
   mockIsContentCreationTheme: vi.fn(() => false),
   mockEmptyState: vi.fn((props?: { input?: string }) => (
@@ -65,6 +84,54 @@ const {
   mockExecutionRunListThemeWorkbenchHistory: vi.fn(),
   mockExecutionRunGet: vi.fn(),
   mockSkillExecutionGetDetail: vi.fn(),
+  mockSkillsGetAll: vi.fn(),
+  mockCanvasWorkbenchLayoutState: {
+    renderPreview: false,
+  },
+  mockCanvasWorkbenchLayout: vi.fn((props?: Record<string, unknown>) => {
+    const preview =
+      mockCanvasWorkbenchLayoutState.renderPreview &&
+      typeof props?.renderPreview === "function"
+        ? props.renderPreview(
+            {
+              kind: "default-canvas",
+              title: "当前画布草稿",
+              content: "# 新文档\n\n在这里开始编写内容...",
+            },
+            {
+              stackedWorkbenchTrigger: (
+                <button type="button" data-testid="stacked-workbench-trigger">
+                  切换工作台
+                </button>
+              ),
+            },
+          )
+        : null;
+
+    return (
+      <div
+        data-testid="canvas-workbench-layout-mock"
+        data-workspace-root={
+          typeof props?.workspaceRoot === "string" ? props.workspaceRoot : ""
+        }
+        data-artifact-count={
+          Array.isArray(props?.artifacts) ? String(props.artifacts.length) : "0"
+        }
+        data-default-preview-title={
+          props?.defaultPreview &&
+          typeof props.defaultPreview === "object" &&
+          "title" in props.defaultPreview &&
+          typeof props.defaultPreview.title === "string"
+            ? props.defaultPreview.title
+            : ""
+        }
+      >
+        {preview}
+      </div>
+    );
+  }),
+  mockLaunchBrowserRuntimeAssist: vi.fn(),
+  mockBrowserExecuteAction: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -130,6 +197,9 @@ vi.mock(
 vi.mock("./components/ChatNavbar", () => ({
   ChatNavbar: ({
     onToggleHistory,
+    onToggleCanvas,
+    showCanvasToggle,
+    isCanvasOpen,
     onProjectChange,
     showHarnessToggle,
     harnessPanelVisible,
@@ -137,6 +207,9 @@ vi.mock("./components/ChatNavbar", () => ({
     harnessToggleLabel,
   }: {
     onToggleHistory?: () => void;
+    onToggleCanvas?: () => void;
+    showCanvasToggle?: boolean;
+    isCanvasOpen?: boolean;
     onProjectChange?: (projectId: string) => void;
     showHarnessToggle?: boolean;
     harnessPanelVisible?: boolean;
@@ -148,6 +221,8 @@ vi.mock("./components/ChatNavbar", () => ({
       data-show-harness-toggle={showHarnessToggle ? "true" : "false"}
       data-harness-panel-visible={harnessPanelVisible ? "true" : "false"}
       data-harness-toggle-label={harnessToggleLabel || "Harness"}
+      data-show-canvas-toggle={showCanvasToggle ? "true" : "false"}
+      data-canvas-open={isCanvasOpen ? "true" : "false"}
     >
       <button
         type="button"
@@ -158,6 +233,17 @@ vi.mock("./components/ChatNavbar", () => ({
       >
         切换侧边栏
       </button>
+      {showCanvasToggle ? (
+        <button
+          type="button"
+          data-testid="toggle-canvas"
+          onClick={() => {
+            onToggleCanvas?.();
+          }}
+        >
+          {isCanvasOpen ? "折叠画布" : "展开画布"}
+        </button>
+      ) : null}
       <button
         type="button"
         data-testid="set-project"
@@ -293,6 +379,11 @@ vi.mock("./components/EmptyState", () => ({
   EmptyState: (props?: { input?: string }) => mockEmptyState(props),
 }));
 
+vi.mock("./components/CanvasWorkbenchLayout", () => ({
+  CanvasWorkbenchLayout: (props: Record<string, unknown>) =>
+    mockCanvasWorkbenchLayout(props),
+}));
+
 vi.mock("@/components/content-creator/core/StepGuide/StepProgress", () => ({
   StepProgress: () => <div data-testid="step-progress" />,
 }));
@@ -302,7 +393,15 @@ vi.mock("@/components/content-creator/canvas/CanvasFactory", () => ({
 }));
 
 vi.mock("@/components/general-chat/bridge", () => ({
-  CanvasPanel: () => <div data-testid="general-canvas" />,
+  CanvasPanel: ({
+    toolbarActions,
+  }: {
+    toolbarActions?: ReactNode;
+  }) => (
+    <div data-testid="general-canvas">
+      <div data-testid="general-canvas-toolbar">{toolbarActions}</div>
+    </div>
+  ),
   DEFAULT_CANVAS_STATE: {
     isOpen: false,
     contentType: null,
@@ -324,9 +423,24 @@ vi.mock("@/lib/artifact/store", () => ({
 }));
 
 vi.mock("jotai", () => ({
-  useAtomValue: (atom: unknown) =>
-    atom === mockSelectedArtifactAtom ? null : [],
-  useSetAtom: () => vi.fn(),
+  useAtomValue: (atom: unknown) => {
+    if (atom === mockSelectedArtifactAtom) {
+      return mockJotaiState.selectedArtifact;
+    }
+    if (atom === mockArtifactsAtom) {
+      return mockJotaiState.artifacts;
+    }
+    return [];
+  },
+  useSetAtom: (atom: unknown) => {
+    if (atom === mockArtifactsAtom) {
+      return mockSetArtifactsAtom;
+    }
+    if (atom === mockSelectedArtifactIdAtom) {
+      return mockSetSelectedArtifactIdAtom;
+    }
+    return vi.fn();
+  },
 }));
 
 vi.mock("@/components/content-creator/utils/systemPrompt", () => ({
@@ -365,6 +479,17 @@ vi.mock("./utils/workflowMapping", async (importOriginal) => {
 
 vi.mock("@/lib/workspace/navigation", () => ({
   buildHomeAgentParams: vi.fn(() => ({})),
+  buildClawAgentParams: vi.fn((overrides?: Record<string, unknown>) => ({
+    ...(overrides || {}),
+    agentEntry: "claw",
+    theme:
+      typeof overrides?.theme === "string" ? overrides.theme : "general",
+    lockTheme: false,
+    immersiveHome:
+      typeof overrides?.immersiveHome === "boolean"
+        ? overrides.immersiveHome
+        : false,
+  })),
 }));
 
 vi.mock("@/lib/api/project", () => ({
@@ -384,13 +509,25 @@ vi.mock("@/lib/api/memory", () => ({
 vi.mock("@/lib/api/executionRun", () => ({
   executionRunGet: mockExecutionRunGet,
   executionRunGetThemeWorkbenchState: mockExecutionRunGetThemeWorkbenchState,
-  executionRunListThemeWorkbenchHistory: mockExecutionRunListThemeWorkbenchHistory,
+  executionRunListThemeWorkbenchHistory:
+    mockExecutionRunListThemeWorkbenchHistory,
 }));
 
 vi.mock("@/lib/api/skill-execution", () => ({
   skillExecutionApi: {
     getSkillDetail: mockSkillExecutionGetDetail,
   },
+}));
+
+vi.mock("@/lib/api/skills", () => ({
+  skillsApi: {
+    getAll: mockSkillsGetAll,
+  },
+}));
+
+vi.mock("@/lib/webview-api", () => ({
+  launchBrowserRuntimeAssist: mockLaunchBrowserRuntimeAssist,
+  browserExecuteAction: mockBrowserExecuteAction,
 }));
 
 import { AgentChatPage } from "./index";
@@ -528,6 +665,85 @@ function getHookCallOrderForWorkspace(workspaceId: string): number {
   return mockUseAgentChatUnified.mock.invocationCallOrder[index];
 }
 
+function mockBrowserAssistCompletedSession() {
+  mockUseAgentChatUnified.mockImplementation(
+    ({ workspaceId }: { workspaceId: string }) => {
+      observedWorkspaceIds.push(workspaceId);
+      return {
+        providerType: "kiro",
+        setProviderType: vi.fn(),
+        model: "mock-model",
+        setModel: vi.fn(),
+        executionStrategy: "auto",
+        setExecutionStrategy: vi.fn(),
+        messages: [
+          {
+            id: "msg-browser-user",
+            role: "user",
+            content: "打开浏览器并访问官网",
+            timestamp: new Date("2026-03-14T03:00:00.000Z"),
+          },
+          {
+            id: "msg-browser-assistant",
+            role: "assistant",
+            content: "",
+            timestamp: new Date("2026-03-14T03:00:01.000Z"),
+            toolCalls: [
+              {
+                id: "tool-browser-open",
+                name: "mcp__proxycast-browser__browser_navigate",
+                arguments: JSON.stringify({
+                  url: "https://www.rokid.com",
+                  profile_key: "general_browser_assist",
+                }),
+                status: "completed",
+                startTime: new Date("2026-03-14T03:00:01.100Z"),
+                endTime: new Date("2026-03-14T03:00:02.000Z"),
+                result: {
+                  success: true,
+                  output: "已连接浏览器会话并完成首屏加载",
+                  metadata: {
+                    result: {
+                      session_id: "browser-session-1",
+                      profile_key: "general_browser_assist",
+                      page_info: {
+                        title: "Rokid",
+                        url: "https://www.rokid.com",
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+        isSending: false,
+        sendMessage: sharedSendMessageMock,
+        stopSending: vi.fn(async () => undefined),
+        clearMessages: vi.fn(),
+        deleteMessage: vi.fn(),
+        editMessage: vi.fn(),
+        handlePermissionResponse: vi.fn(),
+        triggerAIGuide: sharedTriggerAIGuideMock,
+        topics: [
+          {
+            id: "topic-a",
+            title: "话题 A",
+            updatedAt: Date.now(),
+          },
+        ],
+        sessionId: "session-1",
+        switchTopic: sharedSwitchTopicMock,
+        deleteTopic: vi.fn(),
+        renameTopic: vi.fn(),
+        workspacePathMissing: false,
+        fixWorkspacePathAndRetry: vi.fn(),
+        dismissWorkspacePathError: vi.fn(),
+      };
+    },
+  );
+}
+
 beforeEach(() => {
   (
     globalThis as typeof globalThis & {
@@ -546,6 +762,7 @@ beforeEach(() => {
 
   vi.clearAllMocks();
   localStorage.clear();
+  sessionStorage.clear();
   observedWorkspaceIds.length = 0;
 
   mockGetProject.mockImplementation(async (projectId: string) => {
@@ -591,6 +808,56 @@ beforeEach(() => {
     has_workflow: false,
     workflow_steps: [],
   });
+  mockSkillsGetAll.mockResolvedValue([]);
+  mockLaunchBrowserRuntimeAssist.mockResolvedValue({
+    profile: {
+      success: true,
+      reused: true,
+      browser_source: "system",
+    },
+    session: {
+      session_id: "auto-browser-session-1",
+      profile_key: "general_browser_assist",
+      target_id: "target-auto-1",
+      target_title: "账户中心",
+      target_url: "https://accounts.example.com",
+      remote_debugging_port: 16312,
+      ws_debugger_url: "ws://127.0.0.1:16312/devtools/page/target-auto-1",
+      devtools_frontend_url: undefined,
+      stream_mode: "both",
+      transport_kind: "cdp_frames",
+      lifecycle_state: "live",
+      control_mode: "agent",
+      human_reason: undefined,
+      last_page_info: {
+        title: "账户中心",
+        url: "https://accounts.example.com",
+        markdown: "",
+        updated_at: "2026-03-14T03:10:02.000Z",
+      },
+      last_event_at: "2026-03-14T03:10:02.000Z",
+      last_frame_at: "2026-03-14T03:10:02.200Z",
+      last_error: undefined,
+      created_at: "2026-03-14T03:10:01.500Z",
+      connected: true,
+    },
+  });
+  mockBrowserExecuteAction.mockResolvedValue({
+    success: true,
+    backend: "cdp_direct",
+    session_id: "browser-session-1",
+    target_id: "target-auto-1",
+    action: "navigate",
+    request_id: "browser-action-1",
+    data: {
+      page_info: {
+        title: "新页面",
+        url: "https://example.com",
+      },
+    },
+    error: undefined,
+    attempts: [],
+  });
   mockGenerateContentCreationPrompt.mockReturnValue("mock-system-prompt");
   mockIsContentCreationTheme.mockReturnValue(false);
   mockEmptyState.mockImplementation((props?: { input?: string }) => (
@@ -610,6 +877,37 @@ beforeEach(() => {
       },
     ],
     setTopicStatus: vi.fn(),
+  });
+  mockCanvasWorkbenchLayoutState.renderPreview = false;
+
+  mockJotaiState.artifacts = [];
+  mockJotaiState.selectedArtifact = null;
+  mockJotaiState.selectedArtifactId = null;
+  mockSetArtifactsAtom.mockImplementation((next) => {
+    mockJotaiState.artifacts =
+      typeof next === "function" ? next(mockJotaiState.artifacts) : next;
+    const nextId = mockJotaiState.selectedArtifactId;
+    mockJotaiState.selectedArtifact =
+      nextId == null
+        ? null
+        : (mockJotaiState.artifacts.find(
+            (artifact) =>
+              (artifact as { id?: string } | null | undefined)?.id === nextId,
+          ) as Record<string, unknown> | null) || null;
+  });
+  mockSetSelectedArtifactIdAtom.mockImplementation((next) => {
+    mockJotaiState.selectedArtifactId =
+      typeof next === "function"
+        ? next(mockJotaiState.selectedArtifactId)
+        : next;
+    const nextId = mockJotaiState.selectedArtifactId;
+    mockJotaiState.selectedArtifact =
+      nextId == null
+        ? null
+        : (mockJotaiState.artifacts.find(
+            (artifact) =>
+              (artifact as { id?: string } | null | undefined)?.id === nextId,
+          ) as Record<string, unknown> | null) || null;
   });
 
   sharedSwitchTopicMock = vi.fn(async () => undefined);
@@ -662,6 +960,7 @@ afterEach(() => {
     mounted.container.remove();
   }
   localStorage.clear();
+  sessionStorage.clear();
   vi.unstubAllGlobals();
 });
 
@@ -705,7 +1004,7 @@ describe("AgentChatPage 话题切换项目恢复", () => {
       ?.switchTopic as ReturnType<typeof vi.fn>;
     expect(switchTopicMock).not.toHaveBeenCalled();
     expect(mockToast.error).toHaveBeenCalledWith(
-      "该话题绑定了其他项目，请先切换到对应项目",
+      "该任务绑定了其他项目，请先切换到对应项目",
     );
     expect(mockGetOrCreateDefaultProject).not.toHaveBeenCalled();
   });
@@ -828,9 +1127,171 @@ describe("AgentChatPage 侧栏显示控制", () => {
     await flushEffects();
     expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
   });
+
+  it("Claw 模式无激活任务时应展示任务选择空态", async () => {
+    mockUseAgentChatUnified.mockImplementation(
+      ({ workspaceId }: { workspaceId: string }) => {
+        observedWorkspaceIds.push(workspaceId);
+        return {
+          providerType: "kiro",
+          setProviderType: vi.fn(),
+          model: "mock-model",
+          setModel: vi.fn(),
+          executionStrategy: "auto",
+          setExecutionStrategy: vi.fn(),
+          messages: [],
+          isSending: false,
+          sendMessage: sharedSendMessageMock,
+          stopSending: vi.fn(async () => undefined),
+          clearMessages: vi.fn(),
+          deleteMessage: vi.fn(),
+          editMessage: vi.fn(),
+          handlePermissionResponse: vi.fn(),
+          triggerAIGuide: sharedTriggerAIGuideMock,
+          topics: [
+            {
+              id: "topic-a",
+              title: "任务 A",
+              updatedAt: Date.now(),
+            },
+          ],
+          sessionId: null,
+          switchTopic: sharedSwitchTopicMock,
+          deleteTopic: vi.fn(),
+          renameTopic: vi.fn(),
+          pendingActions: [],
+          workspacePathMissing: false,
+          fixWorkspacePathAndRetry: vi.fn(),
+          dismissWorkspacePathError: vi.fn(),
+        };
+      },
+    );
+
+    const container = renderPage({ agentEntry: "claw" });
+    await flushEffects();
+
+    expect(
+      container.querySelector('[data-testid="claw-empty-state"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('[data-testid="empty-state"]')).toBeNull();
+  });
+
+  it("新建任务模式发送首条消息后应切换到 Claw", async () => {
+    const onNavigate = vi.fn();
+
+    renderPage({
+      agentEntry: "new-task",
+      initialUserPrompt: "帮我规划一个发布任务",
+      onNavigate,
+      projectId: "project-entry",
+    });
+    await flushEffects();
+
+    expect(sharedSendMessageMock).toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalledWith(
+      "agent",
+      expect.objectContaining({
+        agentEntry: "claw",
+        projectId: "project-entry",
+      }),
+    );
+  });
 });
 
 describe("AgentChatPage 通用工作台", () => {
+  it("聊天态应通过顶栏按钮展开画布，并支持在展开后再次折叠", async () => {
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects();
+
+    const navbar = container.querySelector(
+      '[data-testid="chat-navbar"]',
+    ) as HTMLDivElement | null;
+    const toggleCanvasButton = container.querySelector(
+      '[data-testid="toggle-canvas"]',
+    ) as HTMLButtonElement | null;
+
+    expect(navbar?.dataset.showCanvasToggle).toBe("true");
+    expect(navbar?.dataset.canvasOpen).toBe("false");
+    expect(toggleCanvasButton?.textContent).toContain("展开画布");
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat");
+
+    act(() => {
+      toggleCanvasButton?.click();
+    });
+    await flushEffects();
+
+    expect(
+      (
+        container.querySelector('[data-testid="chat-navbar"]') as
+          | HTMLDivElement
+          | null
+      )?.dataset.canvasOpen,
+    ).toBe("true");
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat-canvas");
+
+    act(() => {
+      (
+        container.querySelector('[data-testid="toggle-canvas"]') as
+          | HTMLButtonElement
+          | null
+      )?.click();
+    });
+    await flushEffects();
+
+    expect(
+      (
+        container.querySelector('[data-testid="chat-navbar"]') as
+          | HTMLDivElement
+          | null
+      )?.dataset.canvasOpen,
+    ).toBe("false");
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat");
+  });
+
+  it("普通画布应将工作台触发按钮并入头部工具栏，避免覆盖关闭区", async () => {
+    mockCanvasWorkbenchLayoutState.renderPreview = true;
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects();
+
+    clickButton(container, "toggle-canvas");
+    await flushEffects(4);
+
+    const toolbar = container.querySelector(
+      '[data-testid="general-canvas-toolbar"]',
+    ) as HTMLDivElement | null;
+    const triggers = container.querySelectorAll(
+      '[data-testid="stacked-workbench-trigger"]',
+    );
+
+    expect(
+      container.querySelector('[data-testid="general-canvas"]'),
+    ).not.toBeNull();
+    expect(toolbar).not.toBeNull();
+    expect(triggers).toHaveLength(1);
+    expect(
+      toolbar?.querySelector('[data-testid="stacked-workbench-trigger"]'),
+    ).not.toBeNull();
+  });
+
   it("通用模式应通过顶部按钮打开工作台弹窗，而不是常驻右侧占位", async () => {
     const container = renderPage({
       theme: "general",
@@ -851,6 +1312,451 @@ describe("AgentChatPage 通用工作台", () => {
 
     expect(document.body.textContent).toContain("Agent 工作台");
     expect(document.body.textContent).toContain("通用 Agent");
+  });
+
+  it("窄屏工作台切到 stacked 时应自动收起话题列表，恢复 split 后重新展示", async () => {
+    mockCanvasWorkbenchLayoutState.renderPreview = true;
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects();
+
+    clickButton(container, "toggle-canvas");
+    await flushEffects(4);
+
+    const getWorkbenchProps = () =>
+      (mockCanvasWorkbenchLayout.mock.calls.at(-1)?.[0] || null) as
+        | {
+            onLayoutModeChange?: (mode: "split" | "stacked") => void;
+          }
+        | null;
+
+    expect(
+      container.querySelector('[data-testid="chat-sidebar"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="canvas-workbench-layout-mock"]'),
+    ).not.toBeNull();
+
+    act(() => {
+      getWorkbenchProps()?.onLayoutModeChange?.("stacked");
+    });
+    await flushEffects(4);
+
+    expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
+
+    act(() => {
+      getWorkbenchProps()?.onLayoutModeChange?.("split");
+    });
+    await flushEffects(4);
+
+    expect(
+      container.querySelector('[data-testid="chat-sidebar"]'),
+    ).not.toBeNull();
+  });
+
+  it("已安装 skills 但未显式激活时，通用工作台不应展示技能区块", async () => {
+    mockSkillsGetAll.mockResolvedValue([
+      {
+        key: "research",
+        name: "Research",
+        description: "检索与整理",
+        directory: "research",
+        installed: true,
+        sourceKind: "builtin",
+      },
+    ]);
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(mockSkillsGetAll).toHaveBeenCalledWith("proxycast");
+
+    clickButton(container, "toggle-harness");
+    await flushEffects();
+
+    expect(document.body.textContent).toContain("Agent 工作台");
+    expect(document.body.textContent).not.toContain("已激活技能");
+    expect(
+      document.body.querySelector('button[aria-label="跳转到已激活技能"]'),
+    ).toBeNull();
+  });
+
+  it("用户消息显式触发 slash skill 后，通用工作台应展示已激活技能", async () => {
+    mockSkillsGetAll.mockResolvedValue([
+      {
+        key: "research",
+        name: "Research",
+        description: "检索与整理",
+        directory: "research",
+        installed: true,
+        sourceKind: "builtin",
+      },
+    ]);
+    mockUseAgentChatUnified.mockImplementation(
+      ({ workspaceId }: { workspaceId: string }) => {
+        observedWorkspaceIds.push(workspaceId);
+        return {
+          providerType: "kiro",
+          setProviderType: vi.fn(),
+          model: "mock-model",
+          setModel: vi.fn(),
+          executionStrategy: "auto",
+          setExecutionStrategy: vi.fn(),
+          messages: [
+            {
+              id: "msg-skill-1",
+              role: "user",
+              content: "/research 帮我整理当前主题",
+            },
+          ],
+          isSending: false,
+          sendMessage: sharedSendMessageMock,
+          stopSending: vi.fn(async () => undefined),
+          clearMessages: vi.fn(),
+          deleteMessage: vi.fn(),
+          editMessage: vi.fn(),
+          handlePermissionResponse: vi.fn(),
+          triggerAIGuide: sharedTriggerAIGuideMock,
+          topics: [
+            {
+              id: "topic-a",
+              title: "话题 A",
+              updatedAt: Date.now(),
+            },
+          ],
+          sessionId: "session-1",
+          switchTopic: sharedSwitchTopicMock,
+          deleteTopic: vi.fn(),
+          renameTopic: vi.fn(),
+        };
+      },
+    );
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    clickButton(container, "toggle-harness");
+    await flushEffects();
+
+    expect(document.body.textContent).toContain("已激活技能");
+    expect(document.body.textContent).toContain("research");
+  });
+
+  it("浏览器工具返回真实会话后应自动打开浏览器协助画布", async () => {
+    mockBrowserAssistCompletedSession();
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat-canvas");
+    expect(mockSetSelectedArtifactIdAtom).toHaveBeenCalledWith(
+      "browser-assist:general",
+    );
+    expect(mockJotaiState.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "browser-assist:general",
+          type: "browser_assist",
+          title: "Rokid",
+          meta: expect.objectContaining({
+            sessionId: "browser-session-1",
+            profileKey: "general_browser_assist",
+            url: "https://www.rokid.com",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      container.querySelector('[data-testid="canvas-workbench-layout-mock"]'),
+    ).toBeNull();
+    expect(container.querySelector('[data-testid="artifact-renderer"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="artifact-toolbar"]')).toBeNull();
+    expect(mockCanvasWorkbenchLayout).not.toHaveBeenCalled();
+  });
+
+  it("浏览器工具刚启动且只有 profile_key 时应自动拉起实时会话并打开浏览器协助画布", async () => {
+    mockUseAgentChatUnified.mockImplementation(
+      ({ workspaceId }: { workspaceId: string }) => {
+        observedWorkspaceIds.push(workspaceId);
+        return {
+          providerType: "kiro",
+          setProviderType: vi.fn(),
+          model: "mock-model",
+          setModel: vi.fn(),
+          executionStrategy: "auto",
+          setExecutionStrategy: vi.fn(),
+          messages: [
+            {
+              id: "msg-browser-user-pending",
+              role: "user",
+              content: "打开浏览器并开始处理登录",
+              timestamp: new Date("2026-03-14T03:10:00.000Z"),
+            },
+            {
+              id: "msg-browser-assistant-pending",
+              role: "assistant",
+              content: "",
+              timestamp: new Date("2026-03-14T03:10:01.000Z"),
+              toolCalls: [
+                {
+                  id: "tool-browser-pending",
+                  name: "mcp__proxycast-browser__browser_navigate",
+                  arguments: JSON.stringify({
+                    url: "https://accounts.example.com",
+                    profile_key: "general_browser_assist",
+                  }),
+                  status: "running",
+                  startTime: new Date("2026-03-14T03:10:01.100Z"),
+                },
+              ],
+            },
+          ],
+          isSending: true,
+          sendMessage: sharedSendMessageMock,
+          stopSending: vi.fn(async () => undefined),
+          clearMessages: vi.fn(),
+          deleteMessage: vi.fn(),
+          editMessage: vi.fn(),
+          handlePermissionResponse: vi.fn(),
+          triggerAIGuide: sharedTriggerAIGuideMock,
+          topics: [
+            {
+              id: "topic-browser-pending",
+              title: "话题 B",
+              updatedAt: Date.now(),
+            },
+          ],
+          sessionId: "session-browser-pending",
+          switchTopic: sharedSwitchTopicMock,
+          deleteTopic: vi.fn(),
+          renameTopic: vi.fn(),
+          workspacePathMissing: false,
+          fixWorkspacePathAndRetry: vi.fn(),
+          dismissWorkspacePathError: vi.fn(),
+        };
+      },
+    );
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat-canvas");
+    expect(mockLaunchBrowserRuntimeAssist).toHaveBeenCalledWith({
+      profile_key: "general_browser_assist",
+      url: "https://accounts.example.com",
+      open_window: false,
+      stream_mode: "both",
+    });
+    expect(mockJotaiState.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "browser-assist:general",
+          type: "browser_assist",
+          meta: expect.objectContaining({
+            sessionId: "auto-browser-session-1",
+            profileKey: "general_browser_assist",
+            url: "https://accounts.example.com",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("即使没有最新 tool result，也应从 session scoped Browser Assist 状态恢复实时画布", async () => {
+    sessionStorage.setItem(
+      resolveBrowserAssistSessionStorageKey(undefined, "session-1"),
+      JSON.stringify({
+        sessionId: "restored-browser-session-1",
+        profileKey: "general_browser_assist",
+        url: "https://restored.example.com",
+        title: "恢复的浏览器会话",
+        source: "runtime_launch",
+        updatedAt: 1710387000000,
+      }),
+    );
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat-canvas");
+    expect(mockSetSelectedArtifactIdAtom).toHaveBeenCalledWith(
+      "browser-assist:general",
+    );
+    expect(mockLaunchBrowserRuntimeAssist).not.toHaveBeenCalled();
+    expect(mockJotaiState.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "browser-assist:general",
+          type: "browser_assist",
+          title: "恢复的浏览器会话",
+          meta: expect.objectContaining({
+            sessionId: "restored-browser-session-1",
+            profileKey: "general_browser_assist",
+            url: "https://restored.example.com",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("显式新 URL 的浏览器请求应复用现有会话并导航到新页面", async () => {
+    mockBrowserAssistCompletedSession();
+    mockBrowserExecuteAction.mockResolvedValueOnce({
+      success: true,
+      backend: "cdp_direct",
+      session_id: "browser-session-1",
+      target_id: "target-news-1",
+      action: "navigate",
+      request_id: "browser-action-news",
+      data: {
+        page_info: {
+          title: "百度新闻",
+          url: "https://news.baidu.com",
+        },
+      },
+      error: undefined,
+      attempts: [],
+    });
+
+    renderPage({
+      projectId: "project-browser-intent",
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    const prompt =
+      "打开 https://news.baidu.com，使用浏览器协助模式执行，并把实时浏览器画面显示在右侧画布中，然后告诉我页面主要内容。";
+    const inputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
+      | {
+          onSend?: (
+            images?: unknown[],
+            webSearch?: boolean,
+            thinking?: boolean,
+            textOverride?: string,
+          ) => Promise<void>;
+        }
+      | undefined;
+
+    await act(async () => {
+      await inputbarProps?.onSend?.([], false, false, prompt);
+    });
+    await flushEffects(12);
+
+    expect(mockBrowserExecuteAction).toHaveBeenCalledWith({
+      profile_key: "general_browser_assist",
+      backend: "cdp_direct",
+      action: "navigate",
+      args: {
+        action: "goto",
+        url: "https://news.baidu.com",
+        wait_for_page_info: true,
+      },
+      timeout_ms: 20000,
+    });
+    expect(sharedSendMessageMock).toHaveBeenCalledWith(
+      prompt,
+      [],
+      false,
+      false,
+      false,
+      undefined,
+      "mock-model",
+      undefined,
+      expect.objectContaining({
+        requestMetadata: expect.objectContaining({
+          harness: expect.objectContaining({
+            theme: "general",
+            browser_assist: expect.objectContaining({
+              enabled: true,
+              profile_key: "general_browser_assist",
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(mockJotaiState.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "browser-assist:general",
+          type: "browser_assist",
+          title: "百度新闻",
+          meta: expect.objectContaining({
+            sessionId: "browser-session-1",
+            profileKey: "general_browser_assist",
+            url: "https://news.baidu.com",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("切换到新会话时不应复用旧 scope 的浏览器协助 artifact", async () => {
+    mockJotaiState.artifacts = [
+      {
+        id: "browser-assist:general",
+        type: "browser_assist",
+        title: "旧浏览器会话",
+        content: "",
+        status: "complete",
+        meta: {
+          persistOutsideMessages: true,
+          browserAssistScopeKey: resolveBrowserAssistSessionScopeKey(
+            undefined,
+            "session-old",
+          ),
+          sessionId: "browser-session-old",
+          profileKey: "general_browser_assist",
+          url: "https://stale.example.com",
+        },
+        position: { start: 0, end: 0 },
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat");
+    expect(mockJotaiState.artifacts).toEqual([]);
   });
 });
 
@@ -1127,7 +2033,7 @@ describe("AgentChatPage 自动引导", () => {
     await flushEffects(10);
 
     expect(
-      container.querySelector('[data-testid="canvas-factory"]'),
+      container.querySelector('[data-testid="canvas-workbench-layout-mock"]'),
     ).not.toBeNull();
   });
 
@@ -1923,7 +2829,9 @@ describe("AgentChatPage 自动引导", () => {
                 {
                   id: "tool-search-1",
                   name: "WebSearch",
-                  arguments: JSON.stringify({ query: "Rokid Glasses 最新功能" }),
+                  arguments: JSON.stringify({
+                    query: "Rokid Glasses 最新功能",
+                  }),
                   status: "completed",
                   startTime: new Date("2026-03-06T11:00:01.500Z"),
                   endTime: new Date("2026-03-06T11:00:02.000Z"),

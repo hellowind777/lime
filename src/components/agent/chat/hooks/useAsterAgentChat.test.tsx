@@ -231,6 +231,101 @@ describe("useAsterAgentChat 首页新会话", () => {
   });
 });
 
+describe("useAsterAgentChat 任务快照", () => {
+  it("应将当前任务的真实摘要与状态回写到任务列表", async () => {
+    const workspaceId = "ws-task-snapshot";
+    const sessionId = "session-task-snapshot";
+    sessionStorage.setItem(
+      `aster_curr_sessionId_${workspaceId}`,
+      JSON.stringify(sessionId),
+    );
+    sessionStorage.setItem(
+      `aster_messages_${workspaceId}`,
+      JSON.stringify([
+        {
+          id: "msg-task-1",
+          role: "assistant",
+          content: "请先整理需求清单，再拆出里程碑。",
+          timestamp: new Date().toISOString(),
+        },
+      ]),
+    );
+    mockListAsterSessions.mockResolvedValue([
+      {
+        id: sessionId,
+        name: "任务 A",
+        created_at: 1700000000,
+        updated_at: 1700000001,
+        messages_count: 1,
+      },
+    ]);
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await flushEffects();
+
+      const topic = harness
+        .getValue()
+        .topics.find((item) => item.id === sessionId);
+      expect(topic).toBeTruthy();
+      expect(topic?.status).toBe("done");
+      expect(topic?.messagesCount).toBe(1);
+      expect(topic?.lastPreview).toContain("请先整理需求清单");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("发送中应将当前任务标记为进行中并同步最新摘要", async () => {
+    const workspaceId = "ws-task-running";
+    const sessionId = "session-task-running";
+    sessionStorage.setItem(
+      `aster_curr_sessionId_${workspaceId}`,
+      JSON.stringify(sessionId),
+    );
+    mockListAsterSessions.mockResolvedValue([
+      {
+        id: sessionId,
+        name: "任务 B",
+        created_at: 1700000010,
+        updated_at: 1700000011,
+        messages_count: 0,
+      },
+    ]);
+    mockGetAsterSession.mockResolvedValue({
+      id: sessionId,
+      messages: [],
+      turns: [],
+      items: [],
+      queued_turns: [],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("帮我输出一版任务拆解", [], false, false, false, "react");
+      });
+      await flushEffects();
+
+      const topic = harness
+        .getValue()
+        .topics.find((item) => item.id === sessionId);
+      expect(topic).toBeTruthy();
+      expect(topic?.status).toBe("running");
+      expect(topic?.messagesCount).toBeGreaterThanOrEqual(1);
+      expect(topic?.lastPreview).toContain("帮我输出一版任务拆解");
+    } finally {
+      harness.unmount();
+    }
+  });
+});
+
 describe("useAsterAgentChat.confirmAction", () => {
   it("tool_confirmation 应调用统一 runtime action 响应", async () => {
     const workspaceId = "ws-tool";

@@ -100,7 +100,7 @@ const Container = styled.div`
   height: 100%;
   min-height: 0;
   width: 100%;
-  padding: 12px 16px;
+  padding: 0 4px 6px 4px;
   gap: 10px;
   box-sizing: border-box;
 `;
@@ -109,11 +109,11 @@ const InnerContainer = styled.div`
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: hsl(var(--background));
-  border-radius: 14px;
-  border: 1px solid hsl(var(--border));
+  background: transparent;
+  border-radius: 0;
+  border: none;
   overflow: hidden;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.06);
+  box-shadow: none;
 `;
 
 const ContentArea = styled.div`

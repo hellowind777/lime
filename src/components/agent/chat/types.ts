@@ -121,6 +121,19 @@ export interface AgentRuntimeStatus {
   checkpoints?: string[];
 }
 
+export interface BrowserAssistSessionState {
+  sessionId?: string;
+  profileKey?: string;
+  url?: string;
+  title?: string;
+  targetId?: string;
+  transportKind?: string;
+  lifecycleState?: string;
+  controlMode?: string;
+  source: "tool_call" | "runtime_launch" | "artifact_restore";
+  updatedAt: number;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";

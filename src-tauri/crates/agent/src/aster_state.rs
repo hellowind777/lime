@@ -51,6 +51,8 @@ async fn configure_proxycast_native_file_tools(agent: &Agent) {
     registry.register(Box::new(
         EditTool::new(shared_history).with_require_read_before_edit(false),
     ));
+    // 覆盖默认 SkillTool，避免通用对话默认暴露全部本地 Skills。
+    registry.register(Box::new(crate::tools::ProxycastSkillTool::new()));
 }
 
 /// 会话级 turn 排队任务

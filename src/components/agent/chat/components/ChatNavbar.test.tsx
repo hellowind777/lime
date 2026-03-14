@@ -4,8 +4,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatNavbar } from "./ChatNavbar";
 
+const { mockProjectSelector } = vi.hoisted(() => ({
+  mockProjectSelector: vi.fn(),
+}));
+
 vi.mock("@/components/projects/ProjectSelector", () => ({
-  ProjectSelector: () => <div data-testid="project-selector" />,
+  ProjectSelector: (props: Record<string, unknown>) => {
+    mockProjectSelector(props);
+    return <div data-testid="project-selector" />;
+  },
 }));
 
 vi.mock("@/components/ui/button", () => ({
@@ -79,6 +86,25 @@ function renderChatNavbar(
 }
 
 describe("ChatNavbar", () => {
+  it("返回按钮应指向新建任务输入页", () => {
+    const onBackHome = vi.fn();
+    const container = renderChatNavbar({
+      onBackHome,
+    });
+
+    const button = container.querySelector(
+      'button[aria-label="返回新建任务"]',
+    ) as HTMLButtonElement | null;
+
+    expect(button).not.toBeNull();
+
+    act(() => {
+      button?.click();
+    });
+
+    expect(onBackHome).toHaveBeenCalledTimes(1);
+  });
+
   it("有 Harness 信号时应渲染顶栏切换按钮", () => {
     const onToggleHarnessPanel = vi.fn();
     const container = renderChatNavbar({
@@ -89,7 +115,7 @@ describe("ChatNavbar", () => {
     });
 
     const button = container.querySelector(
-      'button[aria-label="展开 Harness 面板"]',
+      'button[aria-label="展开Harness"]',
     ) as HTMLButtonElement | null;
 
     expect(button).not.toBeNull();
@@ -126,7 +152,7 @@ describe("ChatNavbar", () => {
 
     const container = mount(<HarnessToggleHarness />);
     const expandButton = container.querySelector(
-      'button[aria-label="展开 Harness 面板"]',
+      'button[aria-label="展开Harness"]',
     ) as HTMLButtonElement | null;
 
     expect(container.querySelector('[data-testid="harness-panel"]')).toBeNull();
@@ -140,7 +166,7 @@ describe("ChatNavbar", () => {
     ).not.toBeNull();
 
     const collapseButton = container.querySelector(
-      'button[aria-label="收起 Harness 面板"]',
+      'button[aria-label="收起Harness"]',
     ) as HTMLButtonElement | null;
 
     act(() => {
@@ -148,5 +174,60 @@ describe("ChatNavbar", () => {
     });
 
     expect(container.querySelector('[data-testid="harness-panel"]')).toBeNull();
+  });
+
+  it("通用对话应支持从顶栏打开浏览器协助", () => {
+    const onOpenBrowserAssist = vi.fn();
+    const container = renderChatNavbar({
+      showBrowserAssistEntry: true,
+      onOpenBrowserAssist,
+    });
+
+    const button = container.querySelector(
+      'button[aria-label="打开浏览器协助"]',
+    ) as HTMLButtonElement | null;
+
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toContain("浏览器协助");
+
+    act(() => {
+      button?.click();
+    });
+
+    expect(onOpenBrowserAssist).toHaveBeenCalledTimes(1);
+  });
+
+  it("通用对话项目选择器应启用管理能力", () => {
+    renderChatNavbar({
+      workspaceType: "general",
+      projectId: "project-1",
+    });
+
+    expect(mockProjectSelector).toHaveBeenCalled();
+    const lastCall = mockProjectSelector.mock.calls.at(-1)?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(lastCall?.enableManagement).toBe(true);
+  });
+
+  it("应支持在顶栏展开和折叠画布", () => {
+    const onToggleCanvas = vi.fn();
+    const container = renderChatNavbar({
+      showCanvasToggle: true,
+      isCanvasOpen: false,
+      onToggleCanvas,
+    });
+
+    const expandButton = container.querySelector(
+      'button[aria-label="展开画布"]',
+    ) as HTMLButtonElement | null;
+
+    expect(expandButton).not.toBeNull();
+
+    act(() => {
+      expandButton?.click();
+    });
+
+    expect(onToggleCanvas).toHaveBeenCalledTimes(1);
   });
 });

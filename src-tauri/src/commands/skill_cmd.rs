@@ -250,6 +250,144 @@ fn create_skill_scaffold_in_root(
     }
 }
 
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|e| format!("Failed to read skill source {}: {e}", source.display()))?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(format!(
+            "Skill package contains unsupported symlink: {}",
+            source.display()
+        ));
+    }
+
+    if metadata.is_dir() {
+        fs::create_dir_all(destination).map_err(|e| {
+            format!(
+                "Failed to create target directory {}: {e}",
+                destination.display()
+            )
+        })?;
+
+        let entries = fs::read_dir(source)
+            .map_err(|e| format!("Failed to read skill directory {}: {e}", source.display()))?;
+
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("Failed to read skill entry: {e}"))?;
+            let child_source = entry.path();
+            let child_destination = destination.join(entry.file_name());
+            copy_directory_recursive(&child_source, &child_destination)?;
+        }
+
+        return Ok(());
+    }
+
+    if metadata.is_file() {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "Failed to create target parent directory {}: {e}",
+                    parent.display()
+                )
+            })?;
+        }
+
+        fs::copy(source, destination).map_err(|e| {
+            format!(
+                "Failed to copy skill file {} -> {}: {e}",
+                source.display(),
+                destination.display()
+            )
+        })?;
+        return Ok(());
+    }
+
+    Err(format!(
+        "Unsupported skill package entry: {}",
+        source.display()
+    ))
+}
+
+fn import_local_skill_into_root(skills_root: &Path, source_path: &Path) -> Result<String, String> {
+    let canonical_source = source_path.canonicalize().map_err(|e| {
+        format!(
+            "Failed to resolve skill source {}: {e}",
+            source_path.display()
+        )
+    })?;
+
+    if !canonical_source.is_dir() {
+        return Err("Skill source path must be a directory".to_string());
+    }
+
+    let inspection = SkillService::inspect_skill_dir(&canonical_source).map_err(|e| {
+        format!(
+            "Skill source is invalid {}: {e}",
+            canonical_source.display()
+        )
+    })?;
+
+    if !inspection.standard_compliance.validation_errors.is_empty() {
+        return Err(format!(
+            "Skill package is not Agent Skills compliant: {}",
+            inspection.standard_compliance.validation_errors.join("; ")
+        ));
+    }
+
+    let directory = canonical_source
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "Failed to resolve skill directory name".to_string())?;
+    validate_skill_directory(directory)?;
+
+    fs::create_dir_all(skills_root).map_err(|e| {
+        format!(
+            "Failed to create skills root {}: {e}",
+            skills_root.display()
+        )
+    })?;
+
+    let target_dir = skills_root.join(directory);
+    if target_dir.exists() {
+        return Err(format!("Skill directory already exists: {directory}"));
+    }
+
+    if let Err(error) = copy_directory_recursive(&canonical_source, &target_dir) {
+        let _ = fs::remove_dir_all(&target_dir);
+        return Err(error);
+    }
+
+    match SkillService::inspect_skill_dir(&target_dir) {
+        Ok(imported_inspection)
+            if imported_inspection
+                .standard_compliance
+                .validation_errors
+                .is_empty() =>
+        {
+            Ok(directory.to_string())
+        }
+        Ok(imported_inspection) => {
+            let _ = fs::remove_dir_all(&target_dir);
+            Err(format!(
+                "Imported skill is not Agent Skills compliant: {}",
+                imported_inspection
+                    .standard_compliance
+                    .validation_errors
+                    .join("; ")
+            ))
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&target_dir);
+            Err(format!("Imported skill failed inspection: {error}"))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportedSkillResult {
+    pub directory: String,
+}
+
 /// 获取已安装的 ProxyCast Skills 目录列表
 ///
 /// 扫描 ProxyCast Skills 目录，返回包含 SKILL.md 的子目录名列表。
@@ -308,6 +446,25 @@ pub fn create_skill_scaffold_for_app(
     }
 
     Ok(inspection)
+}
+
+/// 从本地目录导入 Skill
+///
+/// `source_path` 必须指向一个包含 `SKILL.md` 的单个 Skill 目录。
+#[tauri::command]
+pub fn import_local_skill_for_app(
+    app: String,
+    source_path: String,
+) -> Result<ImportedSkillResult, String> {
+    let app_type: AppType = app.parse().map_err(|e: String| e)?;
+    let skills_root = get_skills_dir(&app_type)?;
+    let directory = import_local_skill_into_root(&skills_root, Path::new(&source_path))?;
+
+    if matches!(app_type, AppType::ProxyCast) {
+        AsterAgentState::reload_proxycast_skills();
+    }
+
+    Ok(ImportedSkillResult { directory })
 }
 
 /// 获取远程 Skill 包的标准检查结果
@@ -837,6 +994,59 @@ content"#,
         )
         .unwrap_err();
 
+        assert!(err.contains("already exists"));
+    }
+
+    #[test]
+    fn test_import_local_skill_into_root_copies_directory_tree() {
+        let temp_dir = TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("source-skill");
+        let references_dir = source_dir.join("references");
+        let scripts_dir = source_dir.join("scripts");
+        let target_root = temp_dir.path().join("skills");
+
+        std::fs::create_dir_all(&references_dir).unwrap();
+        std::fs::create_dir_all(&scripts_dir).unwrap();
+        std::fs::write(
+            source_dir.join("SKILL.md"),
+            "---\nname: Source Skill\ndescription: import me\n---\n",
+        )
+        .unwrap();
+        std::fs::write(references_dir.join("guide.md"), "# guide").unwrap();
+        std::fs::write(scripts_dir.join("run.js"), "console.log('ok')").unwrap();
+
+        let imported_directory = import_local_skill_into_root(&target_root, &source_dir).unwrap();
+
+        assert_eq!(imported_directory, "source-skill");
+        assert!(target_root.join("source-skill").join("SKILL.md").is_file());
+        assert!(target_root
+            .join("source-skill")
+            .join("references")
+            .join("guide.md")
+            .is_file());
+        assert!(target_root
+            .join("source-skill")
+            .join("scripts")
+            .join("run.js")
+            .is_file());
+    }
+
+    #[test]
+    fn test_import_local_skill_into_root_rejects_existing_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let source_dir = temp_dir.path().join("source-skill");
+        let target_root = temp_dir.path().join("skills");
+        let existing_dir = target_root.join("source-skill");
+
+        std::fs::create_dir_all(&source_dir).unwrap();
+        std::fs::write(
+            source_dir.join("SKILL.md"),
+            "---\nname: Source Skill\ndescription: import me\n---\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(&existing_dir).unwrap();
+
+        let err = import_local_skill_into_root(&target_root, &source_dir).unwrap_err();
         assert!(err.contains("already exists"));
     }
 }

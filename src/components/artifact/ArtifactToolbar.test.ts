@@ -299,6 +299,7 @@ const VALID_EXTENSIONS: Record<ArtifactType, string[]> = {
   svg: ["svg"],
   mermaid: ["mmd"],
   react: ["jsx"],
+  browser_assist: ["txt"],
   "canvas:document": ["md"],
   "canvas:poster": ["json"],
   "canvas:music": ["json"],

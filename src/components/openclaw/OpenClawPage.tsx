@@ -16,6 +16,7 @@ import type {
   Page,
   PageParams,
 } from "@/types/page";
+import { SettingsTabs } from "@/types/settings";
 import {
   openclawApi,
   type OpenClawBinaryAvailabilityStatus,
@@ -1419,7 +1420,9 @@ export function OpenClawPage({
         onSync={() => void handleSync()}
         onStart={() => void handleStart()}
         onOpenRuntime={() => navigateSubpage("runtime")}
-        onGoProviderPool={() => onNavigate?.("provider-pool")}
+        onGoProviderSettings={() =>
+          onNavigate?.("settings", { tab: SettingsTabs.Providers })
+        }
       />
     );
   }

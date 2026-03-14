@@ -88,6 +88,7 @@ export {
   SvgRenderer,
   MermaidRenderer,
   ReactRenderer,
+  BrowserAssistRenderer,
   registerLightweightRenderers,
   getLightweightRendererEntries,
   areLightweightRenderersRegistered,

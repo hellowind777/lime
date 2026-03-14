@@ -1,6 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
-import { ExternalLink, Globe, RefreshCw } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  Bug,
+  Copy,
+  ExternalLink,
+  Globe,
+  Layers3,
+  RefreshCw,
+  Sparkles,
+  type LucideIcon,
+} from "lucide-react";
+import { BrowserRuntimeDebugPanel } from "@/features/browser-runtime";
 import { getConfig } from "@/lib/api/appConfig";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import {
   browserExecuteAction,
   chromeBridgeExecuteCommand,
@@ -10,10 +29,13 @@ import {
   getChromeBridgeEndpointInfo,
   getChromeBridgeStatus,
   getChromeProfileSessions,
+  launchBrowserRuntimeAssist,
+  openBrowserRuntimeDebuggerWindow,
   openChromeProfileWindow,
   setBrowserBackendPolicy,
   type BrowserBackendPolicy,
   type BrowserBackendsStatusSnapshot,
+  type BrowserBackendStatusItem,
   type BrowserBackendType,
   type ChromeBridgeEndpointInfo,
   type ChromeBridgeStatusSnapshot,
@@ -22,10 +44,66 @@ import {
 
 type SearchEngine = "google" | "xiaohongshu";
 
-const GOOGLE_SETTINGS_URL = "https://www.google.com/preferences?hl=zh-CN";
-const XIAOHONGSHU_SETTINGS_URL = "https://www.xiaohongshu.com/explore";
-const GOOGLE_PROFILE_KEY = "search_google";
-const XIAOHONGSHU_PROFILE_KEY = "search_xiaohongshu";
+interface SurfacePanelProps {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  aside?: ReactNode;
+  children: ReactNode;
+}
+
+interface SummaryStatProps {
+  label: string;
+  value: string;
+  description: string;
+}
+
+interface EngineDefinition {
+  id: SearchEngine;
+  label: string;
+  description: string;
+  settingsUrl: string;
+  assistUrl: string;
+  bridgeTestUrl: string;
+  backendTestUrl: string;
+  profileKey: string;
+  settingsButtonLabel: string;
+}
+
+const SECONDARY_BUTTON_CLASS_NAME =
+  "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50";
+const PRIMARY_BUTTON_CLASS_NAME =
+  "inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50";
+const SELECT_CLASS_NAME =
+  "h-11 rounded-[16px] border border-slate-200 bg-white px-3.5 text-sm text-slate-700 outline-none transition focus:border-slate-300 focus:ring-2 focus:ring-slate-200";
+
+const ENGINE_ORDER: SearchEngine[] = ["google", "xiaohongshu"];
+const ENGINE_DEFINITIONS: Record<SearchEngine, EngineDefinition> = {
+  google: {
+    id: "google",
+    label: "Google",
+    description: "独立 Profile 用于搜索偏好、语言和地区设置。",
+    settingsUrl: "https://www.google.com/preferences?hl=zh-CN",
+    assistUrl: "https://www.google.com/search?q=proxycast+browser+assist",
+    bridgeTestUrl: "https://www.google.com/search?q=proxycast",
+    backendTestUrl:
+      "https://www.google.com/search?q=proxycast+browser+backend",
+    profileKey: "search_google",
+    settingsButtonLabel: "打开 Google 设置",
+  },
+  xiaohongshu: {
+    id: "xiaohongshu",
+    label: "小红书",
+    description: "独立 Profile 用于账号登录、内容浏览和扩展桥接。",
+    settingsUrl: "https://www.xiaohongshu.com/explore",
+    assistUrl: "https://www.xiaohongshu.com/explore",
+    bridgeTestUrl: "https://www.xiaohongshu.com/explore",
+    backendTestUrl: "https://www.xiaohongshu.com/explore",
+    profileKey: "search_xiaohongshu",
+    settingsButtonLabel: "打开小红书设置",
+  },
+};
+
 const BACKEND_OPTIONS: BrowserBackendType[] = [
   "aster_compat",
   "proxycast_extension_bridge",
@@ -38,8 +116,111 @@ const BACKEND_LABELS: Record<BrowserBackendType, string> = {
   cdp_direct: "CDP 直连",
 };
 
+const BACKEND_DESCRIPTIONS: Record<BrowserBackendType, string> = {
+  aster_compat: "优先复用现有 Aster 兼容链路，适合需要兼容旧协议接入的场景。",
+  proxycast_extension_bridge:
+    "通过浏览器扩展回传页面信息并执行命令，适合人工观察和轻量控制。",
+  cdp_direct: "直接走 Chrome DevTools Protocol，适合实时调试与会话接管。",
+};
+
+function createPolicyKey(policy: BrowserBackendPolicy | null) {
+  if (!policy) {
+    return "";
+  }
+  return `${policy.auto_fallback}:${policy.priority.join(",")}`;
+}
+
+function normalizePriority(priority: BrowserBackendType[]) {
+  const merged: BrowserBackendType[] = [];
+  for (const backend of priority) {
+    if (BACKEND_OPTIONS.includes(backend) && !merged.includes(backend)) {
+      merged.push(backend);
+    }
+  }
+
+  for (const backend of BACKEND_OPTIONS) {
+    if (!merged.includes(backend)) {
+      merged.push(backend);
+    }
+  }
+
+  return merged.slice(0, BACKEND_OPTIONS.length);
+}
+
+function SurfacePanel({
+  icon: Icon,
+  title,
+  description,
+  aside,
+  children,
+}: SurfacePanelProps) {
+  return (
+    <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Icon className="h-4 w-4 text-sky-600" />
+            {title}
+          </div>
+          <p className="text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+        {aside ? (
+          <div className="flex flex-wrap items-center gap-2">{aside}</div>
+        ) : null}
+      </div>
+
+      <div className="mt-5">{children}</div>
+    </article>
+  );
+}
+
+function SummaryStat({ label, value, description }: SummaryStatProps) {
+  return (
+    <div className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm">
+      <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function StatusPill({
+  tone,
+  children,
+}: {
+  tone: "neutral" | "success" | "warning";
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "rounded-full border px-3 py-1 text-xs font-medium",
+        tone === "success" &&
+          "border-emerald-200 bg-emerald-50 text-emerald-700",
+        tone === "warning" &&
+          "border-amber-200 bg-amber-50 text-amber-700",
+        tone === "neutral" &&
+          "border-slate-200 bg-white text-slate-500",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function resolveBackendTone(item?: BrowserBackendStatusItem | null) {
+  if (!item) {
+    return "neutral" as const;
+  }
+  return item.available ? ("success" as const) : ("warning" as const);
+}
+
 export function ChromeRelaySettings() {
-  const [testEngine, setTestEngine] = useState<SearchEngine>("google");
+  const [activeEngine, setActiveEngine] = useState<SearchEngine>("google");
   const [openingEngine, setOpeningEngine] = useState<SearchEngine | null>(null);
   const [closingProfileKey, setClosingProfileKey] = useState<string | null>(
     null,
@@ -52,6 +233,8 @@ export function ChromeRelaySettings() {
     useState<BrowserBackendType | null>(null);
   const [testingBridgeEngine, setTestingBridgeEngine] =
     useState<SearchEngine | null>(null);
+  const [launchingAssist, setLaunchingAssist] = useState(false);
+  const [openingDebugger, setOpeningDebugger] = useState(false);
   const [sessions, setSessions] = useState<ChromeProfileSessionInfo[]>([]);
   const [bridgeEndpoint, setBridgeEndpoint] =
     useState<ChromeBridgeEndpointInfo | null>(null);
@@ -63,271 +246,420 @@ export function ChromeRelaySettings() {
     useState<BrowserBackendPolicy | null>(null);
   const [backendsStatus, setBackendsStatus] =
     useState<BrowserBackendsStatusSnapshot | null>(null);
+  const [runtimeSessionId, setRuntimeSessionId] = useState<string | null>(null);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const backendPolicyRef = useRef<BrowserBackendPolicy | null>(null);
+  const draftBackendPolicyRef = useRef<BrowserBackendPolicy | null>(null);
 
-  const normalizePriority = (priority: BrowserBackendType[]) => {
-    const merged: BrowserBackendType[] = [];
-    for (const backend of priority) {
-      if (BACKEND_OPTIONS.includes(backend) && !merged.includes(backend)) {
-        merged.push(backend);
+  useEffect(() => {
+    backendPolicyRef.current = backendPolicy;
+  }, [backendPolicy]);
+
+  useEffect(() => {
+    draftBackendPolicyRef.current = draftBackendPolicy;
+  }, [draftBackendPolicy]);
+
+  const pushMessage = useCallback(
+    (nextMessage: { type: "success" | "error"; text: string }, timeout = 2500) => {
+      setMessage(nextMessage);
+      if (timeout > 0) {
+        window.setTimeout(() => setMessage(null), timeout);
       }
-    }
-    for (const backend of BACKEND_OPTIONS) {
-      if (!merged.includes(backend)) {
-        merged.push(backend);
+    },
+    [],
+  );
+
+  const refreshSessions = useCallback(
+    async (silent: boolean) => {
+      if (!silent) {
+        setRefreshingSessions(true);
       }
-    }
-    return merged.slice(0, BACKEND_OPTIONS.length);
-  };
+      try {
+        const next = await getChromeProfileSessions();
+        setSessions(next);
+      } catch (error) {
+        if (!silent) {
+          pushMessage({
+            type: "error",
+            text: `刷新会话失败: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+      } finally {
+        if (!silent) {
+          setRefreshingSessions(false);
+        }
+      }
+    },
+    [pushMessage],
+  );
+
+  const refreshBridgeStatus = useCallback(
+    async (silent: boolean) => {
+      if (!silent) {
+        setRefreshingBridge(true);
+      }
+      try {
+        const [endpoint, status] = await Promise.all([
+          getChromeBridgeEndpointInfo(),
+          getChromeBridgeStatus(),
+        ]);
+        setBridgeEndpoint(endpoint);
+        setBridgeStatus(status);
+      } catch (error) {
+        if (!silent) {
+          pushMessage({
+            type: "error",
+            text: `刷新扩展连接状态失败: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+      } finally {
+        if (!silent) {
+          setRefreshingBridge(false);
+        }
+      }
+    },
+    [pushMessage],
+  );
+
+  const refreshBackendStatus = useCallback(
+    async (silent: boolean) => {
+      if (!silent) {
+        setRefreshingBackends(true);
+      }
+      try {
+        const [policy, status] = await Promise.all([
+          getBrowserBackendPolicy(),
+          getBrowserBackendsStatus(),
+        ]);
+        const normalizedPolicy: BrowserBackendPolicy = {
+          auto_fallback: policy.auto_fallback,
+          priority: normalizePriority(policy.priority),
+        };
+        const shouldSyncDraft =
+          !draftBackendPolicyRef.current ||
+          !backendPolicyRef.current ||
+          createPolicyKey(draftBackendPolicyRef.current) ===
+            createPolicyKey(backendPolicyRef.current);
+
+        setBackendPolicy(normalizedPolicy);
+        backendPolicyRef.current = normalizedPolicy;
+        if (shouldSyncDraft) {
+          setDraftBackendPolicy(normalizedPolicy);
+          draftBackendPolicyRef.current = normalizedPolicy;
+        }
+        setBackendsStatus(status);
+      } catch (error) {
+        if (!silent) {
+          pushMessage({
+            type: "error",
+            text: `刷新浏览器后端状态失败: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          });
+        }
+      } finally {
+        if (!silent) {
+          setRefreshingBackends(false);
+        }
+      }
+    },
+    [pushMessage],
+  );
+
+  const refreshAll = useCallback(
+    async (silent: boolean) => {
+      await Promise.all([
+        refreshSessions(silent),
+        refreshBridgeStatus(silent),
+        refreshBackendStatus(silent),
+      ]);
+    },
+    [refreshBackendStatus, refreshBridgeStatus, refreshSessions],
+  );
 
   useEffect(() => {
     void getConfig()
       .then((config) => {
-        const engine = (config.web_search?.engine || "google") as SearchEngine;
-        setTestEngine(engine);
+        const nextEngine = config.web_search?.engine;
+        if (
+          nextEngine === ENGINE_DEFINITIONS.google.id ||
+          nextEngine === ENGINE_DEFINITIONS.xiaohongshu.id
+        ) {
+          setActiveEngine(nextEngine);
+        }
       })
       .catch(() => {
         // ignore
       });
 
-    void refreshSessions(true);
-    void refreshBridgeStatus(true);
-    void refreshBackendStatus(true);
-
+    void refreshAll(true);
     const timer = window.setInterval(() => {
-      void refreshSessions(true);
-      void refreshBridgeStatus(true);
-      void refreshBackendStatus(true);
+      void refreshAll(true);
     }, 15000);
 
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshAll]);
 
-  const hasBackendPolicyChanges = useMemo(() => {
-    if (!backendPolicy || !draftBackendPolicy) return false;
-    if (backendPolicy.auto_fallback !== draftBackendPolicy.auto_fallback)
-      return true;
-    return (
-      backendPolicy.priority.join(",") !== draftBackendPolicy.priority.join(",")
-    );
-  }, [backendPolicy, draftBackendPolicy]);
-
+  const selectedEngine = ENGINE_DEFINITIONS[activeEngine];
+  const sessionsByProfile = useMemo(
+    () => new Map(sessions.map((session) => [session.profile_key, session])),
+    [sessions],
+  );
+  const observersByProfile = useMemo(
+    () =>
+      new Map(
+        (bridgeStatus?.observers ?? []).map((observer) => [
+          observer.profile_key,
+          observer,
+        ]),
+      ),
+    [bridgeStatus?.observers],
+  );
+  const selectedSession = sessionsByProfile.get(selectedEngine.profileKey) ?? null;
   const hasObserverConnected = (bridgeStatus?.observer_count ?? 0) > 0;
+  const hasBackendPolicyChanges =
+    createPolicyKey(backendPolicy) !== createPolicyKey(draftBackendPolicy);
+  const backendStatusList =
+    backendsStatus?.backends ??
+    BACKEND_OPTIONS.map((backend) => ({
+      backend,
+      available: false,
+      reason: "等待状态拉取",
+      capabilities: [],
+    }));
 
-  const refreshSessions = async (silent: boolean) => {
-    if (!silent) setRefreshingSessions(true);
-    try {
-      const next = await getChromeProfileSessions();
-      setSessions(next);
-    } catch (error) {
-      if (!silent) {
-        setMessage({
-          type: "error",
-          text: `刷新会话失败: ${error instanceof Error ? error.message : String(error)}`,
+  const openSearchSettingsWindow = useCallback(
+    async (engine: SearchEngine) => {
+      const target = ENGINE_DEFINITIONS[engine];
+      try {
+        setOpeningEngine(engine);
+        const result = await openChromeProfileWindow({
+          profile_key: target.profileKey,
+          url: target.settingsUrl,
         });
-      }
-    } finally {
-      if (!silent) setRefreshingSessions(false);
-    }
-  };
-
-  const refreshBridgeStatus = async (silent: boolean) => {
-    if (!silent) setRefreshingBridge(true);
-    try {
-      const [endpoint, status] = await Promise.all([
-        getChromeBridgeEndpointInfo(),
-        getChromeBridgeStatus(),
-      ]);
-      setBridgeEndpoint(endpoint);
-      setBridgeStatus(status);
-    } catch (error) {
-      if (!silent) {
-        setMessage({
-          type: "error",
-          text: `刷新扩展连接状态失败: ${error instanceof Error ? error.message : String(error)}`,
+        if (!result.success) {
+          throw new Error(result.error || "创建窗口失败");
+        }
+        pushMessage({
+          type: "success",
+          text: result.reused
+            ? `已复用 ${target.label} 会话 (PID ${result.pid ?? "-"})`
+            : `已启动 ${target.label} 会话 (PID ${result.pid ?? "-"})`,
         });
-      }
-    } finally {
-      if (!silent) setRefreshingBridge(false);
-    }
-  };
-
-  const refreshBackendStatus = async (silent: boolean) => {
-    if (!silent) setRefreshingBackends(true);
-    try {
-      const [policy, status] = await Promise.all([
-        getBrowserBackendPolicy(),
-        getBrowserBackendsStatus(),
-      ]);
-      const normalizedPolicy: BrowserBackendPolicy = {
-        auto_fallback: policy.auto_fallback,
-        priority: normalizePriority(policy.priority),
-      };
-      setBackendPolicy(normalizedPolicy);
-      setDraftBackendPolicy(normalizedPolicy);
-      setBackendsStatus(status);
-    } catch (error) {
-      if (!silent) {
-        setMessage({
+        await refreshSessions(true);
+      } catch (error) {
+        pushMessage({
           type: "error",
-          text: `刷新浏览器后端状态失败: ${error instanceof Error ? error.message : String(error)}`,
+          text: `打开设置窗口失败: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
         });
+      } finally {
+        setOpeningEngine(null);
       }
-    } finally {
-      if (!silent) setRefreshingBackends(false);
-    }
-  };
+    },
+    [pushMessage, refreshSessions],
+  );
 
-  const getProfileKey = (engine: SearchEngine) =>
-    engine === "google" ? GOOGLE_PROFILE_KEY : XIAOHONGSHU_PROFILE_KEY;
+  const closeSession = useCallback(
+    async (engine: SearchEngine) => {
+      const target = ENGINE_DEFINITIONS[engine];
+      setClosingProfileKey(target.profileKey);
+      try {
+        const closed = await closeChromeProfileSession(target.profileKey);
+        pushMessage({
+          type: closed ? "success" : "error",
+          text: closed ? "会话已关闭" : "未找到运行中的会话",
+        });
+        await refreshSessions(true);
+      } catch (error) {
+        pushMessage({
+          type: "error",
+          text: `关闭会话失败: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      } finally {
+        setClosingProfileKey(null);
+      }
+    },
+    [pushMessage, refreshSessions],
+  );
 
-  const getSessionByEngine = (engine: SearchEngine) => {
-    const key = getProfileKey(engine);
-    return sessions.find((session) => session.profile_key === key);
-  };
-
-  const getObserverByEngine = (engine: SearchEngine) => {
-    const key = getProfileKey(engine);
-    const observers = bridgeStatus?.observers || [];
-    return (
-      observers.find((observer) => observer.profile_key === key) ||
-      observers.at(0) ||
-      null
-    );
-  };
-
-  const openSearchSettingsWindow = async (engine: SearchEngine) => {
-    const profileKey = getProfileKey(engine);
-    const panelConfig =
-      engine === "google"
-        ? {
-            url: GOOGLE_SETTINGS_URL,
-            profile_key: profileKey,
-          }
-        : {
-            url: XIAOHONGSHU_SETTINGS_URL,
-            profile_key: profileKey,
-          };
-
+  const handleLaunchBrowserAssist = useCallback(async () => {
     try {
-      setOpeningEngine(engine);
-      const result = await openChromeProfileWindow({
-        profile_key: panelConfig.profile_key,
-        url: panelConfig.url,
+      setLaunchingAssist(true);
+      const result = await launchBrowserRuntimeAssist({
+        profile_key: selectedEngine.profileKey,
+        url: selectedEngine.assistUrl,
+        open_window: true,
+        stream_mode: "both",
       });
-      if (!result.success) {
-        throw new Error(result.error || "创建窗口失败");
-      }
-      setMessage({
+      setRuntimeSessionId(result.session.session_id);
+      pushMessage({
         type: "success",
-        text: result.reused
-          ? `已复用 ${engine === "google" ? "Google" : "小红书"} 会话 (PID ${result.pid ?? "-"})`
-          : `已启动 ${engine === "google" ? "Google" : "小红书"} 会话 (PID ${result.pid ?? "-"})`,
+        text: `浏览器协助已启动：${
+          result.session.target_title ||
+          result.session.target_url ||
+          selectedEngine.assistUrl
+        }`,
       });
-      setTimeout(() => setMessage(null), 2500);
-      await refreshSessions(true);
+      await refreshAll(true);
     } catch (error) {
-      console.error("打开独立设置窗口失败:", error);
-      setMessage({
+      pushMessage({
         type: "error",
-        text: `打开设置窗口失败: ${error instanceof Error ? error.message : String(error)}`,
+        text: `启动浏览器协助失败: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       });
     } finally {
-      setOpeningEngine(null);
+      setLaunchingAssist(false);
     }
-  };
+  }, [pushMessage, refreshAll, selectedEngine]);
 
-  const closeSession = async (engine: SearchEngine) => {
-    const profileKey = getProfileKey(engine);
-    setClosingProfileKey(profileKey);
+  const handleOpenDebuggerWindow = useCallback(async () => {
     try {
-      const closed = await closeChromeProfileSession(profileKey);
-      setMessage({
-        type: closed ? "success" : "error",
-        text: closed ? "会话已关闭" : "未找到运行中的会话",
+      setOpeningDebugger(true);
+      await openBrowserRuntimeDebuggerWindow(
+        runtimeSessionId
+          ? { session_id: runtimeSessionId }
+          : { profile_key: selectedEngine.profileKey },
+      );
+      pushMessage({
+        type: "success",
+        text: "已打开独立浏览器调试窗口",
       });
-      setTimeout(() => setMessage(null), 2500);
-      await refreshSessions(true);
     } catch (error) {
-      setMessage({
+      pushMessage({
         type: "error",
-        text: `关闭会话失败: ${error instanceof Error ? error.message : String(error)}`,
+        text: `打开独立调试窗口失败: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
       });
     } finally {
-      setClosingProfileKey(null);
+      setOpeningDebugger(false);
     }
-  };
+  }, [pushMessage, runtimeSessionId, selectedEngine.profileKey]);
 
-  const testBridgeCommand = async (engine: SearchEngine) => {
-    if (!bridgeEndpoint?.server_running) {
-      setMessage({
-        type: "error",
-        text: "服务未运行，无法执行扩展桥接测试",
+  const copyBridgeConfig = useCallback(
+    async (engine: SearchEngine) => {
+      if (!bridgeEndpoint) {
+        pushMessage({
+          type: "error",
+          text: "桥接端点尚未加载，无法复制配置",
+        });
+        return;
+      }
+
+      try {
+        if (!navigator.clipboard?.writeText) {
+          throw new Error("当前环境不支持剪贴板写入");
+        }
+        await navigator.clipboard.writeText(
+          JSON.stringify(
+            {
+              serverUrl: `ws://${bridgeEndpoint.host}:${bridgeEndpoint.port}`,
+              bridgeKey: bridgeEndpoint.bridge_key,
+              profileKey: ENGINE_DEFINITIONS[engine].profileKey,
+            },
+            null,
+            2,
+          ),
+        );
+        pushMessage({
+          type: "success",
+          text: `${ENGINE_DEFINITIONS[engine].label} 配置已复制到剪贴板`,
+        });
+      } catch (error) {
+        pushMessage({
+          type: "error",
+          text: `复制扩展配置失败: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      }
+    },
+    [bridgeEndpoint, pushMessage],
+  );
+
+  const testBridgeCommand = useCallback(
+    async (engine: SearchEngine) => {
+      if (!bridgeEndpoint?.server_running) {
+        pushMessage({
+          type: "error",
+          text: "服务未运行，无法执行扩展桥接测试",
+        });
+        return;
+      }
+      if (!hasObserverConnected) {
+        pushMessage({
+          type: "error",
+          text: "未检测到扩展 observer 连接，请先完成扩展接入",
+        });
+        return;
+      }
+
+      const target = ENGINE_DEFINITIONS[engine];
+      try {
+        setTestingBridgeEngine(engine);
+        const result = await chromeBridgeExecuteCommand({
+          profile_key: target.profileKey,
+          command: "open_url",
+          url: target.bridgeTestUrl,
+          wait_for_page_info: true,
+          timeout_ms: 45000,
+        });
+        if (!result.success) {
+          throw new Error(result.error || "命令执行失败");
+        }
+        pushMessage({
+          type: "success",
+          text: `扩展桥接测试成功：${result.page_info?.title || "已打开目标页面"}`,
+        });
+        await refreshBridgeStatus(true);
+      } catch (error) {
+        pushMessage({
+          type: "error",
+          text: `扩展桥接测试失败: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      } finally {
+        setTestingBridgeEngine(null);
+      }
+    },
+    [bridgeEndpoint?.server_running, hasObserverConnected, pushMessage, refreshBridgeStatus],
+  );
+
+  const updateBackendPriority = useCallback(
+    (index: number, backend: BrowserBackendType) => {
+      setDraftBackendPolicy((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        const next = [...prev.priority];
+        next[index] = backend;
+        return {
+          ...prev,
+          priority: normalizePriority(next),
+        };
       });
+    },
+    [],
+  );
+
+  const saveBackendPolicy = useCallback(async () => {
+    if (!draftBackendPolicy) {
       return;
     }
-    if (!hasObserverConnected) {
-      setMessage({
-        type: "error",
-        text: "未检测到扩展 observer 连接，请先在目标 Chrome Profile 安装并连接扩展",
-      });
-      return;
-    }
 
-    const url =
-      engine === "google"
-        ? "https://www.google.com/search?q=proxycast"
-        : "https://www.xiaohongshu.com/explore";
-    try {
-      setTestingBridgeEngine(engine);
-      const result = await chromeBridgeExecuteCommand({
-        profile_key: getProfileKey(engine),
-        command: "open_url",
-        url,
-        wait_for_page_info: true,
-        timeout_ms: 45000,
-      });
-      if (!result.success) {
-        throw new Error(result.error || "命令执行失败");
-      }
-      const pageTitle = result.page_info?.title || "未知页面";
-      setMessage({
-        type: "success",
-        text: `扩展桥接测试成功：${pageTitle}`,
-      });
-      setTimeout(() => setMessage(null), 3000);
-      await refreshBridgeStatus(true);
-    } catch (error) {
-      setMessage({
-        type: "error",
-        text: `扩展桥接测试失败: ${error instanceof Error ? error.message : String(error)}`,
-      });
-    } finally {
-      setTestingBridgeEngine(null);
-    }
-  };
-
-  const updateBackendPriority = (
-    index: number,
-    backend: BrowserBackendType,
-  ) => {
-    setDraftBackendPolicy((prev) => {
-      if (!prev) return prev;
-      const next = [...prev.priority];
-      next[index] = backend;
-      return {
-        ...prev,
-        priority: normalizePriority(next),
-      };
-    });
-  };
-
-  const saveBackendPolicy = async () => {
-    if (!draftBackendPolicy) return;
     setSavingBackendPolicy(true);
     try {
       const normalizedPolicy: BrowserBackendPolicy = {
@@ -341,465 +673,750 @@ export function ChromeRelaySettings() {
       };
       setBackendPolicy(finalPolicy);
       setDraftBackendPolicy(finalPolicy);
-      setMessage({ type: "success", text: "浏览器后端策略已保存" });
-      setTimeout(() => setMessage(null), 2500);
+      pushMessage({
+        type: "success",
+        text: "浏览器后端策略已保存",
+      });
       await refreshBackendStatus(true);
     } catch (error) {
-      setMessage({
+      pushMessage({
         type: "error",
-        text: `保存后端策略失败: ${error instanceof Error ? error.message : String(error)}`,
-      });
-    } finally {
-      setSavingBackendPolicy(false);
-    }
-  };
-
-  const testBackendAction = async (backend: BrowserBackendType) => {
-    const backendStatus = backendsStatus?.backends?.find(
-      (item) => item.backend === backend,
-    );
-    if (backendStatus && !backendStatus.available) {
-      setMessage({
-        type: "error",
-        text: `${BACKEND_LABELS[backend]} 当前不可用: ${
-          backendStatus.reason || "缺少可用连接"
-        }`,
-      });
-      return;
-    }
-
-    const url =
-      testEngine === "google"
-        ? "https://www.google.com/search?q=proxycast+browser+backend"
-        : "https://www.xiaohongshu.com/explore";
-    try {
-      setTestingBackend(backend);
-      const result = await browserExecuteAction({
-        backend,
-        profile_key: getProfileKey(testEngine),
-        action: "navigate",
-        args: {
-          action: "goto",
-          url,
-          wait_for_page_info: true,
-        },
-        timeout_ms: 45000,
-      });
-      if (!result.success) {
-        throw new Error(result.error || "执行失败");
-      }
-      setMessage({
-        type: "success",
-        text: `${BACKEND_LABELS[backend]} 测试成功`,
-      });
-      setTimeout(() => setMessage(null), 2500);
-      await Promise.all([
-        refreshBridgeStatus(true),
-        refreshBackendStatus(true),
-      ]);
-    } catch (error) {
-      setMessage({
-        type: "error",
-        text: `${BACKEND_LABELS[backend]} 测试失败: ${
+        text: `保存后端策略失败: ${
           error instanceof Error ? error.message : String(error)
         }`,
       });
     } finally {
-      setTestingBackend(null);
+      setSavingBackendPolicy(false);
     }
-  };
+  }, [draftBackendPolicy, pushMessage, refreshBackendStatus]);
+
+  const testBackendAction = useCallback(
+    async (backend: BrowserBackendType) => {
+      const backendStatus = backendsStatus?.backends.find(
+        (item) => item.backend === backend,
+      );
+      if (backendStatus && !backendStatus.available) {
+        pushMessage({
+          type: "error",
+          text: `${BACKEND_LABELS[backend]} 当前不可用: ${
+            backendStatus.reason || "缺少可用连接"
+          }`,
+        });
+        return;
+      }
+
+      try {
+        setTestingBackend(backend);
+        const result = await browserExecuteAction({
+          backend,
+          profile_key: selectedEngine.profileKey,
+          action: "navigate",
+          args: {
+            action: "goto",
+            url: selectedEngine.backendTestUrl,
+            wait_for_page_info: true,
+          },
+          timeout_ms: 45000,
+        });
+        if (!result.success) {
+          throw new Error(result.error || "执行失败");
+        }
+        pushMessage({
+          type: "success",
+          text: `${BACKEND_LABELS[backend]} 测试成功`,
+        });
+        await Promise.all([
+          refreshBridgeStatus(true),
+          refreshBackendStatus(true),
+        ]);
+      } catch (error) {
+        pushMessage({
+          type: "error",
+          text: `${BACKEND_LABELS[backend]} 测试失败: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        });
+      } finally {
+        setTestingBackend(null);
+      }
+    },
+    [backendsStatus?.backends, pushMessage, refreshBackendStatus, refreshBridgeStatus, selectedEngine],
+  );
+
+  const runtimeSummary = useMemo(
+    () => ({
+      runningProfiles: backendsStatus?.running_profile_count ?? 0,
+      cdpAliveProfiles: backendsStatus?.cdp_alive_profile_count ?? 0,
+      observerCount: bridgeStatus?.observer_count ?? 0,
+      controlCount: bridgeStatus?.control_count ?? 0,
+      pendingCommands: bridgeStatus?.pending_command_count ?? 0,
+    }),
+    [backendsStatus, bridgeStatus],
+  );
 
   return (
-    <div className="space-y-4 max-w-3xl pb-20">
-      {message && (
+    <div className="space-y-6 pb-8">
+      {message ? (
         <div
-          className={`rounded-lg border p-3 text-sm ${
-            message.type === "error"
-              ? "border-destructive bg-destructive/10 text-destructive"
-              : "border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
-          }`}
+          className={cn(
+            "flex items-center justify-between gap-4 rounded-[20px] border px-4 py-3 text-sm shadow-sm shadow-slate-950/5",
+            message.type === "success"
+              ? "border-emerald-200 bg-emerald-50/90 text-emerald-700"
+              : "border-rose-200 bg-rose-50/90 text-rose-700",
+          )}
         >
-          {message.text}
-        </div>
-      )}
-
-      <div className="rounded-lg border p-5 space-y-3">
-        <div className="flex items-center gap-2">
-          <Globe className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-medium">Chrome Relay 运行状态</h3>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Profile 会话 {backendsStatus?.running_profile_count ?? 0} | CDP 可用{" "}
-          {backendsStatus?.cdp_alive_profile_count ?? 0} | 扩展 observer{" "}
-          {bridgeStatus?.observer_count ?? 0} | control{" "}
-          {bridgeStatus?.control_count ?? 0}
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            void refreshSessions(false);
-            void refreshBridgeStatus(false);
-            void refreshBackendStatus(false);
-          }}
-          disabled={
-            refreshingSessions || refreshingBridge || refreshingBackends
-          }
-          className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
-        >
-          <RefreshCw
-            className={`h-3.5 w-3.5 ${
-              refreshingSessions || refreshingBridge || refreshingBackends
-                ? "animate-spin"
-                : ""
-            }`}
-          />
-          刷新状态
-        </button>
-      </div>
-
-      <div className="rounded-lg border p-5 space-y-3">
-        <h3 className="text-sm font-medium">Google 搜索设置窗口</h3>
-        <p className="text-xs text-muted-foreground">
-          打开独立 Chrome Profile 窗口，配置 Google 语言、地区与搜索偏好。
-        </p>
-        {(() => {
-          const session = getSessionByEngine("google");
-          return session ? (
-            <p className="text-xs text-muted-foreground">
-              会话运行中 | PID {session.pid} | 来源 {session.browser_source} |
-              调试端口 {session.remote_debugging_port}
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">当前无运行中的会话</p>
-          );
-        })()}
-        <div className="flex items-center gap-2">
+          <span>{message.text}</span>
           <button
             type="button"
-            onClick={() => openSearchSettingsWindow("google")}
-            disabled={openingEngine === "google"}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+            onClick={() => setMessage(null)}
+            className="rounded-full border border-current/20 bg-white px-3 py-1.5 text-xs font-medium transition hover:bg-white/90"
           >
-            {openingEngine === "google" ? "打开中..." : "打开 Google 设置"}
-            <ExternalLink className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => closeSession("google")}
-            disabled={
-              !getSessionByEngine("google") ||
-              closingProfileKey === GOOGLE_PROFILE_KEY
-            }
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
-          >
-            {closingProfileKey === GOOGLE_PROFILE_KEY
-              ? "关闭中..."
-              : "关闭会话"}
+            关闭
           </button>
         </div>
-      </div>
+      ) : null}
 
-      <div className="rounded-lg border p-5 space-y-3">
-        <h3 className="text-sm font-medium">小红书设置窗口</h3>
-        <p className="text-xs text-muted-foreground">
-          打开独立 Chrome Profile 窗口，登录并配置小红书账号。
-        </p>
-        {(() => {
-          const session = getSessionByEngine("xiaohongshu");
-          return session ? (
-            <p className="text-xs text-muted-foreground">
-              会话运行中 | PID {session.pid} | 来源 {session.browser_source} |
-              调试端口 {session.remote_debugging_port}
-            </p>
-          ) : (
-            <p className="text-xs text-muted-foreground">当前无运行中的会话</p>
-          );
-        })()}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => openSearchSettingsWindow("xiaohongshu")}
-            disabled={openingEngine === "xiaohongshu"}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
-          >
-            {openingEngine === "xiaohongshu" ? "打开中..." : "打开小红书设置"}
-            <ExternalLink className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => closeSession("xiaohongshu")}
-            disabled={
-              !getSessionByEngine("xiaohongshu") ||
-              closingProfileKey === XIAOHONGSHU_PROFILE_KEY
-            }
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
-          >
-            {closingProfileKey === XIAOHONGSHU_PROFILE_KEY
-              ? "关闭中..."
-              : "关闭会话"}
-          </button>
-        </div>
-      </div>
+      <section className="relative overflow-hidden rounded-[30px] border border-emerald-200/70 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+        <div className="pointer-events-none absolute -left-20 top-[-72px] h-56 w-56 rounded-full bg-emerald-200/30 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-76px] top-[-24px] h-56 w-56 rounded-full bg-sky-200/28 blur-3xl" />
 
-      <div className="rounded-lg border p-5 space-y-3">
-        <h3 className="text-sm font-medium">浏览器后端编排策略</h3>
-        <p className="text-xs text-muted-foreground">
-          统一调度 Aster 协议适配、扩展桥接和 CDP
-          直连。支持按优先级执行并在失败时自动回退。
-        </p>
+        <div className="relative flex flex-col gap-6 p-6 lg:p-8">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.88fr)] xl:items-stretch">
+            <div className="max-w-3xl space-y-5">
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-emerald-700 shadow-sm">
+                CHROME RELAY
+              </span>
 
-        <div className="space-y-2">
-          <label
-            htmlFor="relay-test-engine"
-            className="text-xs text-muted-foreground"
-          >
-            后端测试默认引擎
-          </label>
-          <select
-            id="relay-test-engine"
-            value={testEngine}
-            onChange={(e) => setTestEngine(e.target.value as SearchEngine)}
-            className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="google">Google</option>
-            <option value="xiaohongshu">小红书</option>
-          </select>
-        </div>
+              <div className="space-y-2">
+                <p className="text-[28px] font-semibold tracking-tight text-slate-900">
+                  在一个宽视图里统一管理浏览器 Profile、扩展桥接、后端回退和实时调试
+                </p>
+                <p className="max-w-2xl text-sm leading-7 text-slate-600">
+                  这里不再拆成几块旧式表单。你可以直接检查当前会话、调整后端优先级，
+                  一键拉起浏览器协助，并在底部实时调试面板里接管或观察浏览器状态。
+                </p>
+              </div>
 
-        <div className="space-y-2">
-          {[0, 1, 2].map((idx) => (
-            <div
-              className="flex items-center gap-2"
-              key={`backend-priority-${idx}`}
-            >
-              <label className="text-xs text-muted-foreground w-16">{`优先级 ${idx + 1}`}</label>
-              <select
-                value={
-                  draftBackendPolicy?.priority[idx] || BACKEND_OPTIONS[idx]
-                }
-                onChange={(e) =>
-                  updateBackendPriority(
-                    idx,
-                    e.target.value as BrowserBackendType,
-                  )
-                }
-                className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-              >
-                {BACKEND_OPTIONS.map((option) => (
-                  <option key={`backend-option-${option}`} value={option}>
-                    {BACKEND_LABELS[option]}
-                  </option>
-                ))}
-              </select>
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusPill tone="neutral">
+                  当前目标 {selectedEngine.label}
+                </StatusPill>
+                <StatusPill tone={hasObserverConnected ? "success" : "warning"}>
+                  扩展 observer {runtimeSummary.observerCount}
+                </StatusPill>
+                <StatusPill
+                  tone={
+                    draftBackendPolicy?.auto_fallback ?? true
+                      ? "success"
+                      : "neutral"
+                  }
+                >
+                  自动回退 {(draftBackendPolicy?.auto_fallback ?? true) ? "开启" : "关闭"}
+                </StatusPill>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 xl:content-start">
+              <SummaryStat
+                label="运行 Profile"
+                value={runtimeSummary.runningProfiles.toString()}
+                description="当前已启动的独立浏览器 Profile 数量。"
+              />
+              <SummaryStat
+                label="CDP 可用"
+                value={runtimeSummary.cdpAliveProfiles.toString()}
+                description="可被实时调试和浏览器协助复用的 CDP 会话数量。"
+              />
+              <SummaryStat
+                label="桥接连接"
+                value={`${runtimeSummary.observerCount}/${runtimeSummary.controlCount}`}
+                description="observer / control 当前连接数，用于判断扩展桥接是否健康。"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4 rounded-[24px] border border-white/90 bg-white/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <label
+                  htmlFor="chrome-relay-engine"
+                  className="text-xs font-medium text-slate-500"
+                >
+                  当前目标
+                </label>
+                <select
+                  id="chrome-relay-engine"
+                  value={activeEngine}
+                  onChange={(event) =>
+                    setActiveEngine(event.target.value as SearchEngine)
+                  }
+                  className={cn(SELECT_CLASS_NAME, "h-10 min-w-[160px]")}
+                >
+                  {ENGINE_ORDER.map((engine) => (
+                    <option key={engine} value={engine}>
+                      {ENGINE_DEFINITIONS[engine].label}
+                    </option>
+                  ))}
+                </select>
+                <StatusPill tone="neutral">
+                  待处理命令 {runtimeSummary.pendingCommands}
+                </StatusPill>
+                <StatusPill tone={selectedSession ? "success" : "warning"}>
+                  {selectedSession ? "当前 Profile 已启动" : "当前 Profile 未启动"}
+                </StatusPill>
+              </div>
+              <p className="text-sm leading-6 text-slate-600">
+                一键协助会优先打开 {selectedEngine.label} 对应的独立 Profile，
+                并在可用时自动接入实时调试会话。
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() =>
-                  void testBackendAction(
-                    (draftBackendPolicy?.priority[idx] ||
-                      BACKEND_OPTIONS[idx]) as BrowserBackendType,
-                  )
-                }
+                onClick={() => void handleLaunchBrowserAssist()}
+                disabled={launchingAssist}
+                className={PRIMARY_BUTTON_CLASS_NAME}
+              >
+                <ExternalLink className="h-4 w-4" />
+                {launchingAssist ? "启动中..." : "一键启动浏览器协助"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleOpenDebuggerWindow()}
+                disabled={openingDebugger}
+                className={SECONDARY_BUTTON_CLASS_NAME}
+              >
+                <Bug className="h-4 w-4" />
+                {openingDebugger ? "打开中..." : "打开独立调试窗口"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void refreshAll(false)}
                 disabled={
-                  testingBackend ===
-                  (draftBackendPolicy?.priority[idx] || BACKEND_OPTIONS[idx])
+                  refreshingSessions || refreshingBridge || refreshingBackends
                 }
-                className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted disabled:opacity-50"
+                className={SECONDARY_BUTTON_CLASS_NAME}
               >
-                {testingBackend ===
-                (draftBackendPolicy?.priority[idx] || BACKEND_OPTIONS[idx])
-                  ? "测试中..."
-                  : "测试"}
+                <RefreshCw
+                  className={cn(
+                    "h-4 w-4",
+                    refreshingSessions || refreshingBridge || refreshingBackends
+                      ? "animate-spin"
+                      : "",
+                  )}
+                />
+                刷新状态
               </button>
             </div>
-          ))}
+          </div>
         </div>
+      </section>
 
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={draftBackendPolicy?.auto_fallback ?? true}
-            onChange={(e) =>
-              setDraftBackendPolicy((prev) =>
-                prev
-                  ? {
-                      ...prev,
-                      auto_fallback: e.target.checked,
-                    }
-                  : prev,
-              )
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.16fr)_minmax(320px,0.84fr)]">
+        <div className="space-y-6">
+          <SurfacePanel
+            icon={Globe}
+            title="Profile 会话"
+            description="为搜索和桥接准备独立浏览器 Profile。每个会话都可以单独打开、关闭，并观察当前调试端口。"
+            aside={
+              <StatusPill tone={selectedSession ? "success" : "neutral"}>
+                当前查看 {selectedEngine.label}
+              </StatusPill>
             }
-          />
-          自动回退到下一后端
-        </label>
-
-        <div className="rounded-md border bg-muted/30 p-3 space-y-1 text-xs">
-          {(backendsStatus?.backends || []).map((item) => (
-            <p key={`backend-status-${item.backend}`}>
-              {BACKEND_LABELS[item.backend]}:{" "}
-              {item.available ? "可用" : "不可用"}
-              {item.reason ? ` | ${item.reason}` : ""}
-            </p>
-          ))}
-          <p>
-            Aster native-host:{" "}
-            {backendsStatus?.aster_native_host_configured ? "已配置" : "未配置"}
-            {" | "}
-            平台支持:{" "}
-            {backendsStatus?.aster_native_host_supported ? "是" : "否"}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => void saveBackendPolicy()}
-            disabled={!hasBackendPolicyChanges || savingBackendPolicy}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
           >
-            {savingBackendPolicy ? "保存中..." : "保存后端策略"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void refreshBackendStatus(false)}
-            disabled={refreshingBackends}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${refreshingBackends ? "animate-spin" : ""}`}
-            />
-            刷新后端状态
-          </button>
-        </div>
-      </div>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {ENGINE_ORDER.map((engine) => {
+                const target = ENGINE_DEFINITIONS[engine];
+                const session = sessionsByProfile.get(target.profileKey) ?? null;
 
-      <div className="rounded-lg border p-5 space-y-3">
-        <h3 className="text-sm font-medium">Chrome 扩展桥接</h3>
-        <p className="text-xs text-muted-foreground">
-          该能力用于让浏览器扩展回传页面信息并接收控制命令。请在对应 Chrome
-          Profile 安装扩展并连接 observer 地址。
-        </p>
-        <p className="text-xs text-muted-foreground">
-          服务状态: {bridgeEndpoint?.server_running ? "运行中" : "未运行"} |
-          observer 连接: {bridgeStatus?.observer_count ?? 0} | control 连接:{" "}
-          {bridgeStatus?.control_count ?? 0} | 待处理命令:{" "}
-          {bridgeStatus?.pending_command_count ?? 0}
-        </p>
-        {bridgeEndpoint && (
-          <div className="rounded-md border bg-muted/30 p-3 space-y-1 text-xs">
-            <p className="break-all">
-              Observer WS: {bridgeEndpoint.observer_ws_url}
-            </p>
-            <p className="break-all">
-              Control WS: {bridgeEndpoint.control_ws_url}
-            </p>
-            <p className="break-all">Bridge Key: {bridgeEndpoint.bridge_key}</p>
-            <div className="pt-2 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  const config = {
-                    serverUrl: `ws://${bridgeEndpoint.host}:${bridgeEndpoint.port}`,
-                    bridgeKey: bridgeEndpoint.bridge_key,
-                    profileKey: "search_google",
-                  };
-                  navigator.clipboard.writeText(
-                    JSON.stringify(config, null, 2),
-                  );
-                  setMessage({
-                    type: "success",
-                    text: "Google 配置已复制到剪贴板",
-                  });
-                  setTimeout(() => setMessage(null), 2000);
-                }}
-                className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted"
-              >
-                复制 Google 配置
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const config = {
-                    serverUrl: `ws://${bridgeEndpoint.host}:${bridgeEndpoint.port}`,
-                    bridgeKey: bridgeEndpoint.bridge_key,
-                    profileKey: "search_xiaohongshu",
-                  };
-                  navigator.clipboard.writeText(
-                    JSON.stringify(config, null, 2),
-                  );
-                  setMessage({
-                    type: "success",
-                    text: "小红书配置已复制到剪贴板",
-                  });
-                  setTimeout(() => setMessage(null), 2000);
-                }}
-                className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted"
-              >
-                复制小红书配置
-              </button>
+                return (
+                  <div
+                    key={engine}
+                    className="flex h-full flex-col justify-between gap-5 rounded-[24px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96)_0%,rgba(248,250,252,0.92)_100%)] p-5"
+                  >
+                    <div className="space-y-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="text-base font-semibold text-slate-900">
+                            {target.label}
+                          </p>
+                          <p className="text-sm leading-6 text-slate-500">
+                            {target.description}
+                          </p>
+                        </div>
+                        <StatusPill tone={session ? "success" : "warning"}>
+                          {session ? "会话运行中" : "尚未启动"}
+                        </StatusPill>
+                      </div>
+
+                      {session ? (
+                        <div className="grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                          <div className="rounded-[18px] border border-slate-200/80 bg-white/90 p-3">
+                            <p className="text-xs font-medium text-slate-500">
+                              进程 / 来源
+                            </p>
+                            <p className="mt-2 font-medium text-slate-900">
+                              PID {session.pid}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {session.browser_source}
+                            </p>
+                          </div>
+                          <div className="rounded-[18px] border border-slate-200/80 bg-white/90 p-3">
+                            <p className="text-xs font-medium text-slate-500">
+                              调试端口
+                            </p>
+                            <p className="mt-2 font-medium text-slate-900">
+                              {session.remote_debugging_port}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Profile {session.profile_key}
+                            </p>
+                          </div>
+                          <div className="rounded-[18px] border border-slate-200/80 bg-white/90 p-3 sm:col-span-2">
+                            <p className="text-xs font-medium text-slate-500">
+                              最近页面
+                            </p>
+                            <p className="mt-2 break-all text-sm text-slate-700">
+                              {session.last_url}
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="rounded-[20px] border border-dashed border-slate-200 bg-slate-50/70 p-4 text-sm leading-6 text-slate-500">
+                          当前还没有运行中的独立会话。先打开设置窗口，或直接使用上方的一键浏览器协助。
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void openSearchSettingsWindow(engine)}
+                        disabled={openingEngine === engine}
+                        className={SECONDARY_BUTTON_CLASS_NAME}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                        {openingEngine === engine
+                          ? "打开中..."
+                          : target.settingsButtonLabel}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void closeSession(engine)}
+                        disabled={
+                          !session || closingProfileKey === target.profileKey
+                        }
+                        className={SECONDARY_BUTTON_CLASS_NAME}
+                      >
+                        {closingProfileKey === target.profileKey
+                          ? "关闭中..."
+                          : "关闭会话"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          </div>
-        )}
-        <div className="text-xs text-muted-foreground space-y-1">
-          <p>
-            Google observer:{" "}
-            {(() => {
-              const observer = getObserverByEngine("google");
-              return observer
-                ? `${observer.client_id} | 最近页面: ${observer.last_page_info?.title || "无"}`
-                : "未连接";
-            })()}
-          </p>
-          <p>
-            小红书 observer:{" "}
-            {(() => {
-              const observer = getObserverByEngine("xiaohongshu");
-              return observer
-                ? `${observer.client_id} | 最近页面: ${observer.last_page_info?.title || "无"}`
-                : "未连接";
-            })()}
-          </p>
+          </SurfacePanel>
+
+          <SurfacePanel
+            icon={Layers3}
+            title="浏览器后端策略"
+            description="统一编排 Aster 协议适配、扩展桥接与 CDP 直连，并决定失败时是否自动回退。"
+          >
+            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="space-y-4">
+                <div className="rounded-[24px] border border-slate-200/80 bg-slate-50/70 p-4">
+                  <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-900">
+                        默认测试目标
+                      </p>
+                      <p className="text-sm leading-6 text-slate-500">
+                        该目标会用于后端测试和一键浏览器协助，减少多处切换。
+                      </p>
+                    </div>
+                    <select
+                      value={activeEngine}
+                      onChange={(event) =>
+                        setActiveEngine(event.target.value as SearchEngine)
+                      }
+                      className={cn(SELECT_CLASS_NAME, "min-w-[180px]")}
+                    >
+                      {ENGINE_ORDER.map((engine) => (
+                        <option key={`relay-engine-${engine}`} value={engine}>
+                          {ENGINE_DEFINITIONS[engine].label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="mt-4 flex flex-col gap-3 rounded-[20px] border border-slate-200/80 bg-white/85 p-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-900">
+                        自动回退
+                      </p>
+                      <p className="text-sm leading-6 text-slate-500">
+                        当前后端失败时，自动切换到下一个优先级继续执行。
+                      </p>
+                    </div>
+                    <Switch
+                      aria-label="自动回退到下一后端"
+                      checked={draftBackendPolicy?.auto_fallback ?? true}
+                      onCheckedChange={(checked) =>
+                        setDraftBackendPolicy((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                auto_fallback: checked,
+                              }
+                            : prev,
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  {[0, 1, 2].map((index) => {
+                    const selectedBackend =
+                      draftBackendPolicy?.priority[index] ||
+                      BACKEND_OPTIONS[index];
+                    return (
+                      <div
+                        key={`backend-priority-${index}`}
+                        className="rounded-[22px] border border-slate-200/80 bg-white p-4"
+                      >
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                          <div className="space-y-2">
+                            <p className="text-sm font-semibold text-slate-900">
+                              {`优先级 ${index + 1}`}
+                            </p>
+                            <p className="text-sm leading-6 text-slate-500">
+                              {BACKEND_DESCRIPTIONS[selectedBackend]}
+                            </p>
+                          </div>
+
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <select
+                              value={selectedBackend}
+                              onChange={(event) =>
+                                updateBackendPriority(
+                                  index,
+                                  event.target.value as BrowserBackendType,
+                                )
+                              }
+                              className={cn(SELECT_CLASS_NAME, "min-w-[220px]")}
+                            >
+                              {BACKEND_OPTIONS.map((option) => (
+                                <option
+                                  key={`backend-option-${index}-${option}`}
+                                  value={option}
+                                >
+                                  {BACKEND_LABELS[option]}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => void testBackendAction(selectedBackend)}
+                              disabled={testingBackend === selectedBackend}
+                              className={SECONDARY_BUTTON_CLASS_NAME}
+                            >
+                              {testingBackend === selectedBackend
+                                ? "测试中..."
+                                : "测试"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-slate-200/80 bg-slate-50/70 p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-900">
+                    当前可用性
+                  </p>
+                  <p className="text-sm leading-6 text-slate-500">
+                    后端状态来自运行时即时快照，用于判断当前是否具备可执行链路。
+                  </p>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {backendStatusList.map((item) => (
+                    <div
+                      key={`backend-status-${item.backend}`}
+                      className="rounded-[20px] border border-slate-200/80 bg-white/90 p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {BACKEND_LABELS[item.backend]}
+                        </p>
+                        <StatusPill tone={resolveBackendTone(item)}>
+                          {item.available ? "可用" : item.reason || "待检查"}
+                        </StatusPill>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-500">
+                        {item.reason || BACKEND_DESCRIPTIONS[item.backend]}
+                      </p>
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        能力:{" "}
+                        {item.capabilities.length > 0
+                          ? item.capabilities.join(" / ")
+                          : "等待运行时返回"}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="mt-4 rounded-[20px] border border-slate-200/80 bg-white/90 p-4 text-sm leading-6 text-slate-600">
+                  <p>
+                    Aster native-host:{" "}
+                    {backendsStatus?.aster_native_host_configured
+                      ? "已配置"
+                      : "未配置"}
+                  </p>
+                  <p>
+                    平台支持:{" "}
+                    {backendsStatus?.aster_native_host_supported ? "是" : "否"}
+                  </p>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void saveBackendPolicy()}
+                    disabled={!hasBackendPolicyChanges || savingBackendPolicy}
+                    className={PRIMARY_BUTTON_CLASS_NAME}
+                  >
+                    {savingBackendPolicy ? "保存中..." : "保存后端策略"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void refreshBackendStatus(false)}
+                    disabled={refreshingBackends}
+                    className={SECONDARY_BUTTON_CLASS_NAME}
+                  >
+                    <RefreshCw
+                      className={cn(
+                        "h-4 w-4",
+                        refreshingBackends ? "animate-spin" : "",
+                      )}
+                    />
+                    刷新后端状态
+                  </button>
+                </div>
+              </div>
+            </div>
+          </SurfacePanel>
         </div>
-        {!hasObserverConnected && (
-          <div className="rounded-md border border-amber-400/40 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            未检测到扩展 observer 连接。请在对应 Chrome Profile 安装并打开
-            Proxycast Browser Bridge 扩展，在扩展弹窗填写 Observer WS 与 Bridge
-            Key 后再测试。
-          </div>
-        )}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            onClick={() => testBridgeCommand("google")}
-            disabled={testingBridgeEngine === "google"}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+
+        <div className="space-y-6">
+          <SurfacePanel
+            icon={Sparkles}
+            title="Chrome 扩展桥接"
+            description="该桥接负责让浏览器扩展回传页面信息并接收控制命令，适合在独立 Profile 中补充观察与辅助执行。"
+            aside={
+              <StatusPill
+                tone={bridgeEndpoint?.server_running ? "success" : "warning"}
+              >
+                {bridgeEndpoint?.server_running ? "桥接服务运行中" : "桥接服务未运行"}
+              </StatusPill>
+            }
           >
-            {testingBridgeEngine === "google"
-              ? "测试中..."
-              : "测试 Google 扩展"}
-          </button>
-          <button
-            type="button"
-            onClick={() => testBridgeCommand("xiaohongshu")}
-            disabled={testingBridgeEngine === "xiaohongshu"}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                  <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+                    OBSERVER
+                  </p>
+                  <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                    {runtimeSummary.observerCount}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    扩展侧页面观察连接数，用于回传页面信息和心跳。
+                  </p>
+                </div>
+                <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                  <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+                    CONTROL
+                  </p>
+                  <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                    {runtimeSummary.controlCount}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                    控制通道连接数，用于命令转发与桥接调试。
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-slate-200/80 bg-slate-50/70 p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-900">
+                    扩展接入信息
+                  </p>
+                  <p className="text-sm leading-6 text-slate-500">
+                    在目标 Chrome Profile 的扩展弹窗里填写以下 WebSocket 端点与 Bridge Key。
+                  </p>
+                </div>
+
+                {bridgeEndpoint ? (
+                  <div className="mt-4 rounded-[20px] border border-slate-200/80 bg-white/90 p-4">
+                    <div className="space-y-2 text-sm text-slate-600">
+                      <p className="break-all">
+                        Observer WS: {bridgeEndpoint.observer_ws_url}
+                      </p>
+                      <p className="break-all">
+                        Control WS: {bridgeEndpoint.control_ws_url}
+                      </p>
+                      <p className="break-all">
+                        Bridge Key: {bridgeEndpoint.bridge_key}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      {ENGINE_ORDER.map((engine) => (
+                        <button
+                          key={`copy-config-${engine}`}
+                          type="button"
+                          onClick={() => void copyBridgeConfig(engine)}
+                          className={SECONDARY_BUTTON_CLASS_NAME}
+                        >
+                          <Copy className="h-4 w-4" />
+                          {`复制 ${ENGINE_DEFINITIONS[engine].label} 配置`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-[20px] border border-dashed border-slate-200 bg-white/70 p-4 text-sm leading-6 text-slate-500">
+                    尚未获取到桥接端点信息，请先刷新状态或确认后端服务已经启动。
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-3">
+                {ENGINE_ORDER.map((engine) => {
+                  const observer =
+                    observersByProfile.get(ENGINE_DEFINITIONS[engine].profileKey) ??
+                    null;
+                  return (
+                    <div
+                      key={`observer-status-${engine}`}
+                      className="rounded-[20px] border border-slate-200/80 bg-white p-4"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-slate-900">
+                          {ENGINE_DEFINITIONS[engine].label} observer
+                        </p>
+                        <StatusPill tone={observer ? "success" : "warning"}>
+                          {observer ? observer.client_id : "未连接"}
+                        </StatusPill>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-slate-500">
+                        {observer?.last_page_info?.title
+                          ? `最近页面：${observer.last_page_info.title}`
+                          : "尚未收到最近页面信息"}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {!hasObserverConnected ? (
+                <div className="rounded-[20px] border border-amber-200 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-800">
+                  未检测到扩展 observer 连接。请在对应 Chrome Profile 安装并打开
+                  Proxycast Browser Bridge 扩展，然后填入上面的 Observer WS 与
+                  Bridge Key。
+                </div>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-2">
+                {ENGINE_ORDER.map((engine) => (
+                  <button
+                    key={`bridge-test-${engine}`}
+                    type="button"
+                    onClick={() => void testBridgeCommand(engine)}
+                    disabled={testingBridgeEngine === engine}
+                    className={SECONDARY_BUTTON_CLASS_NAME}
+                  >
+                    {testingBridgeEngine === engine
+                      ? "测试中..."
+                      : `测试 ${ENGINE_DEFINITIONS[engine].label} 扩展`}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => void refreshBridgeStatus(false)}
+                  disabled={refreshingBridge}
+                  className={SECONDARY_BUTTON_CLASS_NAME}
+                >
+                  <RefreshCw
+                    className={cn(
+                      "h-4 w-4",
+                      refreshingBridge ? "animate-spin" : "",
+                    )}
+                  />
+                  刷新扩展状态
+                </button>
+              </div>
+            </div>
+          </SurfacePanel>
+
+          <SurfacePanel
+            icon={Sparkles}
+            title="使用建议"
+            description="按这个顺序处理，页面状态会更稳定，也更容易复用到浏览器协助和实时调试。"
           >
-            {testingBridgeEngine === "xiaohongshu"
-              ? "测试中..."
-              : "测试小红书扩展"}
-          </button>
-          <button
-            type="button"
-            onClick={() => refreshBridgeStatus(false)}
-            disabled={refreshingBridge}
-            className="inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted disabled:opacity-50"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${refreshingBridge ? "animate-spin" : ""}`}
-            />
-            刷新扩展状态
-          </button>
+            <div className="space-y-3">
+              <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  1. 先准备独立 Profile
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  先为 Google 或小红书打开独立设置窗口，确认账号、语言与内容偏好已经稳定。
+                </p>
+              </div>
+              <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  2. 再接通扩展桥接
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  observer 连上以后，扩展才会持续回传页面信息。这样排查桥接链路会更直观。
+                </p>
+              </div>
+              <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  3. 需要人工介入时再开调试窗口
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  顶部的独立调试窗口和底部实时调试面板都能复用当前目标 Profile，
+                  适合需要观察页面变化或临时接管输入的时刻。
+                </p>
+              </div>
+            </div>
+          </SurfacePanel>
         </div>
       </div>
+
+      <SurfacePanel
+        icon={Bug}
+        title="浏览器实时调试"
+        description="底部直接复用浏览器实时会话面板。适合观察事件流、查看画面并在必要时接管当前页面。"
+      >
+        <BrowserRuntimeDebugPanel
+          sessions={sessions}
+          onMessage={(nextMessage) => setMessage(nextMessage)}
+          showStandaloneWindowButton={false}
+          initialProfileKey={selectedEngine.profileKey}
+          initialSessionId={runtimeSessionId ?? undefined}
+        />
+      </SurfacePanel>
     </div>
   );
 }

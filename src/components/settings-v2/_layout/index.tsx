@@ -15,7 +15,6 @@ import { CanvasBreadcrumbHeader } from "@/components/content-creator/canvas/shar
 
 // 外观设置
 import { AppearanceSettings } from "../general/appearance";
-import { ChatAppearanceSettings } from "../general/chat-appearance";
 import { MemorySettings } from "../general/memory";
 // 安全与性能
 import { SecurityPerformanceSettings } from "../system/security-performance";
@@ -112,11 +111,15 @@ const PlaceholderPage = styled.div`
 /**
  * 渲染设置内容
  */
+function normalizeSettingsTab(tab: SettingsTabs): SettingsTabs {
+  return tab === SettingsTabs.ChatAppearance ? SettingsTabs.Appearance : tab;
+}
+
 function renderSettingsContent(
   tab: SettingsTabs,
   onTabChange: (tab: SettingsTabs) => void,
 ): ReactNode {
-  switch (tab) {
+  switch (normalizeSettingsTab(tab)) {
     case SettingsTabs.Home:
       return <SettingsHomePage onTabChange={onTabChange} />;
 
@@ -143,14 +146,6 @@ function renderSettingsContent(
         <>
           <SettingHeader title="外观" />
           <AppearanceSettings />
-        </>
-      );
-
-    case SettingsTabs.ChatAppearance:
-      return (
-        <>
-          <SettingHeader title="聊天外观" />
-          <ChatAppearanceSettings />
         </>
       );
 
@@ -334,12 +329,22 @@ interface SettingsLayoutV2Props {
 
 const WIDE_CONTENT_TABS = new Set<SettingsTabs>([
   SettingsTabs.Home,
+  SettingsTabs.Profile,
+  SettingsTabs.Stats,
+  SettingsTabs.Appearance,
+  SettingsTabs.ChatAppearance,
+  SettingsTabs.Hotkeys,
+  SettingsTabs.Memory,
   SettingsTabs.Providers,
   SettingsTabs.Skills,
   SettingsTabs.ApiServer,
   SettingsTabs.McpServer,
   SettingsTabs.Channels,
+  SettingsTabs.SecurityPerformance,
+  SettingsTabs.Developer,
+  SettingsTabs.WebSearch,
   SettingsTabs.Environment,
+  SettingsTabs.ChromeRelay,
   SettingsTabs.ExecutionTracker,
 ]);
 
@@ -348,9 +353,13 @@ export function SettingsLayoutV2({
   initialTab,
 }: SettingsLayoutV2Props) {
   const [activeTab, setActiveTab] = useState<SettingsTabs>(
-    initialTab || SettingsTabs.Home,
+    normalizeSettingsTab(initialTab || SettingsTabs.Home),
   );
   const contentContainerRef = useRef<HTMLElement | null>(null);
+
+  const handleTabChange = useCallback((tab: SettingsTabs) => {
+    setActiveTab(normalizeSettingsTab(tab));
+  }, []);
 
   const handleBackHome = useCallback(() => {
     onNavigate?.("agent", buildHomeAgentParams());
@@ -358,7 +367,7 @@ export function SettingsLayoutV2({
 
   useEffect(() => {
     if (initialTab) {
-      setActiveTab(initialTab);
+      setActiveTab(normalizeSettingsTab(initialTab));
     }
   }, [initialTab]);
 
@@ -373,10 +382,10 @@ export function SettingsLayoutV2({
         <CanvasBreadcrumbHeader label="设置" onBackHome={handleBackHome} />
       </HeaderBar>
       <LayoutContainer>
-        <SettingsSidebar activeTab={activeTab} onTabChange={setActiveTab} />
+        <SettingsSidebar activeTab={activeTab} onTabChange={handleTabChange} />
         <ContentContainer ref={contentContainerRef}>
           <ContentWrapper $wide={WIDE_CONTENT_TABS.has(activeTab)}>
-            {renderSettingsContent(activeTab, setActiveTab)}
+            {renderSettingsContent(activeTab, handleTabChange)}
           </ContentWrapper>
         </ContentContainer>
       </LayoutContainer>

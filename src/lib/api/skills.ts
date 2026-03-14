@@ -67,6 +67,10 @@ export interface SkillRepo {
   enabled: boolean;
 }
 
+export interface ImportedSkillResult {
+  directory: string;
+}
+
 export type AppType = "claude" | "codex" | "gemini" | "proxycast";
 
 function normalizeStandardCompliance(
@@ -198,6 +202,16 @@ export const skillsApi = {
       },
     );
     return normalizeInspection(inspection);
+  },
+
+  async importLocalSkill(
+    sourcePath: string,
+    app: AppType = "proxycast",
+  ): Promise<ImportedSkillResult> {
+    return safeInvoke<ImportedSkillResult>("import_local_skill_for_app", {
+      app,
+      source_path: sourcePath,
+    });
   },
 
   async inspectRemoteSkill(

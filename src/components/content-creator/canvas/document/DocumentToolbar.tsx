@@ -41,9 +41,9 @@ const Container = styled.div`
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 10px 20px 8px;
+  padding: 8px 16px 8px 20px;
   background: hsl(var(--background));
-  border-bottom: 1px solid hsl(var(--border));
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
 `;
 
 const ToolbarRow = styled.div`
@@ -63,10 +63,10 @@ const IconButton = styled.button`
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   background: transparent;
   color: hsl(var(--muted-foreground));
   cursor: default;
@@ -78,7 +78,7 @@ const IconButton = styled.button`
   }
 
   &:not(:disabled):hover {
-    background: hsl(var(--muted) / 0.5);
+    background: hsl(var(--muted) / 0.8);
     color: hsl(var(--foreground));
   }
 
@@ -90,8 +90,8 @@ const IconButton = styled.button`
 
 const Divider = styled.div`
   width: 1px;
-  height: 18px;
-  background: hsl(var(--border) / 0.85);
+  height: 16px;
+  background: hsl(var(--border));
   margin: 0 4px;
   flex-shrink: 0;
 `;
@@ -112,7 +112,7 @@ const QuickInsertItem = styled.button`
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: hsl(var(--foreground));
+  color: hsl(var(--muted-foreground));
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
@@ -122,6 +122,7 @@ const QuickInsertItem = styled.button`
 
   &:hover {
     background: hsl(var(--muted) / 0.75);
+    color: hsl(var(--foreground));
   }
 `;
 
@@ -129,24 +130,24 @@ const ActionPill = styled.button<{ $active?: boolean }>`
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
-  padding: 0 12px;
-  border: 0;
-  border-radius: 999px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 500;
   background: ${({ $active }) =>
-    $active ? "hsl(var(--primary) / 0.14)" : "hsl(var(--muted) / 0.6)"};
+    $active ? "hsl(var(--primary) / 0.08)" : "transparent"};
   color: ${({ $active }) =>
     $active ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))"};
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.2s ease-out;
   white-space: nowrap;
   flex-shrink: 0;
 
   &:hover {
     background: ${({ $active }) =>
-      $active ? "hsl(var(--primary) / 0.2)" : "hsl(var(--muted) / 0.8)"};
+      $active ? "hsl(var(--primary) / 0.12)" : "hsl(var(--muted) / 0.8)"};
     color: ${({ $active }) =>
       $active ? "hsl(var(--primary))" : "hsl(var(--foreground))"};
   }

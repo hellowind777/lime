@@ -1,253 +1,883 @@
 /**
  * @file index.tsx
- * @description 通用设置 - 外观与语言
+ * @description 通用设置 - 外观、工作区与聊天外观
  */
 
-import { useState, useEffect, useCallback } from "react";
-import styled from "styled-components";
-import { Moon, Sun, Monitor, Volume2, RotateCcw } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  Check,
+  Languages,
+  LayoutPanelLeft,
+  Monitor,
+  Moon,
+  Palette,
+  RotateCcw,
+  Sparkles,
+  Sun,
+  Volume2,
+  type LucideIcon,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { getConfig, saveConfig, type Config } from "@/lib/api/appConfig";
 import { useOnboardingState } from "@/components/onboarding";
-import {
-  LanguageSelector,
-  Language,
-} from "../../shared/language/LanguageSelector";
 import { useI18nPatch } from "@/i18n/I18nPatchProvider";
 import { useSoundContext } from "@/contexts/useSoundContext";
+import type { Language } from "../../shared/language/LanguageSelector";
+import { Switch } from "@/components/ui/switch";
 
 type Theme = "light" | "dark" | "system";
 
-const Container = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-`;
+interface ThemeOption {
+  id: Theme;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+}
 
-const Section = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-`;
+interface LanguageOption {
+  id: Language;
+  label: string;
+  hint: string;
+}
 
-const SectionTitle = styled.h3`
-  font-size: 14px;
-  font-weight: 600;
-  color: hsl(var(--foreground));
-  margin: 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid hsl(var(--border));
-`;
+interface SurfacePanelProps {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  aside?: ReactNode;
+  children: ReactNode;
+}
 
-const SettingItem = styled.div`
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-`;
+interface StatCardProps {
+  label: string;
+  value: string;
+  description: string;
+}
 
-const SettingInfo = styled.div`
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-`;
+const THEME_OPTIONS: ThemeOption[] = [
+  {
+    id: "light",
+    label: "浅色",
+    description: "适合白天和高亮环境。",
+    icon: Sun,
+  },
+  {
+    id: "dark",
+    label: "深色",
+    description: "降低夜间使用时的眩光。",
+    icon: Moon,
+  },
+  {
+    id: "system",
+    label: "跟随系统",
+    description: "自动同步系统外观。",
+    icon: Monitor,
+  },
+];
 
-const SettingLabel = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  color: hsl(var(--foreground));
-`;
+const LANGUAGE_OPTIONS: LanguageOption[] = [
+  {
+    id: "zh",
+    label: "中文",
+    hint: "适合主要中文工作流。",
+  },
+  {
+    id: "en",
+    label: "English",
+    hint: "适合英文界面与术语环境。",
+  },
+];
 
-const SettingDescription = styled.div`
-  font-size: 12px;
-  color: hsl(var(--muted-foreground));
-`;
+const ALL_CONTENT_THEMES = [
+  { id: "general", label: "通用" },
+  { id: "social-media", label: "社媒内容" },
+  { id: "poster", label: "图文海报" },
+  { id: "music", label: "歌词曲谱" },
+  { id: "video", label: "短视频" },
+  { id: "novel", label: "小说" },
+  { id: "knowledge", label: "知识探索" },
+  { id: "planning", label: "计划规划" },
+  { id: "document", label: "办公文档" },
+] as const;
 
-const ThemeButtonGroup = styled.div`
-  display: flex;
-  gap: 4px;
-  background: hsl(var(--muted));
-  padding: 4px;
-  border-radius: 8px;
-`;
+const DEFAULT_ENABLED_THEMES = [
+  "general",
+  "social-media",
+  "poster",
+  "music",
+  "video",
+  "novel",
+];
 
-const ThemeButton = styled.button<{ $active: boolean }>`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: none;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  background: ${({ $active }) =>
-    $active ? "hsl(var(--background))" : "transparent"};
-  color: ${({ $active }) =>
-    $active ? "hsl(var(--foreground))" : "hsl(var(--muted-foreground))"};
-  box-shadow: ${({ $active }) =>
-    $active ? "0 1px 3px rgba(0,0,0,0.1)" : "none"};
-  cursor: pointer;
-  transition: all 0.2s;
+const ALL_NAV_ITEMS = [
+  { id: "home-general", label: "新建任务" },
+  { id: "claw", label: "Claw" },
+  { id: "video", label: "视频" },
+  { id: "image-gen", label: "插图" },
+  { id: "batch", label: "批量任务" },
+  { id: "terminal", label: "终端" },
+  { id: "plugins", label: "插件中心" },
+  { id: "tools", label: "工具箱" },
+] as const;
 
-  &:hover {
-    color: hsl(var(--foreground));
+const DEFAULT_ENABLED_NAV_ITEMS = [
+  "home-general",
+  "claw",
+  "video",
+  "image-gen",
+];
+
+const ALL_NAV_ITEM_ID_SET = new Set<string>(
+  ALL_NAV_ITEMS.map((item) => item.id),
+);
+
+const LEGACY_DEFAULT_NAV_ITEM_SETS: string[][] = [
+  ["home-general", "video", "image-gen", "plugins"],
+  ["home-general", "video", "image-gen", "terminal", "plugins"],
+];
+
+function normalizeEnabledNavItems(items: string[]): string[] {
+  const unique = Array.from(new Set(items));
+  return unique.filter((item) => ALL_NAV_ITEM_ID_SET.has(item));
+}
+
+function hasSameMembers(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
   }
 
-  svg {
-    width: 14px;
-    height: 14px;
+  const rightSet = new Set(right);
+  return left.every((item) => rightSet.has(item));
+}
+
+function isLegacyDefaultEnabledItems(items: string[]): boolean {
+  return LEGACY_DEFAULT_NAV_ITEM_SETS.some((legacyItems) =>
+    hasSameMembers(items, legacyItems),
+  );
+}
+
+function resolveEnabledNavItems(savedItems?: string[]): string[] {
+  if (!savedItems || savedItems.length === 0) {
+    return [...DEFAULT_ENABLED_NAV_ITEMS];
   }
-`;
+
+  const normalized = normalizeEnabledNavItems(savedItems);
+  if (isLegacyDefaultEnabledItems(normalized)) {
+    return [...DEFAULT_ENABLED_NAV_ITEMS];
+  }
+
+  const merged = [...normalized];
+  for (const item of DEFAULT_ENABLED_NAV_ITEMS) {
+    if (!merged.includes(item)) {
+      merged.push(item);
+    }
+  }
+
+  return merged;
+}
+
+function applyTheme(theme: Theme) {
+  const root = document.documentElement;
+
+  if (theme === "system") {
+    const systemDark = window.matchMedia(
+      "(prefers-color-scheme: dark)",
+    ).matches;
+    root.classList.toggle("dark", systemDark);
+    return;
+  }
+
+  root.classList.toggle("dark", theme === "dark");
+}
+
+function SurfacePanel({
+  icon: Icon,
+  title,
+  description,
+  aside,
+  children,
+}: SurfacePanelProps) {
+  return (
+    <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Icon className="h-4 w-4 text-sky-600" />
+            {title}
+          </div>
+          <p className="text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+        {aside ? <div className="flex items-center gap-2">{aside}</div> : null}
+      </div>
+
+      <div className="mt-5">{children}</div>
+    </article>
+  );
+}
+
+function StatCard({ label, value, description }: StatCardProps) {
+  return (
+    <div className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm">
+      <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6 pb-8">
+      <div className="h-[228px] animate-pulse rounded-[30px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)]" />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+        <div className="h-[320px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+        <div className="h-[320px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+      </div>
+      <div className="h-[420px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+    </div>
+  );
+}
+
+function resolveThemeLabel(theme: Theme) {
+  return THEME_OPTIONS.find((option) => option.id === theme)?.label || "系统";
+}
+
+function resolveLanguageLabel(language: Language) {
+  return (
+    LANGUAGE_OPTIONS.find((option) => option.id === language)?.label || "中文"
+  );
+}
 
 export function AppearanceSettings() {
+  const [loading, setLoading] = useState(true);
   const [theme, setTheme] = useState<Theme>("system");
   const [language, setLanguageState] = useState<Language>("zh");
+  const [enabledThemes, setEnabledThemes] = useState<string[]>(
+    DEFAULT_ENABLED_THEMES,
+  );
+  const [enabledNavItems, setEnabledNavItems] = useState<string[]>(
+    DEFAULT_ENABLED_NAV_ITEMS,
+  );
+  const [
+    appendSelectedTextToRecommendation,
+    setAppendSelectedTextToRecommendation,
+  ] = useState(true);
   const [config, setConfig] = useState<Config | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const { setLanguage: setI18nLanguage } = useI18nPatch();
   const { soundEnabled, setSoundEnabled, playToolcallSound } =
     useSoundContext();
   const { resetOnboarding } = useOnboardingState();
 
-  useEffect(() => {
-    const savedTheme = localStorage.getItem("theme") as Theme | null;
-    if (savedTheme) {
-      setTheme(savedTheme);
+  const loadConfig = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const loadedConfig = await getConfig();
+      setConfig(loadedConfig);
+      setLanguageState((loadedConfig.language || "zh") as Language);
+      setEnabledThemes(
+        loadedConfig.content_creator?.enabled_themes || DEFAULT_ENABLED_THEMES,
+      );
+      setEnabledNavItems(
+        resolveEnabledNavItems(loadedConfig.navigation?.enabled_items),
+      );
+      setAppendSelectedTextToRecommendation(
+        loadedConfig.chat_appearance?.append_selected_text_to_recommendation ??
+          true,
+      );
+    } catch (err) {
+      console.error("加载外观设置失败:", err);
+      setError("加载外观设置失败，请稍后重试。");
+      setConfig(null);
+    } finally {
+      setLoading(false);
     }
-    loadConfig();
   }, []);
 
-  const loadConfig = async () => {
-    try {
-      const c = await getConfig();
-      setConfig(c);
-      setLanguageState((c.language || "zh") as Language);
-    } catch (e) {
-      console.error("加载配置失败:", e);
-    }
-  };
+  useEffect(() => {
+    const savedTheme = localStorage.getItem("theme") as Theme | null;
+    const nextTheme = savedTheme || "system";
+    setTheme(nextTheme);
+    applyTheme(nextTheme);
+    void loadConfig();
+  }, [loadConfig]);
 
-  const handleThemeChange = (newTheme: Theme) => {
-    setTheme(newTheme);
-    localStorage.setItem("theme", newTheme);
-    const root = document.documentElement;
-    if (newTheme === "system") {
-      const systemDark = window.matchMedia(
-        "(prefers-color-scheme: dark)",
-      ).matches;
-      root.classList.toggle("dark", systemDark);
-    } else {
-      root.classList.toggle("dark", newTheme === "dark");
-    }
-  };
+  const workspaceSummary = useMemo(
+    () => ({
+      themeLabel: resolveThemeLabel(theme),
+      languageLabel: resolveLanguageLabel(language),
+      soundsLabel: soundEnabled ? "已开启" : "已关闭",
+    }),
+    [language, soundEnabled, theme],
+  );
 
-  const handleLanguageChange = async (newLanguage: Language) => {
-    if (!config) return;
-    try {
-      const newConfig = { ...config, language: newLanguage };
-      await saveConfig(newConfig);
-      setConfig(newConfig);
-      setLanguageState(newLanguage);
-      setI18nLanguage(newLanguage);
-    } catch (err) {
-      console.error("保存语言设置失败:", err);
-    }
-  };
+  const handleThemeChange = useCallback((nextTheme: Theme) => {
+    setTheme(nextTheme);
+    localStorage.setItem("theme", nextTheme);
+    applyTheme(nextTheme);
+  }, []);
+
+  const handleLanguageChange = useCallback(
+    async (nextLanguage: Language) => {
+      if (!config) {
+        return;
+      }
+
+      const previousConfig = config;
+      const previousLanguage = language;
+      const nextConfig = {
+        ...config,
+        language: nextLanguage,
+      };
+
+      setError(null);
+      setConfig(nextConfig);
+      setLanguageState(nextLanguage);
+      setI18nLanguage(nextLanguage);
+
+      try {
+        await saveConfig(nextConfig);
+      } catch (err) {
+        console.error("保存语言设置失败:", err);
+        setConfig(previousConfig);
+        setLanguageState(previousLanguage);
+        setI18nLanguage(previousLanguage);
+        setError("保存语言设置失败，请重试。");
+      }
+    },
+    [config, language, setI18nLanguage],
+  );
+
+  const handleSoundToggle = useCallback(
+    (checked: boolean) => {
+      setSoundEnabled(checked);
+      if (checked) {
+        playToolcallSound();
+      }
+    },
+    [playToolcallSound, setSoundEnabled],
+  );
+
+  const handleThemeToggle = useCallback(
+    async (themeId: string) => {
+      if (!config) {
+        return;
+      }
+
+      const previousThemes = enabledThemes;
+      const nextThemes = enabledThemes.includes(themeId)
+        ? enabledThemes.filter((item) => item !== themeId)
+        : [...enabledThemes, themeId];
+
+      if (nextThemes.length === 0) {
+        return;
+      }
+
+      const previousConfig = config;
+      const nextConfig = {
+        ...config,
+        content_creator: {
+          ...(config.content_creator || {}),
+          enabled_themes: nextThemes,
+        },
+      };
+
+      setError(null);
+      setEnabledThemes(nextThemes);
+      setConfig(nextConfig);
+
+      try {
+        await saveConfig(nextConfig);
+        window.dispatchEvent(new CustomEvent("theme-config-changed"));
+      } catch (err) {
+        console.error("保存创作模式设置失败:", err);
+        setEnabledThemes(previousThemes);
+        setConfig(previousConfig);
+        setError("保存创作模式设置失败，请重试。");
+      }
+    },
+    [config, enabledThemes],
+  );
+
+  const handleNavItemToggle = useCallback(
+    async (itemId: string) => {
+      if (!config) {
+        return;
+      }
+
+      const previousNavItems = enabledNavItems;
+      const nextItems = enabledNavItems.includes(itemId)
+        ? enabledNavItems.filter((item) => item !== itemId)
+        : [...enabledNavItems, itemId];
+
+      if (nextItems.length === 0) {
+        return;
+      }
+
+      const previousConfig = config;
+      const nextConfig = {
+        ...config,
+        navigation: {
+          ...(config.navigation || {}),
+          enabled_items: nextItems,
+        },
+      };
+
+      setError(null);
+      setEnabledNavItems(nextItems);
+      setConfig(nextConfig);
+
+      try {
+        await saveConfig(nextConfig);
+        window.dispatchEvent(new CustomEvent("nav-config-changed"));
+      } catch (err) {
+        console.error("保存导航设置失败:", err);
+        setEnabledNavItems(previousNavItems);
+        setConfig(previousConfig);
+        setError("保存左侧导航设置失败，请重试。");
+      }
+    },
+    [config, enabledNavItems],
+  );
+
+  const handleRecommendationSelectionToggle = useCallback(
+    async (checked: boolean) => {
+      if (!config) {
+        return;
+      }
+
+      const previousValue = appendSelectedTextToRecommendation;
+      const previousConfig = config;
+      const nextConfig = {
+        ...config,
+        chat_appearance: {
+          ...(config.chat_appearance || {}),
+          append_selected_text_to_recommendation: checked,
+        },
+      };
+
+      setError(null);
+      setAppendSelectedTextToRecommendation(checked);
+      setConfig(nextConfig);
+
+      try {
+        await saveConfig(nextConfig);
+        window.dispatchEvent(new CustomEvent("chat-appearance-config-changed"));
+      } catch (err) {
+        console.error("保存推荐上下文设置失败:", err);
+        setAppendSelectedTextToRecommendation(previousValue);
+        setConfig(previousConfig);
+        setError("保存聊天外观设置失败，请重试。");
+      }
+    },
+    [appendSelectedTextToRecommendation, config],
+  );
 
   const handleResetOnboarding = useCallback(() => {
     resetOnboarding();
     window.location.reload();
   }, [resetOnboarding]);
 
-  const themeOptions = [
-    { id: "light" as Theme, label: "浅色", icon: Sun },
-    { id: "dark" as Theme, label: "深色", icon: Moon },
-    { id: "system" as Theme, label: "系统", icon: Monitor },
-  ];
+  if (loading) {
+    return <LoadingSkeleton />;
+  }
 
   return (
-    <Container>
-      <Section>
-        <SectionTitle>基础外观</SectionTitle>
-
-        <SettingItem>
-          <SettingInfo>
-            <SettingLabel>主题模式</SettingLabel>
-            <SettingDescription>选择应用的主题颜色体系</SettingDescription>
-          </SettingInfo>
-          <ThemeButtonGroup>
-            {themeOptions.map((option) => (
-              <ThemeButton
-                key={option.id}
-                $active={theme === option.id}
-                onClick={() => handleThemeChange(option.id)}
-              >
-                <option.icon />
-                {option.label}
-              </ThemeButton>
-            ))}
-          </ThemeButtonGroup>
-        </SettingItem>
-
-        <SettingItem>
-          <SettingInfo>
-            <SettingLabel>语言</SettingLabel>
-            <SettingDescription>选择应用的显示语言</SettingDescription>
-          </SettingInfo>
-          <LanguageSelector
-            currentLanguage={language}
-            onLanguageChange={handleLanguageChange}
-          />
-        </SettingItem>
-
-        <SettingItem>
-          <SettingInfo>
-            <SettingLabel>
-              <Volume2 className="h-4 w-4" />
-              提示音效
-            </SettingLabel>
-            <SettingDescription>
-              在工具调用和消息生成时播放提示音
-            </SettingDescription>
-          </SettingInfo>
-          <input
-            type="checkbox"
-            checked={soundEnabled}
-            onChange={(e) => {
-              setSoundEnabled(e.target.checked);
-              if (e.target.checked) {
-                playToolcallSound();
-              }
-            }}
-            className="w-4 h-4 rounded border-gray-300"
-          />
-        </SettingItem>
-      </Section>
-
-      <Section>
-        <SectionTitle>初始化</SectionTitle>
-        <SettingItem>
-          <SettingInfo>
-            <SettingLabel>重置向导设置</SettingLabel>
-            <SettingDescription>
-              遇到问题或想重新选择启动选项时，可重新运行初始化向导
-            </SettingDescription>
-          </SettingInfo>
+    <div className="space-y-6 pb-8">
+      {error ? (
+        <div className="flex items-center justify-between gap-4 rounded-[20px] border border-rose-200 bg-rose-50/90 px-4 py-3 text-sm text-rose-700 shadow-sm shadow-slate-950/5">
+          <span>{error}</span>
           <button
-            onClick={handleResetOnboarding}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-input bg-background hover:bg-accent hover:text-accent-foreground text-sm font-medium transition-colors"
+            type="button"
+            onClick={() => void loadConfig()}
+            className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:border-rose-300 hover:bg-rose-50"
           >
-            <RotateCcw className="h-3.5 w-3.5" />
-            重新运行引导
+            重新加载
           </button>
-        </SettingItem>
-      </Section>
-    </Container>
+        </div>
+      ) : null}
+
+      <section className="relative overflow-hidden rounded-[30px] border border-emerald-200/70 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+        <div className="pointer-events-none absolute -left-20 top-[-72px] h-56 w-56 rounded-full bg-emerald-200/30 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-76px] top-[-24px] h-56 w-56 rounded-full bg-sky-200/28 blur-3xl" />
+
+        <div className="relative flex flex-col gap-6 p-6 lg:p-8">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(360px,0.88fr)] xl:items-stretch">
+            <div className="max-w-3xl space-y-5">
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-emerald-700 shadow-sm">
+                APPEARANCE STUDIO
+              </span>
+
+              <div className="space-y-2">
+                <p className="text-[28px] font-semibold tracking-tight text-slate-900">
+                  把界面观感和工作区入口放在同一个视图里调整
+                </p>
+                <p className="max-w-2xl text-sm leading-7 text-slate-600">
+                  主题、语言、提示音效，以及聊天工作区里可见的卡片和导航入口，
+                  都在这里统一维护，不再拆成两张窄页来回切换。
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  主题：{workspaceSummary.themeLabel}
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  语言：{workspaceSummary.languageLabel}
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  提示音效：{workspaceSummary.soundsLabel}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 xl:content-start">
+              <StatCard
+                label="创作模式"
+                value={enabledThemes.length.toString()}
+                description="当前会在新对话入口展示的快捷创作模式数量。"
+              />
+              <StatCard
+                label="侧边入口"
+                value={enabledNavItems.length.toString()}
+                description="工作区左侧边栏默认展示的导航项目数量。"
+              />
+              <StatCard
+                label="推荐上下文"
+                value={appendSelectedTextToRecommendation ? "开启" : "关闭"}
+                description="控制推荐问题时是否自动带上当前选中内容。"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1.16fr)_minmax(320px,0.84fr)]">
+        <SurfacePanel
+          icon={Palette}
+          title="基础外观"
+          description="先确定全局主题、语言和声音反馈，再统一工作区里的视觉节奏。"
+        >
+          <div className="space-y-5">
+            <div className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    主题模式
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    优先控制整个应用的明暗观感，适配不同设备环境。
+                  </p>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                  当前：{resolveThemeLabel(theme)}
+                </span>
+              </div>
+
+              <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                {THEME_OPTIONS.map((option) => {
+                  const active = theme === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => handleThemeChange(option.id)}
+                      className={cn(
+                        "rounded-[20px] border px-4 py-4 text-left transition shadow-sm",
+                        active
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900",
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-current/10 bg-current/10">
+                          <option.icon className="h-5 w-5" />
+                        </div>
+                        {active ? <Check className="h-4 w-4" /> : null}
+                      </div>
+                      <p className="mt-4 text-sm font-semibold">
+                        {option.label}
+                      </p>
+                      <p
+                        className={cn(
+                          "mt-1 text-xs leading-5",
+                          active ? "text-white/70" : "text-slate-500",
+                        )}
+                      >
+                        {option.description}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700">
+                    <Languages className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      界面语言
+                    </h3>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">
+                      切换设置、工作区与提示文案的主要显示语言。
+                    </p>
+                  </div>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                  当前：{resolveLanguageLabel(language)}
+                </span>
+              </div>
+
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                {LANGUAGE_OPTIONS.map((option) => {
+                  const active = language === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      disabled={!config}
+                      onClick={() => void handleLanguageChange(option.id)}
+                      className={cn(
+                        "rounded-[20px] border px-4 py-4 text-left transition shadow-sm",
+                        active
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900",
+                        !config && "cursor-not-allowed opacity-60",
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <p className="text-sm font-semibold">{option.label}</p>
+                        {active ? <Check className="h-4 w-4" /> : null}
+                      </div>
+                      <p
+                        className={cn(
+                          "mt-2 text-xs leading-5",
+                          active ? "text-white/70" : "text-slate-500",
+                        )}
+                      >
+                        {option.hint}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 rounded-[24px] border border-slate-200/80 bg-slate-50/60 px-4 py-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700">
+                  <Volume2 className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    提示音效
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    在工具调用和消息生成时播放提示音，提升状态感知。
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={soundEnabled}
+                onCheckedChange={handleSoundToggle}
+                aria-label="切换提示音效"
+              />
+            </div>
+          </div>
+        </SurfacePanel>
+
+        <SurfacePanel
+          icon={RotateCcw}
+          title="初始化与恢复"
+          description="当你想重新走一遍首次启动流程，或者排查引导配置异常时，从这里恢复。"
+          aside={
+            <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
+              适合排障
+            </span>
+          }
+        >
+          <div className="flex h-full flex-col justify-between gap-5 rounded-[24px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.94)_0%,rgba(248,250,252,0.92)_100%)] p-5">
+            <div className="space-y-4">
+              <div className="inline-flex h-12 w-12 items-center justify-center rounded-[18px] border border-amber-200 bg-amber-50 text-amber-700">
+                <RotateCcw className="h-5 w-5" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-base font-semibold text-slate-900">
+                  重新运行初始化向导
+                </h3>
+                <p className="text-sm leading-6 text-slate-500">
+                  会重新展示首次启动时的关键配置步骤，适合在更换工作方式或排查环境问题时使用。
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="rounded-[18px] border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs leading-5 text-slate-500">
+                重新运行后会刷新当前界面，但不会删除已有的账号、聊天和工作区数据。
+              </div>
+              <button
+                type="button"
+                onClick={handleResetOnboarding}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                <RotateCcw className="h-4 w-4" />
+                重新运行引导
+              </button>
+            </div>
+          </div>
+        </SurfacePanel>
+      </section>
+
+      <SurfacePanel
+        icon={Sparkles}
+        title="工作区与聊天外观"
+        description="合并原来的聊天外观设置，在一个宽版面板里统一控制内容模式、侧边入口和推荐行为。"
+        aside={
+          <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700">
+            已合并旧入口
+          </span>
+        }
+      >
+        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700">
+                  <Palette className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    创作模式卡片
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    这些模式会出现在新对话的快捷创建区域。至少保留一个，避免工作区变成空状态。
+                  </p>
+                </div>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                {enabledThemes.length} 个已启用
+              </span>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2.5">
+              {ALL_CONTENT_THEMES.map((item) => {
+                const active = enabledThemes.includes(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    disabled={!config}
+                    onClick={() => void handleThemeToggle(item.id)}
+                    className={cn(
+                      "rounded-full border px-3.5 py-2 text-sm transition shadow-sm",
+                      active
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900",
+                      !config && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </article>
+
+          <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700">
+                  <LayoutPanelLeft className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">
+                    左侧边栏导航
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-500">
+                    控制工作区左侧常驻入口，保留高频内容即可，减少视觉干扰。
+                  </p>
+                </div>
+              </div>
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                {enabledNavItems.length} 个已显示
+              </span>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2.5">
+              {ALL_NAV_ITEMS.map((item) => {
+                const active = enabledNavItems.includes(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    disabled={!config}
+                    onClick={() => void handleNavItemToggle(item.id)}
+                    className={cn(
+                      "rounded-full border px-3.5 py-2 text-sm transition shadow-sm",
+                      active
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900",
+                      !config && "cursor-not-allowed opacity-60",
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </article>
+        </div>
+
+        <article className="mt-5 rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  推荐自动附带选中内容
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  在文档或画布中有选区时，推荐问题会自动把该段内容作为上下文带入，减少手工复制粘贴。
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 self-end lg:self-auto">
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                {appendSelectedTextToRecommendation ? "已开启" : "已关闭"}
+              </span>
+              <Switch
+                checked={appendSelectedTextToRecommendation}
+                onCheckedChange={(checked) => {
+                  void handleRecommendationSelectionToggle(checked);
+                }}
+                aria-label="切换推荐自动附带选中内容"
+                disabled={!config}
+              />
+            </div>
+          </div>
+        </article>
+      </SurfacePanel>
+    </div>
   );
 }
 

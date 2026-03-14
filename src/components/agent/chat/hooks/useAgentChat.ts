@@ -18,10 +18,8 @@ import {
   stopAsterSession,
   type AgentProcessStatus,
   type SessionInfo,
-  type SkillInfo,
 } from "@/lib/api/agentRuntime";
 import { parseStreamEvent, type StreamEvent } from "@/lib/api/agentStream";
-import { skillsApi } from "@/lib/api/skills";
 import { A2UIFormAPI } from "@/lib/api/a2uiForm";
 import type { A2UIFormData } from "@/components/content-creator/a2ui/types";
 import {
@@ -685,40 +683,6 @@ export function useAgentChat(options: UseAgentChatOptions) {
 
   const createFreshSession = async (): Promise<string | null> => {
     try {
-      const [allProxycastSkills, localInstalledSkills] = await Promise.all([
-        skillsApi.getAll("proxycast").catch(() => []),
-        skillsApi.getInstalledProxyCastSkills().catch(() => []),
-      ]);
-      const detailsByName = new Map<string, SkillInfo>();
-
-      allProxycastSkills
-        .filter((skill) => skill.installed)
-        .forEach((skill) => {
-          const skillName = (
-            skill.directory ||
-            skill.key ||
-            skill.name ||
-            ""
-          ).trim();
-          if (!skillName) return;
-          detailsByName.set(skillName, {
-            name: skillName,
-            description: skill.description || undefined,
-            path: `~/.proxycast/skills/${skillName}/SKILL.md`,
-          });
-        });
-
-      localInstalledSkills.forEach((name) => {
-        const skillName = (name || "").trim();
-        if (!skillName || detailsByName.has(skillName)) return;
-        detailsByName.set(skillName, {
-          name: skillName,
-          path: `~/.proxycast/skills/${skillName}/SKILL.md`,
-        });
-      });
-
-      const details = Array.from(detailsByName.values());
-
       // Create new session with CURRENT provider/model as baseline
       // 传递 systemPrompt 用于内容创作等场景
       const resolvedWorkspaceId = getRequiredWorkspaceId();
@@ -727,7 +691,6 @@ export function useAgentChat(options: UseAgentChatOptions) {
         resolvedWorkspaceId,
         model || undefined,
         systemPrompt, // 传递系统提示词
-        details.length > 0 ? details : undefined,
       );
 
       setSessionId(response.session_id);

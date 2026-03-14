@@ -172,6 +172,25 @@ describe("HarnessStatusPanel", () => {
     expect(document.body.textContent).toContain("收起工作台详情");
   });
 
+  it("未激活 skill 时不应渲染技能区块与导航入口", () => {
+    renderPanel({
+      environment: {
+        skillsCount: 0,
+        skillNames: [],
+        memorySignals: ["风格"],
+        contextItemsCount: 2,
+        activeContextCount: 1,
+        contextItemNames: ["需求.md"],
+        contextEnabled: true,
+      },
+    });
+
+    expect(document.body.textContent).not.toContain("已激活技能");
+    expect(
+      document.body.querySelector('button[aria-label="跳转到已激活技能"]'),
+    ).toBeNull();
+  });
+
   it("存在 runtimeStatus 时应在工作台中展示当前执行阶段", () => {
     renderPanel({
       harnessState: createHarnessState({

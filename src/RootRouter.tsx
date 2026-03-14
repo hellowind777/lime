@@ -6,6 +6,7 @@
 import App from "./App";
 import { SmartInputPage } from "./pages/smart-input";
 import { UpdateNotificationPage } from "./pages/update-notification";
+import { BrowserRuntimeDebuggerPage } from "./pages";
 import { Toaster } from "./components/ui/sonner";
 import { AppCrashBoundary } from "./components/layout/AppCrashBoundary";
 
@@ -14,6 +15,7 @@ import { AppCrashBoundary } from "./components/layout/AppCrashBoundary";
  *
  * - /smart-input: 截图对话悬浮窗口（独立 Tauri 窗口，支持语音模式）
  * - /update-notification: 更新提醒悬浮窗口（独立 Tauri 窗口）
+ * - /browser-runtime-debugger: 浏览器运行时独立调试窗口
  * - 其他: 主应用
  */
 export function RootRouter() {
@@ -33,6 +35,15 @@ export function RootRouter() {
     return (
       <AppCrashBoundary>
         <UpdateNotificationPage />
+      </AppCrashBoundary>
+    );
+  }
+
+  if (pathname === "/browser-runtime-debugger") {
+    return (
+      <AppCrashBoundary>
+        <BrowserRuntimeDebuggerPage />
+        <Toaster />
       </AppCrashBoundary>
     );
   }

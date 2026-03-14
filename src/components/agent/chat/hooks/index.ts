@@ -7,7 +7,7 @@
 import { useAsterAgentChat } from "./useAsterAgentChat";
 export { useArtifactAutoPreviewSync } from "./useArtifactAutoPreviewSync";
 
-export type { Topic } from "./useAgentChat";
+export type { Topic } from "./agentChatShared";
 
 /** Hook 配置选项 */
 interface UseAgentChatUnifiedOptions {
@@ -18,6 +18,7 @@ interface UseAgentChatUnifiedOptions {
     context?: import("../types").WriteArtifactContext,
   ) => void;
   workspaceId: string;
+  disableSessionRestore?: boolean;
 }
 
 /**

@@ -43,6 +43,39 @@ export interface ResolveArtifactDisplayStateOptions {
 
 const SLOW_TRANSITION_THRESHOLD_MS = 900;
 
+export function settleLiveArtifactAfterStreamStops(
+  artifact: Artifact | null,
+  options: {
+    streamActive: boolean;
+  },
+): Artifact | null {
+  if (!artifact || options.streamActive) {
+    return artifact;
+  }
+
+  const writePhase = resolveArtifactWritePhase(artifact);
+  const isPendingLike =
+    artifact.status === "pending" ||
+    artifact.status === "streaming" ||
+    writePhase === "preparing" ||
+    writePhase === "streaming" ||
+    writePhase === "persisted";
+
+  if (!isPendingLike || !artifact.content.trim()) {
+    return artifact;
+  }
+
+  return {
+    ...artifact,
+    status: "complete",
+    meta: {
+      ...artifact.meta,
+      writePhase: "completed",
+      isPartial: false,
+    },
+  };
+}
+
 function hasRenderableArtifactContent(artifact: Artifact | null | undefined): boolean {
   return Boolean(artifact?.content.trim());
 }

@@ -18,6 +18,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import type { Page, PageParams } from "@/types/page";
 
 /**
  * 工具卡片数据结构
@@ -33,25 +34,13 @@ interface DynamicToolCard {
   status?: string;
 }
 
-/**
- * 页面类型
- */
-type Page =
-  | "provider-pool"
-  | "api-server"
-  | "agent"
-  | "tools"
-  | "settings"
-  | "plugins"
-  | `plugin:${string}`;
-
 interface ToolCardContextMenuProps {
   /** 工具卡片数据 */
   tool: DynamicToolCard;
   /** 子元素 */
   children: React.ReactNode;
   /** 页面导航回调 */
-  onNavigate: (page: Page) => void;
+  onNavigate: (page: Page, params?: PageParams) => void;
   /** 切换插件启用状态回调 */
   onToggleEnabled?: (pluginId: string, enabled: boolean) => void;
   /** 卸载插件回调 */

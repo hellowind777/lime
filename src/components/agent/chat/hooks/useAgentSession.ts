@@ -41,6 +41,7 @@ import type { AgentRuntimeAdapter } from "./agentRuntimeAdapter";
 interface UseAgentSessionOptions {
   runtime: AgentRuntimeAdapter;
   workspaceId: string;
+  disableSessionRestore: boolean;
   isInitialized: boolean;
   executionStrategy: AsterExecutionStrategy;
   providerTypeRef: MutableRefObject<string>;
@@ -71,6 +72,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   const {
     runtime,
     workspaceId,
+    disableSessionRestore,
     isInitialized,
     executionStrategy,
     providerTypeRef,
@@ -91,7 +93,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   );
 
   const [sessionId, setSessionId] = useState<string | null>(() => {
-    if (!workspaceId?.trim()) {
+    if (disableSessionRestore || !workspaceId?.trim()) {
       return null;
     }
 
@@ -109,33 +111,33 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     );
   });
   const [messages, setMessages] = useState<Message[]>(() =>
-    workspaceId?.trim()
-      ? loadTransient<Message[]>(`aster_messages_${workspaceId.trim()}`, [])
-      : [],
+    disableSessionRestore || !workspaceId?.trim()
+      ? []
+      : loadTransient<Message[]>(`aster_messages_${workspaceId.trim()}`, []),
   );
   const [threadTurns, setThreadTurns] = useState<AgentThreadTurn[]>(() =>
-    workspaceId?.trim()
-      ? loadTransient<AgentThreadTurn[]>(
+    disableSessionRestore || !workspaceId?.trim()
+      ? []
+      : loadTransient<AgentThreadTurn[]>(
           `aster_thread_turns_${workspaceId.trim()}`,
           [],
-        )
-      : [],
+        ),
   );
   const [threadItems, setThreadItems] = useState<AgentThreadItem[]>(() =>
-    workspaceId?.trim()
-      ? loadTransient<AgentThreadItem[]>(
+    disableSessionRestore || !workspaceId?.trim()
+      ? []
+      : loadTransient<AgentThreadItem[]>(
           `aster_thread_items_${workspaceId.trim()}`,
           [],
-        )
-      : [],
+        ),
   );
   const [currentTurnId, setCurrentTurnId] = useState<string | null>(() =>
-    workspaceId?.trim()
-      ? loadTransient<string | null>(
+    disableSessionRestore || !workspaceId?.trim()
+      ? null
+      : loadTransient<string | null>(
           `aster_curr_turnId_${workspaceId.trim()}`,
           null,
-        )
-      : null,
+        ),
   );
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurnSnapshot[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -220,7 +222,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   }, [currentTurnId, scopedKeys, workspaceId]);
 
   useEffect(() => {
-    if (!workspaceId?.trim()) {
+    if (disableSessionRestore || !workspaceId?.trim()) {
       setSessionId(null);
       setMessages([]);
       setThreadTurns([]);
@@ -231,7 +233,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       resetStreamingRefs();
       restoredWorkspaceRef.current = null;
       hydratedSessionRef.current = null;
-      skipAutoRestoreRef.current = false;
+      skipAutoRestoreRef.current = disableSessionRestore;
       return;
     }
 
@@ -265,6 +267,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     hydratedSessionRef.current = null;
     skipAutoRestoreRef.current = false;
   }, [
+    disableSessionRestore,
     resetPendingActions,
     resetStreamingRefs,
     scopedKeys,
@@ -356,11 +359,17 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setTopics((prev) => [
           {
             id: newSessionId,
-            title: sessionName?.trim() || "新话题",
+            title: sessionName?.trim() || "新任务",
             createdAt: now,
             updatedAt: now,
             messagesCount: 0,
             executionStrategy,
+            status: "draft",
+            lastPreview: "等待你补充任务需求后开始执行。",
+            isPinned: false,
+            hasUnread: false,
+            tag: null,
+            sourceSessionId: newSessionId,
           },
           ...prev.filter((topic) => topic.id !== newSessionId),
         ]);
@@ -385,8 +394,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         void loadTopics();
         return newSessionId;
       } catch (error) {
-        console.error("[AsterChat] 创建新话题失败:", error);
-        toast.error(`创建新话题失败: ${error}`);
+        console.error("[AsterChat] 创建新任务失败:", error);
+        toast.error(`创建新任务失败: ${error}`);
         return null;
       }
     },
@@ -411,7 +420,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
 
   const clearMessages = useCallback(
     (options: ClearMessagesOptions = {}) => {
-      const { showToast = true, toastMessage = "新话题已创建" } = options;
+      const { showToast = true, toastMessage = "新任务已创建" } = options;
 
       const scopedSessionKey = scopedKeys.currentSessionKey;
       const scopedPersistedSessionKey = scopedKeys.persistedSessionKey;
@@ -581,6 +590,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     const resolvedWorkspaceId = workspaceId?.trim();
     if (!resolvedWorkspaceId) return;
     if (!isInitialized) return;
+    if (disableSessionRestore) return;
     if (!topicsReady) return;
     if (skipAutoRestoreRef.current) return;
     if (sessionId) return;
@@ -611,6 +621,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     });
   }, [
     isInitialized,
+    disableSessionRestore,
     sessionId,
     scopedKeys,
     switchTopic,
@@ -695,10 +706,10 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           saveTransient(scopedKeys.currentTurnKey, null);
         }
 
-        toast.success("话题已删除");
+        toast.success("任务已删除");
       } catch (error) {
-        console.error("[AsterChat] 删除话题失败:", error);
-        toast.error("删除话题失败");
+        console.error("[AsterChat] 删除任务失败:", error);
+        toast.error("删除任务失败");
       }
     },
     [
@@ -721,9 +732,9 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       try {
         await runtime.renameSession(topicId, normalizedTitle);
         await loadTopics();
-        toast.success("话题已重命名");
+        toast.success("任务已重命名");
       } catch (error) {
-        console.error("[AsterChat] 重命名话题失败:", error);
+        console.error("[AsterChat] 重命名任务失败:", error);
         toast.error("重命名失败");
       }
     },
@@ -742,6 +753,49 @@ export function useAgentSession(options: UseAgentSessionOptions) {
             : topic,
         ),
       );
+    },
+    [],
+  );
+
+  const updateTopicSnapshot = useCallback(
+    (
+      targetSessionId: string,
+      snapshot: Partial<
+        Pick<
+          Topic,
+          "updatedAt" | "messagesCount" | "status" | "lastPreview" | "hasUnread"
+        >
+      >,
+    ) => {
+      setTopics((prev) => {
+        let changed = false;
+        const nextTopics = prev.map((topic) => {
+          if (topic.id !== targetSessionId) {
+            return topic;
+          }
+
+          const nextTopic = {
+            ...topic,
+            ...snapshot,
+          };
+
+          const unchanged =
+            nextTopic.messagesCount === topic.messagesCount &&
+            nextTopic.status === topic.status &&
+            nextTopic.lastPreview === topic.lastPreview &&
+            nextTopic.hasUnread === topic.hasUnread &&
+            nextTopic.updatedAt?.getTime() === topic.updatedAt?.getTime();
+
+          if (unchanged) {
+            return topic;
+          }
+
+          changed = true;
+          return nextTopic;
+        });
+
+        return changed ? nextTopics : prev;
+      });
     },
     [],
   );
@@ -773,5 +827,6 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     deleteMessage,
     editMessage,
     updateTopicExecutionStrategy,
+    updateTopicSnapshot,
   };
 }

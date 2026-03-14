@@ -8,7 +8,14 @@
  * 所有数据均来自真实后端接口，不使用 Mock 数据。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   AlertCircle,
   BrainCircuit,
@@ -31,6 +38,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
 import type { MemoryPageParams, Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
 import { getConfig, saveConfig, type Config } from "@/lib/api/appConfig";
@@ -221,6 +229,15 @@ const DEFAULT_MEMORY_CONFIG: TauriMemoryConfig = {
   auto_cleanup: true,
 };
 
+const PRIMARY_BUTTON_CLASS_NAME =
+  "inline-flex items-center gap-2 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60";
+const SECONDARY_BUTTON_CLASS_NAME =
+  "inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60";
+const INPUT_CLASS_NAME =
+  "w-full rounded-[16px] border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60";
+const PANEL_CLASS_NAME =
+  "rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5";
+
 function formatStorageSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
@@ -342,6 +359,104 @@ function normalizeCategoryStats(
   }));
 }
 
+function SurfacePanel({
+  icon: Icon,
+  title,
+  description,
+  aside,
+  children,
+  className,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn(PANEL_CLASS_NAME, className)}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Icon className="h-4 w-4 text-sky-600" />
+            {title}
+          </div>
+          <p className="text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+        {aside ? (
+          <div className="flex flex-wrap items-center gap-2">{aside}</div>
+        ) : null}
+      </div>
+
+      <div className="mt-5">{children}</div>
+    </section>
+  );
+}
+
+function SummaryStat({
+  label,
+  value,
+  description,
+}: {
+  label: string;
+  value: string;
+  description: string;
+}) {
+  return (
+    <div className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm">
+      <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function StatusPill({
+  tone,
+  children,
+}: {
+  tone: "neutral" | "success" | "warning";
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn(
+        "rounded-full border px-3 py-1 text-xs font-medium",
+        tone === "success" &&
+          "border-emerald-200 bg-emerald-50 text-emerald-700",
+        tone === "warning" &&
+          "border-amber-200 bg-amber-50 text-amber-700",
+        tone === "neutral" &&
+          "border-slate-200 bg-white text-slate-500",
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6 pb-8">
+      <div className="h-[244px] animate-pulse rounded-[30px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)]" />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.16fr)_minmax(340px,0.84fr)]">
+        <div className="h-[340px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+        <div className="h-[340px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+      </div>
+      <div className="h-[540px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+      <div className="grid gap-6 xl:grid-cols-2">
+        <div className="h-[280px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+        <div className="h-[280px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+      </div>
+    </div>
+  );
+}
+
 function EmptyMemoryState({
   onAnalyze,
   loading,
@@ -352,18 +467,19 @@ function EmptyMemoryState({
   disabled: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-dashed p-8 text-center bg-muted/20">
-      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-        <BrainCircuit className="h-6 w-6 text-primary" />
+    <div className="rounded-[30px] border border-dashed border-slate-200 bg-[linear-gradient(135deg,rgba(244,251,248,0.96)_0%,rgba(255,255,255,0.94)_100%)] p-8 text-center shadow-sm shadow-slate-950/5">
+      <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-50">
+        <BrainCircuit className="h-6 w-6 text-emerald-600" />
       </div>
-      <h3 className="text-lg font-semibold mb-2">暂无记忆</h3>
-      <p className="text-sm text-muted-foreground mx-auto max-w-xl mb-6 leading-relaxed">
+      <h3 className="mb-2 text-lg font-semibold text-slate-900">暂无记忆</h3>
+      <p className="mx-auto mb-6 max-w-xl text-sm leading-7 text-slate-500">
         记忆提取是渐进式能力。积累更多真实对话后，系统会抽取并沉淀更稳定的可用信息。
       </p>
       <button
+        type="button"
         onClick={onAnalyze}
         disabled={loading || disabled}
-        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-60"
+        className={PRIMARY_BUTTON_CLASS_NAME}
       >
         {loading ? (
           <>
@@ -394,7 +510,7 @@ function MemoryEntryCollection({
 }) {
   if (entries.length === 0) {
     return (
-      <div className="rounded-lg border p-4 text-sm text-muted-foreground">
+      <div className="rounded-[24px] border border-dashed border-slate-200 bg-slate-50/70 p-6 text-sm leading-6 text-slate-500">
         当前筛选条件下暂无记忆条目
       </div>
     );
@@ -402,7 +518,7 @@ function MemoryEntryCollection({
 
   if (viewMode === "grid") {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
         {entries.map((entry) => {
           const meta = CATEGORY_META[entry.category];
           const selected = selectedEntryId === entry.id;
@@ -410,31 +526,46 @@ function MemoryEntryCollection({
           return (
             <button
               key={entry.id}
+              type="button"
               onClick={() => onSelect(entry.id)}
               className={cn(
-                "rounded-lg border p-3 text-left transition-colors",
+                "rounded-[24px] border p-4 text-left transition shadow-sm",
                 selected
-                  ? "border-primary bg-primary/5"
-                  : "hover:bg-muted/50 hover:border-muted-foreground/30",
+                  ? "border-sky-200 bg-sky-50/70 shadow-slate-950/5"
+                  : "border-slate-200/80 bg-white hover:border-slate-300 hover:bg-slate-50/80 hover:shadow-slate-950/5",
               )}
             >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium truncate">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                      {meta.label}
+                    </span>
+                    <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                      {memorySourceLabel(entry.source)}
+                    </span>
+                  </div>
+                  <div className="truncate text-base font-semibold text-slate-900">
                     {entry.title}
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {meta.label} · {entry.session_id}
-                  </div>
                 </div>
-                <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                <span className="whitespace-nowrap text-[11px] text-slate-400">
                   {formatRelativeTimestamp(entry.updated_at)}
                 </span>
               </div>
 
-              <p className="text-xs text-muted-foreground line-clamp-3">
+              <p className="mt-3 text-sm leading-6 text-slate-500 line-clamp-3">
                 {entry.summary || "暂无摘要"}
               </p>
+
+              <div className="mt-4 flex items-center justify-between gap-2">
+                <span className="truncate text-xs text-slate-400">
+                  {entry.session_id}
+                </span>
+                <span className="text-xs font-medium text-slate-500">
+                  {memoryTypeLabel(entry.memory_type)}
+                </span>
+              </div>
             </button>
           );
         })}
@@ -443,7 +574,7 @@ function MemoryEntryCollection({
   }
 
   return (
-    <div className="rounded-lg border divide-y">
+    <div className="space-y-3">
       {entries.map((entry) => {
         const meta = CATEGORY_META[entry.category];
         const selected = selectedEntryId === entry.id;
@@ -451,27 +582,41 @@ function MemoryEntryCollection({
         return (
           <button
             key={entry.id}
+            type="button"
             onClick={() => onSelect(entry.id)}
             className={cn(
-              "w-full p-4 space-y-2 text-left transition-colors",
-              selected ? "bg-primary/5" : "hover:bg-muted/50",
+              "w-full rounded-[24px] border p-4 text-left transition shadow-sm",
+              selected
+                ? "border-sky-200 bg-sky-50/70 shadow-slate-950/5"
+                : "border-slate-200/80 bg-white hover:border-slate-300 hover:bg-slate-50/80 hover:shadow-slate-950/5",
             )}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-foreground truncate">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                    {meta.label}
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                    {memorySourceLabel(entry.source)}
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500">
+                    {memoryTypeLabel(entry.memory_type)}
+                  </span>
+                </div>
+                <div className="truncate text-base font-semibold text-slate-900">
                   {entry.title}
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">
-                  {meta.label} · {entry.session_id}
+                <div className="truncate text-xs text-slate-400">
+                  {entry.session_id}
                 </div>
               </div>
-              <span className="text-xs text-muted-foreground whitespace-nowrap">
+              <span className="whitespace-nowrap text-xs text-slate-400">
                 {formatRelativeTimestamp(entry.updated_at)}
               </span>
             </div>
 
-            <p className="text-sm text-muted-foreground leading-relaxed line-clamp-2">
+            <p className="text-sm leading-6 text-slate-500 line-clamp-2">
               {entry.summary || "暂无摘要"}
             </p>
 
@@ -480,7 +625,7 @@ function MemoryEntryCollection({
                 {entry.tags.slice(0, 4).map((tag) => (
                   <span
                     key={`${entry.id}-${tag}`}
-                    className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+                    className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-500"
                   >
                     {tag}
                   </span>
@@ -505,7 +650,7 @@ function MemoryDetailPanel({
 }) {
   if (!entry) {
     return (
-      <div className="rounded-lg border p-4 text-sm text-muted-foreground xl:sticky xl:top-4">
+      <div className="rounded-[26px] border border-dashed border-slate-200 bg-white/80 p-6 text-sm leading-6 text-slate-500 shadow-sm shadow-slate-950/5 xl:sticky xl:top-4">
         请选择一条记忆查看详情
       </div>
     );
@@ -514,94 +659,102 @@ function MemoryDetailPanel({
   const meta = CATEGORY_META[entry.category];
 
   return (
-    <div className="rounded-lg border p-4 space-y-4 xl:sticky xl:top-4">
-      <div>
-        <div className="text-xs text-muted-foreground mb-1">记忆标题</div>
-        <div className="text-sm font-medium leading-relaxed">{entry.title}</div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 text-xs">
-        <div>
-          <div className="text-muted-foreground mb-1">记忆类型</div>
-          <div className="font-medium">
-            {memoryTypeLabel(entry.memory_type)}
+    <div className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5 xl:sticky xl:top-4">
+      <div className="space-y-5">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-500">
+              {meta.label}
+            </span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-500">
+              {memoryTypeLabel(entry.memory_type)}
+            </span>
+            <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-500">
+              {memorySourceLabel(entry.source)}
+            </span>
+          </div>
+          <div>
+            <div className="mb-1 text-xs text-slate-400">记忆标题</div>
+            <div className="text-lg font-semibold leading-8 text-slate-900">
+              {entry.title}
+            </div>
           </div>
         </div>
-        <div>
-          <div className="text-muted-foreground mb-1">记忆来源</div>
-          <div className="font-medium">{memorySourceLabel(entry.source)}</div>
-        </div>
-        <div>
-          <div className="text-muted-foreground mb-1">会话 ID</div>
-          <div className="font-medium break-all">{entry.session_id}</div>
-        </div>
-        <div>
-          <div className="text-muted-foreground mb-1">更新时间</div>
-          <div className="font-medium">
-            {formatAbsoluteTimestamp(entry.updated_at)}
+
+        <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
+          <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 p-3">
+            <div className="mb-1 text-slate-400">会话 ID</div>
+            <div className="break-all font-medium">{entry.session_id}</div>
+          </div>
+          <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 p-3">
+            <div className="mb-1 text-slate-400">更新时间</div>
+            <div className="font-medium">
+              {formatAbsoluteTimestamp(entry.updated_at)}
+            </div>
+          </div>
+          <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 p-3">
+            <div className="mb-1 text-slate-400">创建时间</div>
+            <div className="font-medium">
+              {formatAbsoluteTimestamp(entry.created_at)}
+            </div>
+          </div>
+          <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 p-3">
+            <div className="mb-1 text-slate-400">分类</div>
+            <div className="font-medium">{meta.label}</div>
           </div>
         </div>
+
         <div>
-          <div className="text-muted-foreground mb-1">创建时间</div>
-          <div className="font-medium">
-            {formatAbsoluteTimestamp(entry.created_at)}
+          <div className="mb-2 text-xs text-slate-400">摘要内容</div>
+          <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap break-words">
+            {entry.summary || "暂无摘要"}
           </div>
         </div>
+
         <div>
-          <div className="text-muted-foreground mb-1">分类</div>
-          <div className="font-medium">{meta.label}</div>
-        </div>
-      </div>
-
-      <div>
-        <div className="text-xs text-muted-foreground mb-1">摘要内容</div>
-        <div className="text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words rounded bg-muted/30 p-3">
-          {entry.summary || "暂无摘要"}
-        </div>
-      </div>
-
-      <div>
-        <div className="text-xs text-muted-foreground mb-1">详细内容</div>
-        <div className="text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words rounded bg-muted/30 p-3">
-          {entry.content || "暂无内容"}
-        </div>
-      </div>
-
-      <div>
-        <div className="text-xs text-muted-foreground mb-2">标签</div>
-        {entry.tags.length === 0 ? (
-          <div className="text-xs text-muted-foreground">暂无标签</div>
-        ) : (
-          <div className="flex flex-wrap gap-1.5">
-            {entry.tags.map((tag) => (
-              <span
-                key={`${entry.id}-detail-${tag}`}
-                className="inline-flex items-center rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
-              >
-                {tag}
-              </span>
-            ))}
+          <div className="mb-2 text-xs text-slate-400">详细内容</div>
+          <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 p-4 text-sm leading-7 text-slate-700 whitespace-pre-wrap break-words">
+            {entry.content || "暂无内容"}
           </div>
-        )}
-      </div>
+        </div>
 
-      <button
-        onClick={() => onDelete(entry)}
-        disabled={deleting}
-        className="inline-flex w-full items-center justify-center gap-2 rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-600 hover:bg-red-100 disabled:opacity-60"
-      >
-        {deleting ? (
-          <>
-            <Loader2 className="h-4 w-4 animate-spin" />
-            删除中...
-          </>
-        ) : (
-          <>
-            <Trash2 className="h-4 w-4" />
-            删除记忆（不可恢复）
-          </>
-        )}
-      </button>
+        <div>
+          <div className="mb-2 text-xs text-slate-400">标签</div>
+          {entry.tags.length === 0 ? (
+            <div className="text-xs text-slate-500">暂无标签</div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {entry.tags.map((tag) => (
+                <span
+                  key={`${entry.id}-detail-${tag}`}
+                  className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-500"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onDelete(entry)}
+          disabled={deleting}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm font-medium text-rose-700 transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {deleting ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              删除中...
+            </>
+          ) : (
+            <>
+              <Trash2 className="h-4 w-4" />
+              删除记忆（不可恢复）
+            </>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1086,36 +1239,47 @@ export function MemoryPage({ onNavigate, pageParams }: MemoryPageProps) {
       ? "查看全部记忆并触发分析任务"
       : CATEGORY_META[activeSection].description;
 
+  const activeSectionCount =
+    activeCategoryFilter === "all"
+      ? stats.total_entries
+      : (categoryCountMap.get(activeCategoryFilter) ?? 0);
+  const analysisScopeLabel =
+    analysisFromDate || analysisToDate
+      ? `${analysisFromDate || "最早"} - ${analysisToDate || "今天"}`
+      : "全部历史";
+  const projectLayerCard =
+    layerMetrics?.cards.find((card) => card.key === "project") ?? null;
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-      <div className="flex items-center border-b bg-background px-6 py-3">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50/70">
+      <div className="flex items-center border-b border-slate-200/80 bg-white/90 px-6 py-3">
         <CanvasBreadcrumbHeader label="记忆" onBackHome={handleBackHome} />
       </div>
 
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        <aside className="w-[248px] min-w-[248px] border-r bg-card/40 p-3 flex flex-col gap-3">
-          <div className="px-2 py-1">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <BrainCircuit className="h-4 w-4 text-primary" />
+        <aside className="flex w-[272px] min-w-[272px] flex-col gap-4 border-r border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.92)_0%,rgba(248,250,252,0.96)_100%)] p-4">
+          <div className="rounded-[24px] border border-slate-200/80 bg-white/90 p-4 shadow-sm shadow-slate-950/5">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <BrainCircuit className="h-4 w-4 text-sky-600" />
               记忆
             </div>
-            <div className="text-xs text-muted-foreground mt-1">
+            <div className="mt-1 text-xs text-slate-500">
               按 / 搜索，按 1-6 切换视图
             </div>
           </div>
 
           <label className="relative block">
-            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" />
             <input
               ref={searchInputRef}
               value={searchKeyword}
               onChange={(event) => setSearchKeyword(event.target.value)}
               placeholder="搜索标题、摘要或标签"
-              className="w-full rounded-lg border bg-background py-2 pl-9 pr-3 text-sm text-foreground"
+              className="w-full rounded-[16px] border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200"
             />
           </label>
 
-          <div className="space-y-1">
+          <div className="space-y-2">
             {MEMORY_NAV_ITEMS.map((item) => {
               const active = activeSection === item.key;
               const count =
@@ -1126,24 +1290,23 @@ export function MemoryPage({ onNavigate, pageParams }: MemoryPageProps) {
               return (
                 <button
                   key={item.key}
+                  type="button"
                   onClick={() => setActiveSection(item.key)}
                   className={cn(
-                    "w-full rounded-lg border px-3 py-2 text-left transition-colors",
+                    "w-full rounded-[18px] border px-3 py-3 text-left transition shadow-sm",
                     active
-                      ? "border-primary bg-primary/10"
-                      : "border-transparent hover:bg-muted/60",
+                      ? "border-slate-300 bg-white shadow-slate-950/5"
+                      : "border-transparent bg-transparent hover:border-slate-200 hover:bg-white/80 hover:shadow-slate-950/5",
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-2 text-sm font-medium">
-                      <item.icon className="h-4 w-4 text-muted-foreground" />
+                    <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-900">
+                      <item.icon className="h-4 w-4 text-slate-400" />
                       {item.label}
                     </span>
-                    <span className="text-xs text-muted-foreground">
-                      {count}
-                    </span>
+                    <span className="text-xs text-slate-400">{count}</span>
                   </div>
-                  <div className="mt-1 text-xs text-muted-foreground line-clamp-1">
+                  <div className="mt-1 text-xs text-slate-500 line-clamp-1">
                     {item.description}
                   </div>
                 </button>
@@ -1151,477 +1314,684 @@ export function MemoryPage({ onNavigate, pageParams }: MemoryPageProps) {
             })}
           </div>
 
-          <div className="mt-auto rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground leading-relaxed">
+          <div className="mt-auto rounded-[22px] border border-slate-200/80 bg-white/90 p-4 text-xs leading-6 text-slate-500 shadow-sm shadow-slate-950/5">
             记忆页面已接入统一记忆数据库：浏览、分析、删除都直接操作真实数据，不使用
             Mock 数据。
           </div>
         </aside>
 
         <main className="flex-1 min-h-0 overflow-y-auto">
-          <div className="mx-auto max-w-6xl p-6 space-y-6">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h1 className="text-xl font-semibold">{sectionTitle}</h1>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {sectionDescription}
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() =>
-                    onNavigate?.("settings", { tab: SettingsTabs.Memory })
-                  }
-                  className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm hover:bg-muted"
-                >
-                  <Settings2 className="h-3.5 w-3.5" />
-                  记忆设置
-                </button>
-
-                <button
-                  onClick={handleRefresh}
-                  disabled={refreshing || analyzing || loading}
-                  className="inline-flex items-center gap-1.5 rounded border px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-60"
-                >
-                  <RefreshCw
-                    className={cn("h-3.5 w-3.5", refreshing && "animate-spin")}
-                  />
-                  刷新
-                </button>
-
-                <button
-                  onClick={handleAnalyze}
-                  disabled={analyzing || loading || !memoryConfig.enabled}
-                  className="inline-flex items-center gap-1.5 rounded bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-60"
-                >
-                  {analyzing ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      分析中...
-                    </>
-                  ) : (
-                    <>
-                      <CalendarClock className="h-3.5 w-3.5" />
-                      请求记忆分析
-                    </>
+          <div className="mx-auto max-w-[1440px] p-6 lg:p-8">
+            <div className="space-y-6">
+              {message ? (
+                <div
+                  className={cn(
+                    "flex items-center gap-3 rounded-[20px] border px-4 py-3 text-sm shadow-sm shadow-slate-950/5",
+                    message.type === "success"
+                      ? "border-emerald-200 bg-emerald-50/90 text-emerald-700"
+                      : "border-rose-200 bg-rose-50/90 text-rose-700",
                   )}
-                </button>
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="flex items-center justify-center py-12 text-muted-foreground">
-                <Loader2 className="h-5 w-5 animate-spin mr-2" />
-                正在加载记忆数据...
-              </div>
-            ) : (
-              <>
-                <div className="rounded-xl border p-4 bg-gradient-to-br from-primary/5 to-primary/10">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="rounded-lg bg-background/60 p-3">
-                      <div className="text-xs text-muted-foreground mb-1">
-                        记忆条数
-                      </div>
-                      <div className="text-2xl font-semibold text-primary">
-                        {stats.total_entries}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-background/60 p-3">
-                      <div className="text-xs text-muted-foreground mb-1">
-                        存储空间
-                      </div>
-                      <div className="text-2xl font-semibold text-primary">
-                        {formatStorageSize(stats.storage_used)}
-                      </div>
-                    </div>
-                    <div className="rounded-lg bg-background/60 p-3">
-                      <div className="text-xs text-muted-foreground mb-1">
-                        记忆库数
-                      </div>
-                      <div className="text-2xl font-semibold text-primary">
-                        {stats.memory_count}
-                      </div>
-                    </div>
-                  </div>
+                >
+                  {message.type === "success" ? (
+                    <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  )}
+                  <span>{message.text}</span>
                 </div>
+              ) : null}
 
-                <div className="rounded-xl border p-4 bg-card">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                    <div className="text-sm font-medium">三层记忆可用性</div>
-                    <div className="text-xs text-muted-foreground">
-                      已可用 {layerMetrics.readyLayers}/
-                      {layerMetrics.totalLayers} 层
-                    </div>
-                  </div>
+              {loading ? (
+                <LoadingSkeleton />
+              ) : (
+                <>
+                  <section className="relative overflow-hidden rounded-[30px] border border-emerald-200/70 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+                    <div className="pointer-events-none absolute -left-20 top-[-72px] h-56 w-56 rounded-full bg-emerald-200/30 blur-3xl" />
+                    <div className="pointer-events-none absolute right-[-76px] top-[-24px] h-56 w-56 rounded-full bg-sky-200/28 blur-3xl" />
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    {layerMetrics.cards.map((card) => (
-                      <div
-                        key={card.key}
-                        className="rounded-lg border bg-background/60 p-3"
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-xs text-muted-foreground">
-                            {card.title}
+                    <div className="relative flex flex-col gap-6 p-6 lg:p-8">
+                      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.12fr)_minmax(380px,0.88fr)] xl:items-stretch">
+                        <div className="max-w-3xl space-y-5">
+                          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-emerald-700 shadow-sm">
+                            MEMORY HUB
+                          </span>
+
+                          <div className="space-y-2">
+                            <p className="text-[28px] font-semibold tracking-tight text-slate-900">
+                              {sectionTitle}
+                            </p>
+                            <p className="max-w-2xl text-sm leading-7 text-slate-600">
+                              {sectionDescription}
+                              {activeSection === "home"
+                                ? " 统一记忆、上下文记忆和项目记忆会在这里汇总展示。"
+                                : " 这里会聚焦当前分类下的真实记忆条目与分析结果。"}
+                            </p>
                           </div>
-                          <span
-                            className={cn(
-                              "text-[10px] px-2 py-0.5 rounded-full border",
-                              card.available
-                                ? "text-green-700 border-green-200 bg-green-50 dark:text-green-400 dark:border-green-800 dark:bg-green-900/20"
-                                : "text-muted-foreground border-muted",
-                            )}
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusPill
+                              tone={memoryConfig.enabled ? "success" : "warning"}
+                            >
+                              {memoryConfig.enabled ? "记忆已启用" : "记忆已关闭"}
+                            </StatusPill>
+                            <StatusPill tone="neutral">
+                              当前范围 {analysisScopeLabel}
+                            </StatusPill>
+                            <StatusPill tone={projectId ? "success" : "warning"}>
+                              {projectId ? "已选项目" : "未选项目"}
+                            </StatusPill>
+                            <StatusPill tone="neutral">
+                              搜索结果 {filteredEntries.length}
+                            </StatusPill>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-2 xl:content-start">
+                          <SummaryStat
+                            label="记忆条数"
+                            value={stats.total_entries.toString()}
+                            description="当前统一记忆数据库中的全部可用条目。"
+                          />
+                          <SummaryStat
+                            label="存储空间"
+                            value={formatStorageSize(stats.storage_used)}
+                            description="记忆数据库当前已占用的存储体积。"
+                          />
+                          <SummaryStat
+                            label="记忆库数"
+                            value={stats.memory_count.toString()}
+                            description="后端返回的记忆库数量，用于观察整体规模。"
+                          />
+                          <SummaryStat
+                            label="当前结果"
+                            value={activeSectionCount.toString()}
+                            description="当前分类和搜索条件下可浏览的记忆条目数。"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-4 rounded-[24px] border border-white/90 bg-white/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusPill tone="neutral">
+                              当前视图{" "}
+                              {activeSection === "home"
+                                ? "全部分类"
+                                : CATEGORY_META[activeSection].label}
+                            </StatusPill>
+                            <StatusPill tone="neutral">
+                              搜索词 {searchKeyword.trim() || "未设置"}
+                            </StatusPill>
+                          </div>
+                          <p className="text-sm leading-6 text-slate-600">
+                            刷新会重取总览、分类和项目记忆状态。请求记忆分析会按当前日期范围扫描真实历史对话。
+                          </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onNavigate?.("settings", {
+                                tab: SettingsTabs.Memory,
+                              })
+                            }
+                            className={SECONDARY_BUTTON_CLASS_NAME}
                           >
-                            {card.available ? "已生效" : "待完善"}
-                          </span>
-                        </div>
-                        <div className="text-xl font-semibold text-primary mt-1">
-                          {card.value}
-                          <span className="text-sm text-muted-foreground ml-1">
-                            {card.unit}
-                          </span>
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1 leading-relaxed">
-                          {card.description}
-                        </div>
-                        {card.key === "project" && (
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {!projectId ? (
-                              <button
-                                onClick={() => onNavigate?.("projects")}
-                                className="rounded border px-2 py-1 text-[11px] hover:bg-muted"
-                              >
-                                去选择项目
-                              </button>
+                            <Settings2 className="h-4 w-4" />
+                            记忆设置
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRefresh}
+                            disabled={refreshing || analyzing}
+                            className={SECONDARY_BUTTON_CLASS_NAME}
+                          >
+                            <RefreshCw
+                              className={cn(
+                                "h-4 w-4",
+                                refreshing && "animate-spin",
+                              )}
+                            />
+                            刷新
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleAnalyze}
+                            disabled={analyzing || !memoryConfig.enabled}
+                            className={PRIMARY_BUTTON_CLASS_NAME}
+                          >
+                            {analyzing ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                分析中...
+                              </>
                             ) : (
                               <>
-                                {!card.available && (
-                                  <button
-                                    onClick={handleBootstrapProjectMemory}
-                                    disabled={initializingProjectMemory}
-                                    className="rounded border px-2 py-1 text-[11px] hover:bg-muted disabled:opacity-60"
-                                  >
-                                    {initializingProjectMemory
-                                      ? "初始化中..."
-                                      : "一键初始化"}
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => onNavigate?.("style")}
-                                  className="rounded border px-2 py-1 text-[11px] hover:bg-muted"
-                                >
-                                  前往风格资产
-                                </button>
-                                <button
-                                  onClick={() =>
-                                    onNavigate?.("project-detail", {
-                                      projectId,
-                                    })
-                                  }
-                                  className="rounded border px-2 py-1 text-[11px] hover:bg-muted"
-                                >
-                                  前往项目工作台
-                                </button>
+                                <CalendarClock className="h-4 w-4" />
+                                请求记忆分析
                               </>
                             )}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <div className="grid gap-6 xl:grid-cols-[minmax(0,1.16fr)_minmax(340px,0.84fr)]">
+                    <SurfacePanel
+                      icon={BrainCircuit}
+                      title="三层记忆可用性"
+                      description="持续检查统一记忆、上下文记忆和项目记忆是否已经参与当前工作流。"
+                      aside={
+                        <div className="flex items-center gap-2">
+                          <StatusPill
+                            tone={
+                              (layerMetrics?.readyLayers ?? 0) > 0
+                                ? "success"
+                                : "warning"
+                            }
+                          >
+                            已可用 {layerMetrics?.readyLayers ?? 0}/
+                            {layerMetrics?.totalLayers ?? 3} 层
+                          </StatusPill>
+                          <button
+                            type="button"
+                            onClick={handleRefresh}
+                            disabled={refreshing}
+                            className={SECONDARY_BUTTON_CLASS_NAME}
+                          >
+                            <RefreshCw
+                              className={cn(
+                                "h-4 w-4",
+                                refreshing && "animate-spin",
+                              )}
+                            />
+                            刷新
+                          </button>
+                        </div>
+                      }
+                    >
+                      <div className="grid gap-4 lg:grid-cols-3">
+                        {(layerMetrics?.cards ?? []).map((card) => (
+                          <div
+                            key={card.key}
+                            className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96)_0%,rgba(248,250,252,0.92)_100%)] p-4"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="space-y-1">
+                                <p className="text-sm font-semibold text-slate-900">
+                                  {card.title}
+                                </p>
+                                <p className="text-sm leading-6 text-slate-500">
+                                  {card.description}
+                                </p>
+                              </div>
+                              <StatusPill
+                                tone={card.available ? "success" : "warning"}
+                              >
+                                {card.available ? "已生效" : "待完善"}
+                              </StatusPill>
+                            </div>
+
+                            <div className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">
+                              {card.value}
+                              <span className="ml-1 text-sm font-medium text-slate-500">
+                                {card.unit}
+                              </span>
+                            </div>
+
+                            {card.key === "project" ? (
+                              <div className="mt-4 flex flex-wrap items-center gap-2">
+                                {!projectId ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => onNavigate?.("projects")}
+                                    className={SECONDARY_BUTTON_CLASS_NAME}
+                                  >
+                                    去选择项目
+                                  </button>
+                                ) : (
+                                  <>
+                                    {!card.available ? (
+                                      <button
+                                        type="button"
+                                        onClick={handleBootstrapProjectMemory}
+                                        disabled={initializingProjectMemory}
+                                        className={SECONDARY_BUTTON_CLASS_NAME}
+                                      >
+                                        {initializingProjectMemory
+                                          ? "初始化中..."
+                                          : "一键初始化"}
+                                      </button>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => onNavigate?.("style")}
+                                      className={SECONDARY_BUTTON_CLASS_NAME}
+                                    >
+                                      前往风格资产
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        onNavigate?.("project-detail", {
+                                          projectId,
+                                        })
+                                      }
+                                      className={SECONDARY_BUTTON_CLASS_NAME}
+                                    >
+                                      前往项目工作台
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </SurfacePanel>
+
+                    <SurfacePanel
+                      icon={Database}
+                      title="分析工作台"
+                      description="先确定时间范围，再触发记忆分析。最近一次分析结果也会在这里汇总。"
+                    >
+                      <div className="space-y-4">
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          <label className="space-y-2">
+                            <span className="text-xs font-medium text-slate-500">
+                              开始日期
+                            </span>
+                            <input
+                              type="date"
+                              value={analysisFromDate}
+                              onChange={(event) =>
+                                setAnalysisFromDate(event.target.value)
+                              }
+                              className={INPUT_CLASS_NAME}
+                              disabled={analyzing}
+                            />
+                          </label>
+
+                          <label className="space-y-2">
+                            <span className="text-xs font-medium text-slate-500">
+                              结束日期
+                            </span>
+                            <input
+                              type="date"
+                              value={analysisToDate}
+                              onChange={(event) =>
+                                setAnalysisToDate(event.target.value)
+                              }
+                              className={INPUT_CLASS_NAME}
+                              disabled={analyzing}
+                            />
+                          </label>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusPill
+                            tone={memoryConfig.enabled ? "success" : "warning"}
+                          >
+                            {memoryConfig.enabled
+                              ? "当前允许分析"
+                              : "请先开启记忆"}
+                          </StatusPill>
+                          <StatusPill tone="neutral">
+                            分析范围 {analysisScopeLabel}
+                          </StatusPill>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleAnalyze}
+                            disabled={analyzing || !memoryConfig.enabled}
+                            className={PRIMARY_BUTTON_CLASS_NAME}
+                          >
+                            {analyzing ? (
+                              <>
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                分析中...
+                              </>
+                            ) : (
+                              <>
+                                <CalendarClock className="h-4 w-4" />
+                                立即分析
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAnalysisFromDate("");
+                              setAnalysisToDate("");
+                            }}
+                            disabled={
+                              analyzing || (!analysisFromDate && !analysisToDate)
+                            }
+                            className={SECONDARY_BUTTON_CLASS_NAME}
+                          >
+                            清空范围
+                          </button>
+                        </div>
+
+                        {analysisResult ? (
+                          <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                            <div className="text-xs font-medium tracking-[0.12em] text-slate-500">
+                              最近一次分析结果
+                            </div>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              <div className="rounded-[18px] border border-slate-200/80 bg-white/90 p-3">
+                                <p className="text-xs text-slate-500">分析会话</p>
+                                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                  {analysisResult.analyzed_sessions}
+                                </p>
+                              </div>
+                              <div className="rounded-[18px] border border-slate-200/80 bg-white/90 p-3">
+                                <p className="text-xs text-slate-500">扫描消息</p>
+                                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                  {analysisResult.analyzed_messages}
+                                </p>
+                              </div>
+                              <div className="rounded-[18px] border border-slate-200/80 bg-white/90 p-3">
+                                <p className="text-xs text-slate-500">新增记忆</p>
+                                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                  {analysisResult.generated_entries}
+                                </p>
+                              </div>
+                              <div className="rounded-[18px] border border-slate-200/80 bg-white/90 p-3">
+                                <p className="text-xs text-slate-500">去重数量</p>
+                                <p className="mt-2 text-2xl font-semibold text-slate-900">
+                                  {analysisResult.deduplicated_entries}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="rounded-[22px] border border-dashed border-slate-200 bg-slate-50/70 p-4 text-sm leading-6 text-slate-500">
+                            还没有最近一次分析结果。未选择日期时，会分析全部可用历史对话。
                           </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="rounded-lg border p-4 space-y-3">
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    <Database className="h-4 w-4 text-muted-foreground" />
-                    分析范围（可选）
+                    </SurfacePanel>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <label className="text-xs text-muted-foreground space-y-1">
-                      <span className="block">开始日期</span>
-                      <input
-                        type="date"
-                        value={analysisFromDate}
-                        onChange={(event) =>
-                          setAnalysisFromDate(event.target.value)
-                        }
-                        className="w-full rounded border bg-background px-2.5 py-2 text-sm text-foreground"
-                        disabled={analyzing}
-                      />
-                    </label>
+                  {!hasMemoryData ? (
+                    <EmptyMemoryState
+                      onAnalyze={handleAnalyze}
+                      loading={analyzing}
+                      disabled={!memoryConfig.enabled}
+                    />
+                  ) : (
+                    <>
+                      {activeSection === "home" ? (
+                        <SurfacePanel
+                          icon={Home}
+                          title="分类概览"
+                          description="从首页快速切换到具体分类，避免在同一堆条目里横向查找。"
+                        >
+                          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                            {categories.map((item) => {
+                              const meta = CATEGORY_META[item.category];
+                              const Icon = meta.icon;
 
-                    <label className="text-xs text-muted-foreground space-y-1">
-                      <span className="block">结束日期</span>
-                      <input
-                        type="date"
-                        value={analysisToDate}
-                        onChange={(event) =>
-                          setAnalysisToDate(event.target.value)
-                        }
-                        className="w-full rounded border bg-background px-2.5 py-2 text-sm text-foreground"
-                        disabled={analyzing}
-                      />
-                    </label>
+                              return (
+                                <button
+                                  key={item.category}
+                                  type="button"
+                                  onClick={() => setActiveSection(item.category)}
+                                  className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(255,255,255,0.96)_0%,rgba(248,250,252,0.92)_100%)] p-4 text-left transition hover:border-slate-300 hover:shadow-sm"
+                                >
+                                  <div className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                                    <Icon className="h-3.5 w-3.5" />
+                                    {meta.label}
+                                  </div>
+                                  <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+                                    {item.count}
+                                  </div>
+                                  <div className="mt-2 text-sm leading-6 text-slate-500 line-clamp-2">
+                                    {meta.description}
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </SurfacePanel>
+                      ) : null}
 
-                    <button
-                      onClick={() => {
-                        setAnalysisFromDate("");
-                        setAnalysisToDate("");
-                      }}
-                      disabled={
-                        analyzing || (!analysisFromDate && !analysisToDate)
-                      }
-                      className="self-end inline-flex items-center justify-center rounded border px-3 py-2 text-sm hover:bg-muted disabled:opacity-60"
-                    >
-                      清空范围
-                    </button>
-                  </div>
-
-                  <p className="text-xs text-muted-foreground">
-                    未选择日期时，会分析全部可用历史对话。
-                  </p>
-                </div>
-
-                {analysisResult && (
-                  <div className="rounded-lg border p-3 bg-muted/20">
-                    <div className="text-xs text-muted-foreground mb-1">
-                      最近一次分析结果
-                    </div>
-                    <div className="text-sm">
-                      分析会话 {analysisResult.analyzed_sessions} 个，扫描消息{" "}
-                      {analysisResult.analyzed_messages} 条，新增记忆{" "}
-                      {analysisResult.generated_entries} 条，去重{" "}
-                      {analysisResult.deduplicated_entries} 条。
-                    </div>
-                  </div>
-                )}
-
-                {!hasMemoryData ? (
-                  <EmptyMemoryState
-                    onAnalyze={handleAnalyze}
-                    loading={analyzing}
-                    disabled={!memoryConfig.enabled}
-                  />
-                ) : (
-                  <>
-                    {activeSection === "home" && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3">
-                        {categories.map((item) => {
-                          const meta = CATEGORY_META[item.category];
-                          const Icon = meta.icon;
-
-                          return (
+                      <SurfacePanel
+                        icon={viewMode === "list" ? List : LayoutGrid}
+                        title="记忆条目"
+                        description="列表和详情保持同屏，方便批量浏览与单条校验。"
+                        aside={
+                          <div className="inline-flex overflow-hidden rounded-full border border-slate-200 bg-white shadow-sm">
                             <button
-                              key={item.category}
-                              onClick={() => setActiveSection(item.category)}
-                              className="rounded-lg border p-3 bg-card text-left transition-colors hover:bg-muted/30"
+                              type="button"
+                              onClick={() => setViewMode("list")}
+                              className={cn(
+                                "inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition",
+                                viewMode === "list"
+                                  ? "bg-slate-900 text-white"
+                                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+                              )}
                             >
-                              <div className="inline-flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-                                <Icon className="h-3.5 w-3.5" />
-                                {meta.label}
-                              </div>
-                              <div className="text-2xl font-semibold text-primary leading-none mb-1">
-                                {item.count}
-                              </div>
-                              <div className="text-xs text-muted-foreground line-clamp-2">
-                                {meta.description}
-                              </div>
+                              <List className="h-3.5 w-3.5" />
+                              列表
                             </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                            <button
+                              type="button"
+                              onClick={() => setViewMode("grid")}
+                              className={cn(
+                                "inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition",
+                                viewMode === "grid"
+                                  ? "bg-slate-900 text-white"
+                                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900",
+                              )}
+                            >
+                              <LayoutGrid className="h-3.5 w-3.5" />
+                              网格
+                            </button>
+                          </div>
+                        }
+                      >
+                        <div className="mb-5 flex flex-wrap items-center gap-2">
+                          <StatusPill tone="neutral">
+                            当前筛选{" "}
+                            {activeCategoryFilter === "all"
+                              ? "全部分类"
+                              : CATEGORY_META[activeCategoryFilter].label}
+                          </StatusPill>
+                          <StatusPill tone="neutral">
+                            共 {filteredEntries.length} 条结果
+                          </StatusPill>
+                          <StatusPill tone="neutral">
+                            搜索词 {searchKeyword.trim() || "未设置"}
+                          </StatusPill>
+                        </div>
 
-                    <div className="rounded-lg border p-3 space-y-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="text-sm font-medium">记忆条目</div>
+                        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+                          <MemoryEntryCollection
+                            entries={filteredEntries}
+                            viewMode={viewMode}
+                            selectedEntryId={selectedEntryId}
+                            onSelect={setSelectedEntryId}
+                          />
+                          <MemoryDetailPanel
+                            entry={selectedEntry}
+                            deleting={
+                              !!selectedEntry &&
+                              deletingEntryId === selectedEntry.id
+                            }
+                            onDelete={handleDeleteEntry}
+                          />
+                        </div>
+                      </SurfacePanel>
+                    </>
+                  )}
 
-                        <div className="inline-flex rounded border overflow-hidden">
-                          <button
-                            onClick={() => setViewMode("list")}
-                            className={cn(
-                              "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs",
-                              viewMode === "list"
-                                ? "bg-primary text-primary-foreground"
-                                : "hover:bg-muted",
-                            )}
-                          >
-                            <List className="h-3.5 w-3.5" />
-                            列表
-                          </button>
-                          <button
-                            onClick={() => setViewMode("grid")}
-                            className={cn(
-                              "inline-flex items-center gap-1.5 px-3 py-1.5 text-xs",
-                              viewMode === "grid"
-                                ? "bg-primary text-primary-foreground"
-                                : "hover:bg-muted",
-                            )}
-                          >
-                            <LayoutGrid className="h-3.5 w-3.5" />
-                            网格
-                          </button>
+                  <div className="grid gap-6 xl:grid-cols-2">
+                    <SurfacePanel
+                      icon={Settings2}
+                      title="运行策略"
+                      description="这里的开关会立即保存并作用到当前记忆运行时。"
+                      aside={
+                        <StatusPill tone={saving ? "warning" : "neutral"}>
+                          {saving ? "保存中..." : "即时生效"}
+                        </StatusPill>
+                      }
+                    >
+                      <div className="space-y-4">
+                        <div className="flex items-start justify-between gap-4 rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold text-slate-900">
+                              启用记忆功能
+                            </p>
+                            <p className="text-sm leading-6 text-slate-500">
+                              控制是否允许系统继续提取并使用新的记忆。
+                            </p>
+                          </div>
+                          <Switch
+                            aria-label="启用记忆功能"
+                            checked={memoryConfig.enabled}
+                            onCheckedChange={(checked) =>
+                              void saveMemoryConfig("enabled", checked)
+                            }
+                            disabled={saving}
+                          />
+                        </div>
+
+                        <div className="flex items-start justify-between gap-4 rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                          <div className="space-y-1">
+                            <p className="text-sm font-semibold text-slate-900">
+                              自动清理过期记忆
+                            </p>
+                            <p className="text-sm leading-6 text-slate-500">
+                              定期移除超出保留时长的历史记忆，保持长期库干净。
+                            </p>
+                          </div>
+                          <Switch
+                            aria-label="自动清理过期记忆"
+                            checked={memoryConfig.auto_cleanup ?? true}
+                            onCheckedChange={(checked) =>
+                              void saveMemoryConfig("auto_cleanup", checked)
+                            }
+                            disabled={saving}
+                          />
+                        </div>
+
+                        <div className="rounded-[22px] border border-slate-200/80 bg-white/90 p-4 text-sm leading-6 text-slate-500">
+                          记忆关闭后会停止新增条目，但历史条目仍可浏览。删除操作是物理删除，不可恢复。
                         </div>
                       </div>
+                    </SurfacePanel>
 
-                      <div className="text-xs text-muted-foreground">
-                        当前筛选：
-                        {activeCategoryFilter === "all"
-                          ? "全部分类"
-                          : CATEGORY_META[activeCategoryFilter].label}
-                        ，共 {filteredEntries.length} 条结果
-                      </div>
-                    </div>
+                    <SurfacePanel
+                      icon={Database}
+                      title="容量与保留策略"
+                      description="控制长期记忆的规模和历史保留窗口，避免无限增长。"
+                      aside={
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onNavigate?.("settings", { tab: SettingsTabs.Memory })
+                          }
+                          className={SECONDARY_BUTTON_CLASS_NAME}
+                        >
+                          <Settings2 className="h-4 w-4" />
+                          更多设置
+                        </button>
+                      }
+                    >
+                      <div className="space-y-5">
+                        <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">
+                                最大记忆条数
+                              </p>
+                              <p className="text-sm leading-6 text-slate-500">
+                                超出上限后，系统会按策略处理旧条目。
+                              </p>
+                            </div>
+                            <span className="text-sm font-semibold text-slate-900">
+                              {memoryConfig.max_entries || 1000}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-5 gap-2">
+                            {maxEntriesOptions.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() =>
+                                  void saveMemoryConfig("max_entries", option)
+                                }
+                                className={cn(
+                                  "rounded-full border px-3 py-2 text-xs font-medium transition",
+                                  memoryConfig.max_entries === option
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900",
+                                )}
+                                disabled={saving}
+                              >
+                                {option >= 1000 ? `${option / 1000}k` : option}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
 
-                    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
-                      <MemoryEntryCollection
-                        entries={filteredEntries}
-                        viewMode={viewMode}
-                        selectedEntryId={selectedEntryId}
-                        onSelect={setSelectedEntryId}
-                      />
-                      <MemoryDetailPanel
-                        entry={selectedEntry}
-                        deleting={
-                          !!selectedEntry &&
-                          deletingEntryId === selectedEntry.id
-                        }
-                        onDelete={handleDeleteEntry}
-                      />
-                    </div>
-                  </>
-                )}
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="rounded-lg border p-4 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <BrainCircuit className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <h3 className="text-sm font-medium">启用记忆功能</h3>
-                          <p className="text-xs text-muted-foreground">
-                            控制是否允许系统提取并使用记忆
-                          </p>
+                        <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">
+                                记忆保留天数
+                              </p>
+                              <p className="text-sm leading-6 text-slate-500">
+                                只保留最近一段时间内仍有价值的历史记忆。
+                              </p>
+                            </div>
+                            <span className="text-sm font-semibold text-slate-900">
+                              {memoryConfig.retention_days || 30} 天
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-5 gap-2">
+                            {retentionDaysOptions.map((option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                onClick={() =>
+                                  void saveMemoryConfig("retention_days", option)
+                                }
+                                className={cn(
+                                  "rounded-full border px-3 py-2 text-xs font-medium transition",
+                                  memoryConfig.retention_days === option
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-900",
+                                )}
+                                disabled={saving}
+                              >
+                                {option} 天
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                      <input
-                        type="checkbox"
-                        checked={memoryConfig.enabled}
-                        onChange={(event) =>
-                          saveMemoryConfig("enabled", event.target.checked)
-                        }
-                        disabled={saving}
-                        className="w-4 h-4 rounded border-gray-300"
-                      />
-                    </div>
-
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">最大记忆条数</h4>
-                        <span className="text-sm text-primary font-medium">
-                          {memoryConfig.max_entries || 1000}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-5 gap-2">
-                        {maxEntriesOptions.map((option) => (
-                          <button
-                            key={option}
-                            onClick={() =>
-                              saveMemoryConfig("max_entries", option)
-                            }
-                            className={cn(
-                              "rounded border px-2 py-1.5 text-xs",
-                              memoryConfig.max_entries === option
-                                ? "bg-primary text-primary-foreground border-primary"
-                                : "hover:bg-muted",
-                            )}
-                            disabled={saving}
-                          >
-                            {option >= 1000 ? `${option / 1000}k` : option}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                    </SurfacePanel>
                   </div>
 
-                  <div className="rounded-lg border p-4 space-y-4">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-medium">记忆保留天数</h4>
-                        <span className="text-sm text-primary font-medium">
-                          {memoryConfig.retention_days || 30} 天
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-5 gap-2">
-                        {retentionDaysOptions.map((option) => (
-                          <button
-                            key={option}
-                            onClick={() =>
-                              saveMemoryConfig("retention_days", option)
-                            }
-                            className={cn(
-                              "rounded border px-2 py-1.5 text-xs",
-                              memoryConfig.retention_days === option
-                                ? "bg-primary text-primary-foreground border-primary"
-                                : "hover:bg-muted",
-                            )}
-                            disabled={saving}
-                          >
-                            {option} 天
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h4 className="text-sm font-medium">
-                          自动清理过期记忆
-                        </h4>
-                        <p className="text-xs text-muted-foreground">
-                          定期移除超出保留时长的历史记忆
-                        </p>
-                      </div>
-                      <input
-                        type="checkbox"
-                        checked={memoryConfig.auto_cleanup ?? true}
-                        onChange={(event) =>
-                          saveMemoryConfig("auto_cleanup", event.target.checked)
-                        }
-                        disabled={saving}
-                        className="w-4 h-4 rounded border-gray-300"
-                      />
-                    </div>
+                  <div className="flex items-start gap-3 rounded-[22px] border border-slate-200/80 bg-white/90 p-4 text-sm leading-6 text-slate-500 shadow-sm shadow-slate-950/5">
+                    <Info className="mt-0.5 h-4 w-4 flex-shrink-0 text-sky-600" />
+                    <p>
+                      当前页面是记忆工作台，适合浏览、分析和做快速策略调整；更细的来源、画像和自动记忆配置仍然在“记忆设置”页维护。第三层项目记忆当前状态：
+                      {projectLayerCard
+                        ? ` ${projectLayerCard.value}${projectLayerCard.unit}，${projectLayerCard.description}`
+                        : " 暂未加载。"}
+                    </p>
                   </div>
-                </div>
-
-                <div className="flex items-start gap-2 rounded-lg bg-muted/30 p-3 text-xs text-muted-foreground">
-                  <Info className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
-                  <p>
-                    记忆关闭后将停止新增条目；历史条目仍可浏览。删除操作为物理删除，不可恢复。
-                  </p>
-                </div>
-              </>
-            )}
-
-            {message && (
-              <div
-                className={cn(
-                  "flex items-center gap-2 rounded-lg p-3",
-                  message.type === "success"
-                    ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400"
-                    : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-                )}
-              >
-                {message.type === "success" ? (
-                  <CheckCircle2 className="h-4 w-4" />
-                ) : (
-                  <AlertCircle className="h-4 w-4" />
-                )}
-                <span className="text-sm">{message.text}</span>
-              </div>
-            )}
+                </>
+              )}
+            </div>
           </div>
         </main>
       </div>

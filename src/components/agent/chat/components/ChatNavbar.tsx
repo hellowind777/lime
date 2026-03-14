@@ -3,7 +3,10 @@ import {
   Box,
   ChevronDown,
   FolderOpen,
+  Globe,
   Home,
+  PanelRightClose,
+  PanelRightOpen,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -25,6 +28,9 @@ interface ChatNavbarProps {
   onBackToResources?: () => void;
   onToggleSettings?: () => void;
   onBackHome?: () => void;
+  showCanvasToggle?: boolean;
+  isCanvasOpen?: boolean;
+  onToggleCanvas?: () => void;
   projectId?: string | null;
   onProjectChange?: (projectId: string) => void;
   workspaceType?: string;
@@ -40,6 +46,10 @@ interface ChatNavbarProps {
     onAddChapter: () => void;
     onCloseCanvas: () => void;
   } | null;
+  showBrowserAssistEntry?: boolean;
+  browserAssistActive?: boolean;
+  browserAssistLoading?: boolean;
+  onOpenBrowserAssist?: () => void;
 }
 
 export const ChatNavbar: React.FC<ChatNavbarProps> = ({
@@ -51,6 +61,9 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
   onBackToResources,
   onToggleSettings,
   onBackHome,
+  showCanvasToggle = false,
+  isCanvasOpen = false,
+  onToggleCanvas,
   projectId = null,
   onProjectChange,
   workspaceType,
@@ -61,6 +74,10 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
   harnessAttentionLevel = "idle",
   harnessToggleLabel = "Harness",
   novelCanvasControls = null,
+  showBrowserAssistEntry = false,
+  browserAssistActive = false,
+  browserAssistLoading = false,
+  onOpenBrowserAssist,
 }) => {
   return (
     <Navbar>
@@ -71,7 +88,8 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
             size="icon"
             className="h-8 w-8 text-muted-foreground"
             onClick={onBackHome}
-            title="返回首页"
+            title="返回新建任务"
+            aria-label="返回新建任务"
           >
             <Home size={18} />
           </Button>
@@ -97,6 +115,22 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
             <Box size={18} />
           </Button>
         )}
+        {showCanvasToggle ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            onClick={onToggleCanvas}
+            aria-label={isCanvasOpen ? "折叠画布" : "展开画布"}
+            title={isCanvasOpen ? "折叠画布" : "展开画布"}
+          >
+            {isCanvasOpen ? (
+              <PanelRightClose size={18} />
+            ) : (
+              <PanelRightOpen size={18} />
+            )}
+          </Button>
+        ) : null}
         {onBackToProjectManagement && (
           <Button
             variant="outline"
@@ -159,8 +193,25 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
           placeholder="选择项目"
           dropdownSide="bottom"
           dropdownAlign="end"
+          enableManagement={workspaceType === "general"}
           className="h-8 text-xs min-w-[160px] max-w-[220px]"
         />
+
+        {showBrowserAssistEntry ? (
+          <Button
+            type="button"
+            variant={browserAssistActive ? "secondary" : "outline"}
+            size="sm"
+            className="h-8 gap-1.5 px-3 text-xs"
+            onClick={onOpenBrowserAssist}
+            disabled={browserAssistLoading}
+            aria-label="打开浏览器协助"
+            title="在右侧画布打开浏览器协助"
+          >
+            <Globe size={14} />
+            <span>{browserAssistLoading ? "启动中..." : "浏览器协助"}</span>
+          </Button>
+        ) : null}
 
         {showHarnessToggle ? (
           <Button

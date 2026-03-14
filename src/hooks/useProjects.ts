@@ -32,6 +32,8 @@ import { recordWorkspaceRepair } from "@/lib/workspaceHealthTelemetry";
 export interface UseProjectsReturn {
   /** 项目列表 */
   projects: Project[];
+  /** 通用对话项目列表 */
+  generalProjects: Project[];
   /** 筛选后的项目列表 */
   filteredProjects: Project[];
   /** 默认项目 */
@@ -50,6 +52,8 @@ export interface UseProjectsReturn {
   create: (request: CreateProjectRequest) => Promise<Project>;
   /** 更新项目 */
   update: (id: string, update: ProjectUpdate) => Promise<Project>;
+  /** 重命名项目 */
+  rename: (id: string, name: string) => Promise<Project>;
   /** 删除项目 */
   remove: (id: string) => Promise<boolean>;
   /** 获取或创建默认项目 */
@@ -133,6 +137,11 @@ export function useProjects(): UseProjectsReturn {
     return result;
   }, [projects, filter]);
 
+  const generalProjects = useMemo(
+    () => projects.filter((project) => project.workspaceType === "general"),
+    [projects],
+  );
+
   /** 创建项目 */
   const create = useCallback(
     async (request: CreateProjectRequest): Promise<Project> => {
@@ -153,6 +162,21 @@ export function useProjects(): UseProjectsReturn {
   const update = useCallback(
     async (id: string, updateData: ProjectUpdate): Promise<Project> => {
       const project = await updateProject(id, updateData);
+      await refresh();
+      return toProjectView(project);
+    },
+    [refresh],
+  );
+
+  /** 重命名项目 */
+  const rename = useCallback(
+    async (id: string, name: string): Promise<Project> => {
+      const trimmedName = name.trim();
+      if (!trimmedName) {
+        throw new Error("项目名称不能为空");
+      }
+
+      const project = await updateProject(id, { name: trimmedName });
       await refresh();
       return toProjectView(project);
     },
@@ -183,6 +207,7 @@ export function useProjects(): UseProjectsReturn {
 
   return {
     projects,
+    generalProjects,
     filteredProjects,
     defaultProject,
     loading,
@@ -192,6 +217,7 @@ export function useProjects(): UseProjectsReturn {
     refresh,
     create,
     update,
+    rename,
     remove,
     getOrCreateDefault,
   };

@@ -79,4 +79,22 @@ describe("generalAgentPrompt", () => {
     expect(prompt).toContain("当前内容 ID：content-1");
     expect(prompt).toContain("<proposed_plan>");
   });
+
+  it("启用 Browser Assist 时应强制网页任务走 ProxyCast 浏览器会话", () => {
+    const prompt = buildGeneralAgentSystemPrompt("general", {
+      harness: {
+        browserAssistEnabled: true,
+        browserAssistProfileKey: "general_browser_assist",
+      },
+    });
+
+    expect(prompt).toContain("当前通用对话已启用 Browser Assist");
+    expect(prompt).toContain("general_browser_assist");
+    expect(prompt).toContain("Playwright code");
+    expect(prompt).toContain("右侧画布");
+    expect(prompt).toContain("browser session");
+    expect(prompt).toContain("显式给出 URL");
+    expect(prompt).toContain("不得先退化成 WebSearch");
+    expect(prompt).toContain("一旦给了 URL，先打开页面");
+  });
 });

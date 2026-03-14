@@ -1,6 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import { Globe, Image as ImageIcon, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  Compass,
+  Image as ImageIcon,
+  Layers3,
+  Search,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
 import { open } from "@tauri-apps/plugin-shell";
+import { cn } from "@/lib/utils";
 import { getConfig, saveConfig, type Config } from "@/lib/api/appConfig";
 
 type SearchEngine = "google" | "xiaohongshu";
@@ -16,6 +24,41 @@ type MultiSearchEngineOption = {
   url_template: string;
   enabled: boolean;
 };
+
+interface SurfacePanelProps {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  aside?: ReactNode;
+  children: ReactNode;
+}
+
+interface SummaryStatProps {
+  label: string;
+  value: string;
+  description: string;
+}
+
+interface FieldBlockProps {
+  label: string;
+  htmlFor: string;
+  hint?: string;
+  children: ReactNode;
+}
+
+interface StatusPillProps {
+  active: boolean;
+  label: string;
+}
+
+const INPUT_CLASS_NAME =
+  "w-full rounded-[16px] border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200";
+const TEXT_BUTTON_CLASS_NAME =
+  "rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900";
+const ACTION_BUTTON_CLASS_NAME =
+  "rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50";
+const PRIMARY_BUTTON_CLASS_NAME =
+  "rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50";
 
 const PEXELS_APPLY_URL = "https://www.pexels.com/api/new/";
 const PEXELS_DOC_URL = "https://www.pexels.com/api/";
@@ -158,6 +201,128 @@ function parseBoundedInt(
   if (parsed < min) return min;
   if (parsed > max) return max;
   return parsed;
+}
+
+function SurfacePanel({
+  icon: Icon,
+  title,
+  description,
+  aside,
+  children,
+}: SurfacePanelProps) {
+  return (
+    <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Icon className="h-4 w-4 text-sky-600" />
+            {title}
+          </div>
+          <p className="text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+        {aside ? (
+          <div className="flex flex-wrap items-center gap-2">{aside}</div>
+        ) : null}
+      </div>
+
+      <div className="mt-5">{children}</div>
+    </article>
+  );
+}
+
+function SummaryStat({ label, value, description }: SummaryStatProps) {
+  return (
+    <div className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm">
+      <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function FieldBlock({ label, htmlFor, hint, children }: FieldBlockProps) {
+  return (
+    <div className="space-y-2">
+      <label htmlFor={htmlFor} className="text-sm font-medium text-slate-900">
+        {label}
+      </label>
+      {children}
+      {hint ? <p className="text-xs leading-5 text-slate-500">{hint}</p> : null}
+    </div>
+  );
+}
+
+function StatusPill({ active, label }: StatusPillProps) {
+  return (
+    <span
+      className={cn(
+        "rounded-full border px-2.5 py-1 text-xs font-medium",
+        active
+          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+          : "border-slate-200 bg-slate-100 text-slate-500",
+      )}
+    >
+      {label}
+    </span>
+  );
+}
+
+function SecretInput({
+  id,
+  value,
+  placeholder,
+  visible,
+  onToggleVisible,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  placeholder: string;
+  visible: boolean;
+  onToggleVisible: () => void;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <input
+        id={id}
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`${INPUT_CLASS_NAME} pr-20`}
+      />
+      <button
+        type="button"
+        onClick={onToggleVisible}
+        className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+      >
+        {visible ? "隐藏" : "显示"}
+      </button>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6 pb-20">
+      <div className="h-[228px] animate-pulse rounded-[30px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)]" />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+        <div className="space-y-6">
+          <div className="h-[380px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+          <div className="h-[420px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+        </div>
+        <div className="space-y-6">
+          <div className="h-[280px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+          <div className="h-[260px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function WebSearchSettings() {
@@ -348,6 +513,19 @@ export function WebSearchSettings() {
   const pexelsKeyConfigured = draftPexelsApiKey.trim().length > 0;
   const pixabayKeyConfigured = draftPixabayApiKey.trim().length > 0;
 
+  const configuredSearchProviders = [
+    tavilyKeyConfigured,
+    bingSearchKeyConfigured,
+    googleSearchKeyConfigured && googleSearchEngineConfigured,
+    draftProvider === "duckduckgo_instant",
+    draftProvider === "multi_search_engine" || mseCustomEngineReady,
+  ].filter(Boolean).length;
+
+  const providerChainPreview =
+    parseCsv(draftProviderPriority).length > 0
+      ? parseCsv(draftProviderPriority).join(" -> ")
+      : "自动默认链";
+
   const handleSave = async () => {
     if (!config || !hasUnsavedChanges) return;
 
@@ -448,577 +626,698 @@ export function WebSearchSettings() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-40">
-        <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <LoadingSkeleton />;
   }
 
   return (
-    <div className="space-y-4 max-w-3xl pb-20">
-      {message && (
+    <div className="space-y-6 pb-20">
+      {message ? (
         <div
-          className={`rounded-lg border p-3 text-sm ${
+          className={cn(
+            "flex items-center justify-between gap-4 rounded-[20px] border px-4 py-3 text-sm shadow-sm shadow-slate-950/5",
             message.type === "error"
-              ? "border-destructive bg-destructive/10 text-destructive"
-              : "border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
-          }`}
+              ? "border-rose-200 bg-rose-50/90 text-rose-700"
+              : "border-emerald-200 bg-emerald-50/90 text-emerald-700",
+          )}
         >
-          {message.text}
-        </div>
-      )}
-
-      <div className="rounded-lg border p-5 space-y-4">
-        <div className="flex items-center gap-2">
-          <Globe className="h-4 w-4 text-primary" />
-          <div>
-            <h3 className="text-sm font-medium">联网搜索配置</h3>
-            <p className="text-xs text-muted-foreground">
-              使用策略化回退链路统一管理 Tavily / MSE / Bing / Google /
-              DuckDuckGo。
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <label htmlFor="web-search-engine" className="text-sm font-medium">
-            选择搜索引擎
-          </label>
-          <select
-            id="web-search-engine"
-            value={draftEngine}
-            onChange={(e) => setDraftEngine(e.target.value as SearchEngine)}
-            className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="google">Google</option>
-            <option value="xiaohongshu">小红书</option>
-          </select>
-          <p className="text-xs text-muted-foreground">
-            Google 适用于通用搜索，小红书适用于中文生活方式和购物内容。
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <label htmlFor="web-search-provider" className="text-sm font-medium">
-            首选搜索提供商
-          </label>
-          <select
-            id="web-search-provider"
-            value={draftProvider}
-            onChange={(e) =>
-              setDraftProvider(e.target.value as WebSearchProvider)
-            }
-            className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="tavily">Tavily Search API</option>
-            <option value="multi_search_engine">
-              Multi Search Engine v2.0.1
-            </option>
-            <option value="duckduckgo_instant">
-              DuckDuckGo Instant Answer (免费)
-            </option>
-            <option value="bing_search_api">Bing Search API</option>
-            <option value="google_custom_search">
-              Google Custom Search API
-            </option>
-          </select>
-        </div>
-
-        <div className="space-y-2">
-          <label
-            htmlFor="web-search-provider-priority"
-            className="text-sm font-medium"
-          >
-            提供商回退优先级（逗号分隔）
-          </label>
-          <input
-            id="web-search-provider-priority"
-            value={draftProviderPriority}
-            onChange={(e) => setDraftProviderPriority(e.target.value)}
-            placeholder="tavily, multi_search_engine, bing_search_api, google_custom_search, duckduckgo_instant"
-            className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          />
-          <p className="text-xs text-muted-foreground">
-            未填写时会自动使用默认回退链；未知 provider 会被忽略。
-          </p>
-        </div>
-
-        <div className="h-px bg-border/60" />
-
-        <div className="space-y-2">
-          <label
-            htmlFor="web-search-tavily-key"
-            className="text-sm font-medium"
-          >
-            Tavily API Key
-          </label>
-          <div className="flex items-center gap-2">
+          <span>{message.text}</span>
+          {message.type === "error" ? (
             <button
               type="button"
-              onClick={() => void openExternalUrl(TAVILY_APPLY_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
+              onClick={() => void loadConfig()}
+              className="rounded-full border border-current/15 bg-white/80 px-3 py-1.5 text-xs font-medium transition hover:bg-white"
             >
-              申请 Tavily Key
+              重新加载
             </button>
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(TAVILY_DOC_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              查看文档
-            </button>
-          </div>
-          <div className="relative">
-            <input
-              id="web-search-tavily-key"
-              type={showTavilyApiKey ? "text" : "password"}
-              value={draftTavilyApiKey}
-              onChange={(e) => setDraftTavilyApiKey(e.target.value)}
-              placeholder="输入 TAVILY_API_KEY"
-              className="w-full h-10 rounded-md border bg-background px-3 pr-20 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <button
-              type="button"
-              onClick={() => setShowTavilyApiKey((prev) => !prev)}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md border px-2.5 py-1 text-xs"
-            >
-              {showTavilyApiKey ? "隐藏" : "显示"}
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            未填写时会回退环境变量 <code>TAVILY_API_KEY</code>。
-          </p>
+          ) : null}
         </div>
+      ) : null}
 
-        <div className="space-y-2">
-          <label htmlFor="web-search-bing-key" className="text-sm font-medium">
-            Bing Search API Key
-          </label>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(BING_SEARCH_APPLY_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              申请 Bing Key
-            </button>
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(BING_SEARCH_DOC_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              查看文档
-            </button>
-          </div>
-          <div className="relative">
-            <input
-              id="web-search-bing-key"
-              type={showBingSearchApiKey ? "text" : "password"}
-              value={draftBingSearchApiKey}
-              onChange={(e) => setDraftBingSearchApiKey(e.target.value)}
-              placeholder="输入 BING_SEARCH_API_KEY"
-              className="w-full h-10 rounded-md border bg-background px-3 pr-20 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <button
-              type="button"
-              onClick={() => setShowBingSearchApiKey((prev) => !prev)}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md border px-2.5 py-1 text-xs"
-            >
-              {showBingSearchApiKey ? "隐藏" : "显示"}
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            未填写时会回退环境变量 <code>BING_SEARCH_API_KEY</code>。
-          </p>
-        </div>
+      <section className="relative overflow-hidden rounded-[30px] border border-emerald-200/70 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+        <div className="pointer-events-none absolute -left-20 top-[-72px] h-56 w-56 rounded-full bg-emerald-200/30 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-76px] top-[-24px] h-56 w-56 rounded-full bg-sky-200/28 blur-3xl" />
 
-        <div className="space-y-2">
-          <label
-            htmlFor="web-search-google-key"
-            className="text-sm font-medium"
-          >
-            Google Search API Key
-          </label>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(GOOGLE_SEARCH_API_APPLY_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              申请 Google Key
-            </button>
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(GOOGLE_SEARCH_DOC_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              查看文档
-            </button>
-          </div>
-          <div className="relative">
-            <input
-              id="web-search-google-key"
-              type={showGoogleSearchApiKey ? "text" : "password"}
-              value={draftGoogleSearchApiKey}
-              onChange={(e) => setDraftGoogleSearchApiKey(e.target.value)}
-              placeholder="输入 GOOGLE_SEARCH_API_KEY"
-              className="w-full h-10 rounded-md border bg-background px-3 pr-20 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <button
-              type="button"
-              onClick={() => setShowGoogleSearchApiKey((prev) => !prev)}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md border px-2.5 py-1 text-xs"
-            >
-              {showGoogleSearchApiKey ? "隐藏" : "显示"}
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            未填写时会回退环境变量 <code>GOOGLE_SEARCH_API_KEY</code>。
-          </p>
-        </div>
+        <div className="relative flex flex-col gap-6 p-6 lg:p-8">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)] xl:items-stretch">
+            <div className="max-w-3xl space-y-5">
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-emerald-700 shadow-sm">
+                SEARCH STACK
+              </span>
+              <div className="space-y-2">
+                <p className="text-[28px] font-semibold tracking-tight text-slate-900">
+                  统一管理联网搜索链路、回退策略和图片搜索凭证
+                </p>
+                <p className="max-w-2xl text-sm leading-7 text-slate-600">
+                  把搜索入口、Provider 回退链、MSE 聚合参数和图片搜索 Key
+                  放在同一个宽版视图里，不再让长表单把信息挤成一列。
+                </p>
+              </div>
 
-        <div className="space-y-2">
-          <label
-            htmlFor="web-search-google-engine-id"
-            className="text-sm font-medium"
-          >
-            Google Search Engine ID (CSE CX)
-          </label>
-          <input
-            id="web-search-google-engine-id"
-            value={draftGoogleSearchEngineId}
-            onChange={(e) => setDraftGoogleSearchEngineId(e.target.value)}
-            placeholder="输入 GOOGLE_SEARCH_ENGINE_ID"
-            className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(GOOGLE_SEARCH_CSE_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              创建 CSE
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            未填写时会回退环境变量 <code>GOOGLE_SEARCH_ENGINE_ID</code>。
-          </p>
-        </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  搜索引擎：{draftEngine === "google" ? "Google" : "小红书"}
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  首选 Provider：{draftProvider}
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  当前回退链：{providerChainPreview}
+                </span>
+              </div>
+            </div>
 
-        <div className="h-px bg-border/60" />
-
-        <div className="space-y-2">
-          <label
-            htmlFor="web-search-mse-priority"
-            className="text-sm font-medium"
-          >
-            Multi Search Engine 引擎优先级（逗号分隔）
-          </label>
-          <input
-            id="web-search-mse-priority"
-            value={draftMsePriority}
-            onChange={(e) => setDraftMsePriority(e.target.value)}
-            placeholder="google, bing, duckduckgo, brave"
-            className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          />
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(MSE_DOC_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              查看 MSE 设计参考
-            </button>
-          </div>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="space-y-2">
-            <label
-              htmlFor="web-search-mse-max-per-engine"
-              className="text-sm font-medium"
-            >
-              每引擎结果上限
-            </label>
-            <input
-              id="web-search-mse-max-per-engine"
-              value={draftMseMaxResultsPerEngine}
-              onChange={(e) => setDraftMseMaxResultsPerEngine(e.target.value)}
-              className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-          <div className="space-y-2">
-            <label
-              htmlFor="web-search-mse-max-total"
-              className="text-sm font-medium"
-            >
-              聚合结果总上限
-            </label>
-            <input
-              id="web-search-mse-max-total"
-              value={draftMseMaxTotalResults}
-              onChange={(e) => setDraftMseMaxTotalResults(e.target.value)}
-              className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-          <div className="space-y-2">
-            <label
-              htmlFor="web-search-mse-timeout"
-              className="text-sm font-medium"
-            >
-              单引擎超时 (ms)
-            </label>
-            <input
-              id="web-search-mse-timeout"
-              value={draftMseTimeoutMs}
-              onChange={(e) => setDraftMseTimeoutMs(e.target.value)}
-              className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <label
-            htmlFor="web-search-mse-custom-engine-name"
-            className="text-sm font-medium"
-          >
-            自定义引擎名称（可选）
-          </label>
-          <input
-            id="web-search-mse-custom-engine-name"
-            value={draftMseCustomEngineName}
-            onChange={(e) => setDraftMseCustomEngineName(e.target.value)}
-            placeholder="例如: hn"
-            className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          />
-          <label
-            htmlFor="web-search-mse-custom-engine-template"
-            className="text-sm font-medium"
-          >
-            自定义引擎 URL 模板（必须包含 {"{query}"}）
-          </label>
-          <input
-            id="web-search-mse-custom-engine-template"
-            value={draftMseCustomEngineTemplate}
-            onChange={(e) => setDraftMseCustomEngineTemplate(e.target.value)}
-            placeholder="https://example.com/search?q={query}"
-            className="w-full h-10 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-          />
-        </div>
-      </div>
-
-      <div className="rounded-lg border p-5 space-y-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <ImageIcon className="h-4 w-4 text-primary" />
-            <div>
-              <h3 className="text-sm font-medium">联网图片搜索</h3>
-              <p className="text-xs text-muted-foreground">
-                配置插图页「图片搜索 → 联网搜索」使用的 Pexels API Key。
-              </p>
+            <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 xl:content-start">
+              <SummaryStat
+                label="已就绪 Provider"
+                value={configuredSearchProviders.toString()}
+                description="按当前表单状态估算，可直接参与回退链的搜索来源。"
+              />
+              <SummaryStat
+                label="图片搜索 Key"
+                value={[pexelsKeyConfigured, pixabayKeyConfigured]
+                  .filter(Boolean)
+                  .length.toString()}
+                description="用于插图页联网图片搜索的可用 API Key 数量。"
+              />
+              <SummaryStat
+                label="待保存变更"
+                value={hasUnsavedChanges ? "有" : "无"}
+                description="修改搜索引擎、Key 或聚合参数后统一在底部保存。"
+              />
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1">
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
-                pexelsKeyConfigured
-                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              Pexels {pexelsKeyConfigured ? "已填写" : "未填写"}
-            </span>
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
-                pixabayKeyConfigured
-                  ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                  : "bg-muted text-muted-foreground"
-              }`}
-            >
-              Pixabay {pixabayKeyConfigured ? "已填写" : "未填写"}
-            </span>
-          </div>
+        </div>
+      </section>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+        <div className="space-y-6">
+          <SurfacePanel
+            icon={Search}
+            title="联网搜索配置"
+            description="先确定搜索引擎和首选 Provider，再补齐回退顺序与所需凭证。"
+            aside={
+              <>
+                <StatusPill
+                  active={draftEngine === "google"}
+                  label={
+                    draftEngine === "google" ? "通用搜索优先" : "小红书内容优先"
+                  }
+                />
+                <StatusPill
+                  active={draftProvider === "duckduckgo_instant"}
+                  label={`当前 Provider：${draftProvider}`}
+                />
+              </>
+            }
+          >
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <div className="space-y-4">
+                  <FieldBlock
+                    label="选择搜索引擎"
+                    htmlFor="web-search-engine"
+                    hint="Google 适用于通用搜索，小红书适用于中文生活方式和购物内容。"
+                  >
+                    <select
+                      id="web-search-engine"
+                      value={draftEngine}
+                      onChange={(e) =>
+                        setDraftEngine(e.target.value as SearchEngine)
+                      }
+                      className={`${INPUT_CLASS_NAME} h-11`}
+                    >
+                      <option value="google">Google</option>
+                      <option value="xiaohongshu">小红书</option>
+                    </select>
+                  </FieldBlock>
+
+                  <FieldBlock
+                    label="首选搜索提供商"
+                    htmlFor="web-search-provider"
+                  >
+                    <select
+                      id="web-search-provider"
+                      value={draftProvider}
+                      onChange={(e) =>
+                        setDraftProvider(e.target.value as WebSearchProvider)
+                      }
+                      className={`${INPUT_CLASS_NAME} h-11`}
+                    >
+                      <option value="tavily">Tavily Search API</option>
+                      <option value="multi_search_engine">
+                        Multi Search Engine v2.0.1
+                      </option>
+                      <option value="duckduckgo_instant">
+                        DuckDuckGo Instant Answer (免费)
+                      </option>
+                      <option value="bing_search_api">Bing Search API</option>
+                      <option value="google_custom_search">
+                        Google Custom Search API
+                      </option>
+                    </select>
+                  </FieldBlock>
+
+                  <FieldBlock
+                    label="提供商回退优先级（逗号分隔）"
+                    htmlFor="web-search-provider-priority"
+                    hint="未填写时会自动使用默认回退链；未知 provider 会被忽略。"
+                  >
+                    <input
+                      id="web-search-provider-priority"
+                      value={draftProviderPriority}
+                      onChange={(e) => setDraftProviderPriority(e.target.value)}
+                      placeholder="tavily, multi_search_engine, bing_search_api, google_custom_search, duckduckgo_instant"
+                      className={INPUT_CLASS_NAME}
+                    />
+                  </FieldBlock>
+                </div>
+              </article>
+
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <div className="space-y-4">
+                  <div className="rounded-[20px] border border-slate-200/80 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Provider 凭证状态
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <StatusPill
+                        active={tavilyKeyConfigured}
+                        label={`Tavily ${tavilyKeyConfigured ? "已填写" : "未填写"}`}
+                      />
+                      <StatusPill
+                        active={bingSearchKeyConfigured}
+                        label={`Bing ${bingSearchKeyConfigured ? "已填写" : "未填写"}`}
+                      />
+                      <StatusPill
+                        active={googleSearchKeyConfigured}
+                        label={`Google ${googleSearchKeyConfigured ? "已填写" : "未填写"}`}
+                      />
+                      <StatusPill
+                        active={googleSearchEngineConfigured}
+                        label={`CSE ${googleSearchEngineConfigured ? "已填写" : "未填写"}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="rounded-[20px] border border-slate-200/80 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      当前回退预览
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      {providerChainPreview}
+                    </p>
+                  </div>
+
+                  <div className="rounded-[20px] border border-slate-200/80 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      配置建议
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      如果需要更稳定的通用联网搜索，优先补齐 Tavily、Bing 或
+                      Google Custom Search；MSE 更适合做聚合兜底。
+                    </p>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </SurfacePanel>
+
+          <SurfacePanel
+            icon={ShieldCheck}
+            title="Provider 凭证"
+            description="把 Tavily、Bing、Google Custom Search 的 Key 放在同一块配置，减少来回跳转。"
+          >
+            <div className="grid gap-4 xl:grid-cols-2">
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <FieldBlock
+                  label="Tavily API Key"
+                  htmlFor="web-search-tavily-key"
+                  hint="未填写时会回退环境变量 TAVILY_API_KEY。"
+                >
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(TAVILY_APPLY_URL)}
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        申请 Tavily Key
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(TAVILY_DOC_URL)}
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        查看文档
+                      </button>
+                    </div>
+                    <SecretInput
+                      id="web-search-tavily-key"
+                      value={draftTavilyApiKey}
+                      placeholder="输入 TAVILY_API_KEY"
+                      visible={showTavilyApiKey}
+                      onToggleVisible={() =>
+                        setShowTavilyApiKey((prev) => !prev)
+                      }
+                      onChange={setDraftTavilyApiKey}
+                    />
+                  </>
+                </FieldBlock>
+              </article>
+
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <FieldBlock
+                  label="Bing Search API Key"
+                  htmlFor="web-search-bing-key"
+                  hint="未填写时会回退环境变量 BING_SEARCH_API_KEY。"
+                >
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void openExternalUrl(BING_SEARCH_APPLY_URL)
+                        }
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        申请 Bing Key
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void openExternalUrl(BING_SEARCH_DOC_URL)
+                        }
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        查看文档
+                      </button>
+                    </div>
+                    <SecretInput
+                      id="web-search-bing-key"
+                      value={draftBingSearchApiKey}
+                      placeholder="输入 BING_SEARCH_API_KEY"
+                      visible={showBingSearchApiKey}
+                      onToggleVisible={() =>
+                        setShowBingSearchApiKey((prev) => !prev)
+                      }
+                      onChange={setDraftBingSearchApiKey}
+                    />
+                  </>
+                </FieldBlock>
+              </article>
+
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4 xl:col-span-2">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(280px,0.74fr)]">
+                  <FieldBlock
+                    label="Google Search API Key"
+                    htmlFor="web-search-google-key"
+                    hint="未填写时会回退环境变量 GOOGLE_SEARCH_API_KEY。"
+                  >
+                    <>
+                      <div className="mb-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void openExternalUrl(GOOGLE_SEARCH_API_APPLY_URL)
+                          }
+                          className={TEXT_BUTTON_CLASS_NAME}
+                        >
+                          申请 Google Key
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void openExternalUrl(GOOGLE_SEARCH_DOC_URL)
+                          }
+                          className={TEXT_BUTTON_CLASS_NAME}
+                        >
+                          查看文档
+                        </button>
+                      </div>
+                      <SecretInput
+                        id="web-search-google-key"
+                        value={draftGoogleSearchApiKey}
+                        placeholder="输入 GOOGLE_SEARCH_API_KEY"
+                        visible={showGoogleSearchApiKey}
+                        onToggleVisible={() =>
+                          setShowGoogleSearchApiKey((prev) => !prev)
+                        }
+                        onChange={setDraftGoogleSearchApiKey}
+                      />
+                    </>
+                  </FieldBlock>
+
+                  <FieldBlock
+                    label="Google Search Engine ID (CSE CX)"
+                    htmlFor="web-search-google-engine-id"
+                    hint="未填写时会回退环境变量 GOOGLE_SEARCH_ENGINE_ID。"
+                  >
+                    <>
+                      <div className="mb-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void openExternalUrl(GOOGLE_SEARCH_CSE_URL)
+                          }
+                          className={TEXT_BUTTON_CLASS_NAME}
+                        >
+                          创建 CSE
+                        </button>
+                      </div>
+                      <input
+                        id="web-search-google-engine-id"
+                        value={draftGoogleSearchEngineId}
+                        onChange={(e) =>
+                          setDraftGoogleSearchEngineId(e.target.value)
+                        }
+                        placeholder="输入 GOOGLE_SEARCH_ENGINE_ID"
+                        className={INPUT_CLASS_NAME}
+                      />
+                    </>
+                  </FieldBlock>
+                </div>
+              </article>
+            </div>
+          </SurfacePanel>
+
+          <SurfacePanel
+            icon={Layers3}
+            title="Multi Search Engine"
+            description="集中维护 MSE 聚合顺序、上限、超时和自定义引擎模板。"
+            aside={
+              <StatusPill
+                active={mseCustomEngineReady}
+                label={`自定义模板 ${mseCustomEngineReady ? "可用" : "未配置"}`}
+              />
+            }
+          >
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <div className="space-y-4">
+                  <FieldBlock
+                    label="Multi Search Engine 引擎优先级（逗号分隔）"
+                    htmlFor="web-search-mse-priority"
+                  >
+                    <>
+                      <div className="mb-2">
+                        <button
+                          type="button"
+                          onClick={() => void openExternalUrl(MSE_DOC_URL)}
+                          className={TEXT_BUTTON_CLASS_NAME}
+                        >
+                          查看 MSE 设计参考
+                        </button>
+                      </div>
+                      <input
+                        id="web-search-mse-priority"
+                        value={draftMsePriority}
+                        onChange={(e) => setDraftMsePriority(e.target.value)}
+                        placeholder="google, bing, duckduckgo, brave"
+                        className={INPUT_CLASS_NAME}
+                      />
+                    </>
+                  </FieldBlock>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <FieldBlock
+                      label="每引擎结果上限"
+                      htmlFor="web-search-mse-max-per-engine"
+                    >
+                      <input
+                        id="web-search-mse-max-per-engine"
+                        value={draftMseMaxResultsPerEngine}
+                        onChange={(e) =>
+                          setDraftMseMaxResultsPerEngine(e.target.value)
+                        }
+                        className={INPUT_CLASS_NAME}
+                      />
+                    </FieldBlock>
+                    <FieldBlock
+                      label="聚合结果总上限"
+                      htmlFor="web-search-mse-max-total"
+                    >
+                      <input
+                        id="web-search-mse-max-total"
+                        value={draftMseMaxTotalResults}
+                        onChange={(e) =>
+                          setDraftMseMaxTotalResults(e.target.value)
+                        }
+                        className={INPUT_CLASS_NAME}
+                      />
+                    </FieldBlock>
+                    <FieldBlock
+                      label="单引擎超时 (ms)"
+                      htmlFor="web-search-mse-timeout"
+                    >
+                      <input
+                        id="web-search-mse-timeout"
+                        value={draftMseTimeoutMs}
+                        onChange={(e) => setDraftMseTimeoutMs(e.target.value)}
+                        className={INPUT_CLASS_NAME}
+                      />
+                    </FieldBlock>
+                  </div>
+
+                  <FieldBlock
+                    label="自定义引擎名称（可选）"
+                    htmlFor="web-search-mse-custom-engine-name"
+                  >
+                    <input
+                      id="web-search-mse-custom-engine-name"
+                      value={draftMseCustomEngineName}
+                      onChange={(e) =>
+                        setDraftMseCustomEngineName(e.target.value)
+                      }
+                      placeholder="例如: hn"
+                      className={INPUT_CLASS_NAME}
+                    />
+                  </FieldBlock>
+
+                  <FieldBlock
+                    label={"自定义引擎 URL 模板（必须包含 {query}）"}
+                    htmlFor="web-search-mse-custom-engine-template"
+                  >
+                    <input
+                      id="web-search-mse-custom-engine-template"
+                      value={draftMseCustomEngineTemplate}
+                      onChange={(e) =>
+                        setDraftMseCustomEngineTemplate(e.target.value)
+                      }
+                      placeholder="https://example.com/search?q={query}"
+                      className={INPUT_CLASS_NAME}
+                    />
+                  </FieldBlock>
+                </div>
+              </article>
+
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <div className="space-y-4">
+                  <div className="rounded-[20px] border border-slate-200/80 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      MSE 使用建议
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      优先把常用引擎放在前面，避免总上限太高导致响应慢；超时建议维持在
+                      4s 左右作为桌面端均衡值。
+                    </p>
+                  </div>
+                  <div className="rounded-[20px] border border-slate-200/80 bg-white p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      当前模板状态
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      {mseCustomEngineReady
+                        ? `已准备好自定义引擎：${draftMseCustomEngineName}`
+                        : "自定义引擎还未就绪，需要名称和包含 {query} 的模板。"}
+                    </p>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </SurfacePanel>
         </div>
 
-        <div className="space-y-4">
-          <label
-            htmlFor="web-search-pexels-key"
-            className="text-sm font-medium"
+        <div className="space-y-6">
+          <SurfacePanel
+            icon={ImageIcon}
+            title="联网图片搜索"
+            description="配置插图页“图片搜索 → 联网搜索”使用的 Pexels 与 Pixabay API Key。"
+            aside={
+              <>
+                <StatusPill
+                  active={pexelsKeyConfigured}
+                  label={`Pexels ${pexelsKeyConfigured ? "已填写" : "未填写"}`}
+                />
+                <StatusPill
+                  active={pixabayKeyConfigured}
+                  label={`Pixabay ${pixabayKeyConfigured ? "已填写" : "未填写"}`}
+                />
+              </>
+            }
           >
-            Pexels API Key
-          </label>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(PEXELS_APPLY_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              申请 Pexels Key
-            </button>
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(PEXELS_DOC_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              查看文档
-            </button>
-          </div>
-          <div className="relative">
-            <input
-              id="web-search-pexels-key"
-              type={showPexelsApiKey ? "text" : "password"}
-              value={draftPexelsApiKey}
-              onChange={(e) => setDraftPexelsApiKey(e.target.value)}
-              placeholder="输入 Pexels API Key"
-              className="w-full h-10 rounded-md border bg-background px-3 pr-20 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPexelsApiKey((prev) => !prev)}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md border px-2.5 py-1 text-xs"
-            >
-              {showPexelsApiKey ? "隐藏" : "显示"}
-            </button>
-          </div>
+            <div className="space-y-5">
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <FieldBlock
+                  label="Pexels API Key"
+                  htmlFor="web-search-pexels-key"
+                  hint="未填写时会回退读取环境变量 PEXELS_API_KEY。"
+                >
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(PEXELS_APPLY_URL)}
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        申请 Pexels Key
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(PEXELS_DOC_URL)}
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        查看文档
+                      </button>
+                    </div>
+                    <SecretInput
+                      id="web-search-pexels-key"
+                      value={draftPexelsApiKey}
+                      placeholder="输入 Pexels API Key"
+                      visible={showPexelsApiKey}
+                      onToggleVisible={() =>
+                        setShowPexelsApiKey((prev) => !prev)
+                      }
+                      onChange={setDraftPexelsApiKey}
+                    />
+                  </>
+                </FieldBlock>
 
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
-            <p>
-              未填写时会回退读取环境变量 <code>PEXELS_API_KEY</code>。
-            </p>
-            <p>申请地址：{PEXELS_APPLY_URL}</p>
-            <p>验证路径：插图 → 图片搜索 → 联网搜索。</p>
-          </div>
+                <div className="mt-3 rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-500">
+                  申请地址：{PEXELS_APPLY_URL}
+                  <br />
+                  验证路径：插图 → 图片搜索 → 联网搜索。
+                </div>
+              </article>
 
-          <div className="h-px bg-border/60" />
+              <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <FieldBlock
+                  label="Pixabay API Key"
+                  htmlFor="web-search-pixabay-key"
+                  hint="未填写时会回退读取环境变量 PIXABAY_API_KEY。"
+                >
+                  <>
+                    <div className="mb-2 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(PIXABAY_APPLY_URL)}
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        申请 Pixabay Key
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void openExternalUrl(PIXABAY_DOC_URL)}
+                        className={TEXT_BUTTON_CLASS_NAME}
+                      >
+                        查看文档
+                      </button>
+                    </div>
+                    <SecretInput
+                      id="web-search-pixabay-key"
+                      value={draftPixabayApiKey}
+                      placeholder="输入 Pixabay API Key"
+                      visible={showPixabayApiKey}
+                      onToggleVisible={() =>
+                        setShowPixabayApiKey((prev) => !prev)
+                      }
+                      onChange={setDraftPixabayApiKey}
+                    />
+                  </>
+                </FieldBlock>
 
-          <label
-            htmlFor="web-search-pixabay-key"
-            className="text-sm font-medium"
+                <div className="mt-3 rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-xs leading-5 text-slate-500">
+                  申请地址：{PIXABAY_APPLY_URL}
+                  <br />
+                  验证路径：插图 → 图片搜索 → Pixabay 图库。
+                </div>
+              </article>
+            </div>
+          </SurfacePanel>
+
+          <SurfacePanel
+            icon={Compass}
+            title="观测面板"
+            description="快速判断当前搜索链路是否齐全，便于在保存前做一次配置自检。"
           >
-            Pixabay API Key
-          </label>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(PIXABAY_APPLY_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              申请 Pixabay Key
-            </button>
-            <button
-              type="button"
-              onClick={() => void openExternalUrl(PIXABAY_DOC_URL)}
-              className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
-            >
-              查看文档
-            </button>
-          </div>
-          <div className="relative">
-            <input
-              id="web-search-pixabay-key"
-              type={showPixabayApiKey ? "text" : "password"}
-              value={draftPixabayApiKey}
-              onChange={(e) => setDraftPixabayApiKey(e.target.value)}
-              placeholder="输入 Pixabay API Key"
-              className="w-full h-10 rounded-md border bg-background px-3 pr-20 text-sm outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPixabayApiKey((prev) => !prev)}
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-md border px-2.5 py-1 text-xs"
-            >
-              {showPixabayApiKey ? "隐藏" : "显示"}
-            </button>
-          </div>
-          <div className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground space-y-1">
-            <p>
-              未填写时会回退读取环境变量 <code>PIXABAY_API_KEY</code>。
-            </p>
-            <p>申请地址：{PIXABAY_APPLY_URL}</p>
-            <p>验证路径：插图 → 图片搜索 → Pixabay图库。</p>
-          </div>
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <StatusPill
+                  active={tavilyKeyConfigured}
+                  label={`Tavily ${tavilyKeyConfigured ? "已填写" : "未填写"}`}
+                />
+                <StatusPill
+                  active={bingSearchKeyConfigured}
+                  label={`Bing ${bingSearchKeyConfigured ? "已填写" : "未填写"}`}
+                />
+                <StatusPill
+                  active={googleSearchKeyConfigured}
+                  label={`Google ${googleSearchKeyConfigured ? "已填写" : "未填写"}`}
+                />
+                <StatusPill
+                  active={googleSearchEngineConfigured}
+                  label={`CSE ${googleSearchEngineConfigured ? "已填写" : "未填写"}`}
+                />
+                <StatusPill
+                  active={mseCustomEngineReady}
+                  label={`MSE 自定义模板 ${mseCustomEngineReady ? "可用" : "未配置"}`}
+                />
+              </div>
+              <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  当前 provider 回退链
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {providerChainPreview}
+                </p>
+              </div>
+              <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <p className="text-sm font-semibold text-slate-900">
+                  图片搜索 Key
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {pexelsKeyConfigured || pixabayKeyConfigured
+                    ? "插图页至少已有一个联网图片来源可用。"
+                    : "图片搜索 Key 仍未配置，插图页联网搜索会回退到环境变量或不可用状态。"}
+                </p>
+              </div>
+            </div>
+          </SurfacePanel>
         </div>
       </div>
 
-      <div className="rounded-lg border p-4 space-y-2">
-        <h3 className="text-sm font-medium">观测面板</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
-              tavilyKeyConfigured
-                ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                : "bg-muted text-muted-foreground"
-            }`}
-          >
-            Tavily {tavilyKeyConfigured ? "已填写" : "未填写"}
-          </span>
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
-              bingSearchKeyConfigured
-                ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                : "bg-muted text-muted-foreground"
-            }`}
-          >
-            Bing {bingSearchKeyConfigured ? "已填写" : "未填写"}
-          </span>
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
-              googleSearchKeyConfigured
-                ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                : "bg-muted text-muted-foreground"
-            }`}
-          >
-            Google {googleSearchKeyConfigured ? "已填写" : "未填写"}
-          </span>
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
-              googleSearchEngineConfigured
-                ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                : "bg-muted text-muted-foreground"
-            }`}
-          >
-            CSE {googleSearchEngineConfigured ? "已填写" : "未填写"}
-          </span>
-          <span
-            className={`inline-flex items-center rounded-full px-2 py-1 text-xs ${
-              mseCustomEngineReady
-                ? "bg-green-500/10 text-green-600 dark:text-green-400"
-                : "bg-muted text-muted-foreground"
-            }`}
-          >
-            MSE 自定义模板 {mseCustomEngineReady ? "可用" : "未配置"}
-          </span>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          当前 provider 回退链：
-          {parseCsv(draftProviderPriority).length > 0
-            ? parseCsv(draftProviderPriority).join(" -> ")
-            : "自动默认链"}
-        </p>
-      </div>
-
-      <div className="sticky bottom-0 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 border rounded-lg px-4 py-3 flex items-center justify-between gap-3">
-        <div className="text-sm text-muted-foreground">
-          {hasUnsavedChanges ? "未保存的更改" : "所有更改已保存"}
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleReset}
-            disabled={!hasUnsavedChanges || saving}
-            className="rounded-md border px-3 py-2 text-sm disabled:opacity-50"
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={!hasUnsavedChanges || saving}
-            className="rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
-            {saving ? "保存中..." : "保存"}
-          </button>
+      <div className="sticky bottom-0 rounded-[24px] border border-slate-200/80 bg-white/92 px-4 py-3 shadow-lg shadow-slate-950/5 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-sm text-slate-500">
+            {hasUnsavedChanges ? "未保存的更改" : "所有更改已保存"}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleReset}
+              disabled={!hasUnsavedChanges || saving}
+              className={ACTION_BUTTON_CLASS_NAME}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={!hasUnsavedChanges || saving}
+              className={PRIMARY_BUTTON_CLASS_NAME}
+            >
+              {saving ? "保存中..." : "保存"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -68,9 +68,7 @@ const ToolbarButton: React.FC<ToolbarButtonProps> = memo(
       className={cn(
         "flex items-center justify-center w-7 h-7 rounded transition-all",
         "disabled:opacity-50 disabled:cursor-not-allowed",
-        tone === "light"
-          ? "hover:bg-black/5"
-          : "hover:bg-white/10",
+        tone === "light" ? "hover:bg-black/5" : "hover:bg-white/10",
         active
           ? tone === "light"
             ? "bg-black/5 text-foreground"
@@ -185,6 +183,8 @@ export interface ArtifactToolbarProps {
   tone?: "dark" | "light";
   /** 额外的展示状态标签 */
   displayBadgeLabel?: string;
+  /** 操作区额外插槽 */
+  actionsSlot?: React.ReactNode;
 }
 
 /**
@@ -336,18 +336,21 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = memo(
     onPreviewSizeChange,
     tone = "dark",
     displayBadgeLabel,
+    actionsSlot,
   }) => {
     const [copied, setCopied] = useState(false);
 
     // 获取渲染器信息
     const entry = artifactRegistry.get(artifact.type);
 
+    const isBrowserAssist = artifact.type === "browser_assist";
     // 判断是否是代码类型且支持预览
     const isCode = artifact.type === "code";
     const isDocument = artifact.type === "document";
     const language = artifact.meta.language?.toLowerCase() || "";
     const canPreview = isCode && PREVIEWABLE_LANGUAGES.includes(language);
-    const supportsSharedViewMode = isDocument || canPreview;
+    const supportsSharedViewMode =
+      !isBrowserAssist && (isDocument || canPreview);
     const writePhase = resolveArtifactWritePhase(artifact);
 
     /**
@@ -452,7 +455,10 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = memo(
 
     // 判断是否支持源码切换（非代码类型才需要切换）
     const supportsSourceToggle =
-      artifact.type !== "code" && artifact.type !== "document" && onToggleSource;
+      !isBrowserAssist &&
+      artifact.type !== "code" &&
+      artifact.type !== "document" &&
+      onToggleSource;
 
     return (
       <div
@@ -580,48 +586,58 @@ export const ArtifactToolbar: React.FC<ArtifactToolbarProps> = memo(
             />
           )}
 
-          {/* 复制按钮 */}
-          <ToolbarButton
-            onClick={handleCopy}
-            title={copied ? "已复制" : "复制内容"}
-            tone={tone}
-          >
-            {copied ? (
-              <Check className="w-4 h-4 text-green-400" />
-            ) : (
-              <Copy className="w-4 h-4" />
-            )}
-          </ToolbarButton>
+          {!isBrowserAssist ? (
+            <>
+              {/* 复制按钮 */}
+              <ToolbarButton
+                onClick={handleCopy}
+                title={copied ? "已复制" : "复制内容"}
+                tone={tone}
+              >
+                {copied ? (
+                  <Check className="w-4 h-4 text-green-400" />
+                ) : (
+                  <Copy className="w-4 h-4" />
+                )}
+              </ToolbarButton>
 
-          {/* 下载按钮 */}
-          <ToolbarButton onClick={handleDownload} title="下载文件" tone={tone}>
-            <Download className="w-4 h-4" />
-          </ToolbarButton>
+              {/* 下载按钮 */}
+              <ToolbarButton
+                onClick={handleDownload}
+                title="下载文件"
+                tone={tone}
+              >
+                <Download className="w-4 h-4" />
+              </ToolbarButton>
 
-          {/* 源码切换按钮（非代码类型） */}
-          {supportsSourceToggle && (
-            <ToolbarButton
-              onClick={handleToggleSource}
-              title={showSource ? "显示预览" : "显示源码"}
-              active={showSource}
-              tone={tone}
-            >
-              {showSource ? (
-                <Eye className="w-4 h-4" />
-              ) : (
-                <Code className="w-4 h-4" />
+              {/* 源码切换按钮（非代码类型） */}
+              {supportsSourceToggle && (
+                <ToolbarButton
+                  onClick={handleToggleSource}
+                  title={showSource ? "显示预览" : "显示源码"}
+                  active={showSource}
+                  tone={tone}
+                >
+                  {showSource ? (
+                    <Eye className="w-4 h-4" />
+                  ) : (
+                    <Code className="w-4 h-4" />
+                  )}
+                </ToolbarButton>
               )}
-            </ToolbarButton>
-          )}
 
-          {/* 新窗口打开按钮 */}
-          <ToolbarButton
-            onClick={handleOpenInWindow}
-            title="在新窗口中打开"
-            tone={tone}
-          >
-            <ExternalLink className="w-4 h-4" />
-          </ToolbarButton>
+              {/* 新窗口打开按钮 */}
+              <ToolbarButton
+                onClick={handleOpenInWindow}
+                title="在新窗口中打开"
+                tone={tone}
+              >
+                <ExternalLink className="w-4 h-4" />
+              </ToolbarButton>
+            </>
+          ) : null}
+
+          {actionsSlot}
 
           {/* 关闭按钮 */}
           {onClose && (

@@ -6,9 +6,11 @@ import type { QueuedTurnSnapshot } from "@/lib/api/agentRuntime";
 import type { MessageImage } from "../../../types";
 import { CharacterMention } from "./CharacterMention";
 import { InputbarCore } from "./InputbarCore";
+import { SkillSelector } from "./SkillSelector";
 import { ThemeWorkbenchStatusPanel } from "./ThemeWorkbenchStatusPanel";
 import { InputbarModelExtra } from "./InputbarModelExtra";
 import { InputbarExecutionStrategySelect } from "./InputbarExecutionStrategySelect";
+import { isGeneralResearchTheme } from "../../../utils/generalAgentPrompt";
 import type {
   ThemeWorkbenchGateState,
   ThemeWorkbenchQuickAction,
@@ -23,11 +25,16 @@ interface InputbarComposerSectionProps {
   inputAdapter: ChatInputAdapter;
   characters: Character[];
   skills: Skill[];
+  isSkillsLoading?: boolean;
   textareaRef: React.RefObject<HTMLTextAreaElement>;
   input: string;
+  activeSkill?: Skill | null;
   onSelectCharacter?: (character: Character) => void;
   onSelectSkill: (skill: Skill) => void;
+  onClearSkill?: () => void;
   onNavigateToSettings?: () => void;
+  onImportSkill?: () => void | Promise<void>;
+  onRefreshSkills?: () => void | Promise<void>;
   onSend: () => void;
   onToolClick: (tool: string) => void;
   activeTools: Record<string, boolean>;
@@ -58,11 +65,16 @@ export const InputbarComposerSection: React.FC<
   inputAdapter,
   characters,
   skills,
+  isSkillsLoading,
   textareaRef,
   input,
+  activeSkill,
   onSelectCharacter,
   onSelectSkill,
+  onClearSkill,
   onNavigateToSettings,
+  onImportSkill,
+  onRefreshSkills,
   onSend,
   onToolClick,
   activeTools,
@@ -80,6 +92,9 @@ export const InputbarComposerSection: React.FC<
   queuedTurns,
   onRemoveQueuedTurn,
 }) => {
+  const showSkillSelector =
+    !isThemeWorkbenchVariant && isGeneralResearchTheme(activeTheme);
+
   if (renderThemeWorkbenchGeneratingPanel) {
     return (
       <ThemeWorkbenchStatusPanel
@@ -149,16 +164,30 @@ export const InputbarComposerSection: React.FC<
         queuedTurns={queuedTurns}
         onRemoveQueuedTurn={onRemoveQueuedTurn}
         leftExtra={
-          <InputbarModelExtra
-            isFullscreen={isFullscreen}
-            isThemeWorkbenchVariant={isThemeWorkbenchVariant}
-            providerType={inputAdapter.model?.providerType}
-            setProviderType={inputAdapter.actions.setProviderType}
-            model={inputAdapter.model?.model}
-            setModel={inputAdapter.actions.setModel}
-            activeTheme={activeTheme}
-            onManageProviders={onManageProviders}
-          />
+          <>
+            {showSkillSelector ? (
+              <SkillSelector
+                skills={skills}
+                activeSkill={activeSkill}
+                isLoading={isSkillsLoading}
+                onSelectSkill={onSelectSkill}
+                onClearSkill={onClearSkill}
+                onNavigateToSettings={onNavigateToSettings}
+                onImportSkill={onImportSkill}
+                onRefreshSkills={onRefreshSkills}
+              />
+            ) : null}
+            <InputbarModelExtra
+              isFullscreen={isFullscreen}
+              isThemeWorkbenchVariant={isThemeWorkbenchVariant}
+              providerType={inputAdapter.model?.providerType}
+              setProviderType={inputAdapter.actions.setProviderType}
+              model={inputAdapter.model?.model}
+              setModel={inputAdapter.actions.setModel}
+              activeTheme={activeTheme}
+              onManageProviders={onManageProviders}
+            />
+          </>
         }
         rightExtra={
           <InputbarExecutionStrategySelect

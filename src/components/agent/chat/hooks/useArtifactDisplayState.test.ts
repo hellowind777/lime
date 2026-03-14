@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Artifact } from "@/lib/artifact/types";
-import { resolveArtifactDisplayState } from "./useArtifactDisplayState";
+import {
+  resolveArtifactDisplayState,
+  settleLiveArtifactAfterStreamStops,
+} from "./useArtifactDisplayState";
 
 function createArtifact(overrides: Partial<Artifact> = {}): Artifact {
   const content = overrides.content ?? "# 内容";
@@ -158,5 +161,48 @@ describe("resolveArtifactDisplayState", () => {
     expect(state.mode).toBe("error");
     expect(state.displayArtifact?.id).toBe("artifact-live");
     expect(state.overlay).toBeNull();
+  });
+});
+
+describe("settleLiveArtifactAfterStreamStops", () => {
+  it("流结束后应把仍停留在 streaming 的 artifact 收尾为 complete", () => {
+    const artifact = createArtifact({
+      id: "artifact-live",
+      content: "# 已完成正文",
+      status: "streaming",
+      meta: {
+        filePath: "workspace/live.md",
+        writePhase: "streaming",
+        isPartial: true,
+      },
+    });
+
+    const settled = settleLiveArtifactAfterStreamStops(artifact, {
+      streamActive: false,
+    });
+
+    expect(settled).not.toBeNull();
+    expect(settled).not.toBe(artifact);
+    expect(settled?.status).toBe("complete");
+    expect(settled?.meta.writePhase).toBe("completed");
+    expect(settled?.meta.isPartial).toBe(false);
+  });
+
+  it("流仍在进行时不应提前收尾 artifact 状态", () => {
+    const artifact = createArtifact({
+      id: "artifact-live",
+      content: "# 增量正文",
+      status: "streaming",
+      meta: {
+        filePath: "workspace/live.md",
+        writePhase: "streaming",
+      },
+    });
+
+    const settled = settleLiveArtifactAfterStreamStops(artifact, {
+      streamActive: true,
+    });
+
+    expect(settled).toBe(artifact);
   });
 });

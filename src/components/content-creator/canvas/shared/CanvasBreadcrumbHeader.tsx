@@ -42,10 +42,15 @@ const CurrentLabel = styled.span`
 `;
 
 export const CanvasBreadcrumbHeader: React.FC<CanvasBreadcrumbHeaderProps> = memo(
-  ({ label, onBackHome, backTitle = "返回首页" }) => {
+  ({ label, onBackHome, backTitle = "返回新建任务" }) => {
     return (
       <Header>
-        <HomeButton type="button" onClick={onBackHome} title={backTitle}>
+        <HomeButton
+          type="button"
+          onClick={onBackHome}
+          title={backTitle}
+          aria-label={backTitle}
+        >
           <Home size={12} />
         </HomeButton>
         <ChevronRight size={12} />

@@ -61,6 +61,10 @@ vi.mock("./Inputbar/components/CharacterMention", () => ({
   },
 }));
 
+vi.mock("./Inputbar/components/SkillSelector", () => ({
+  SkillSelector: () => <div data-testid="skill-selector-stub" />,
+}));
+
 vi.mock("@/components/ui/button", () => ({
   Button: ({
     children,
@@ -502,5 +506,27 @@ describe("EmptyState", () => {
     expect(onThinkingEnabledChange).toHaveBeenCalledWith(true);
     expect(onTaskEnabledChange).toHaveBeenCalledWith(true);
     expect(onSubagentEnabledChange).toHaveBeenCalledWith(true);
+  });
+
+  it("通用主题应提供浏览器协助入口并触发启动回调", async () => {
+    const onLaunchBrowserAssist = vi.fn();
+    const container = renderEmptyState({
+      activeTheme: "general",
+      onLaunchBrowserAssist,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const launchButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("打开浏览器协助"),
+    );
+    expect(launchButton).toBeTruthy();
+
+    act(() => {
+      launchButton?.click();
+    });
+
+    expect(onLaunchBrowserAssist).toHaveBeenCalledTimes(1);
   });
 });

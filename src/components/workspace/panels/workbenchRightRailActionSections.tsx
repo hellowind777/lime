@@ -31,12 +31,26 @@ const SECTION_TONE_CLASS: Record<
 
 const CARD_TONE_CLASS: Record<
   WorkbenchRightRailCapabilityItem["tone"],
-  string
+  { default: string; hover: string; icon: string }
 > = {
-  violet:
-    "border-violet-100 bg-violet-50/80 text-violet-500 hover:border-violet-200 hover:bg-violet-50",
-  blue: "border-blue-100 bg-blue-50/80 text-blue-500 hover:border-blue-200 hover:bg-blue-50",
-  pink: "border-pink-100 bg-pink-50/80 text-pink-500 hover:border-pink-200 hover:bg-pink-50",
+  violet: {
+    default: "border-violet-200/40 bg-violet-50/50 text-slate-700 dark:border-violet-800/30 dark:bg-violet-900/10 dark:text-slate-300",
+    hover:
+      "hover:border-violet-300/60 hover:bg-violet-100/80 hover:text-violet-800 hover:shadow-sm dark:hover:border-violet-700/50 dark:hover:bg-violet-900/30 dark:hover:text-violet-200 transition-all",
+    icon: "text-violet-500 dark:text-violet-400 group-hover:scale-110 transition-transform duration-300",
+  },
+  blue: {
+    default: "border-blue-200/40 bg-blue-50/50 text-slate-700 dark:border-blue-800/30 dark:bg-blue-900/10 dark:text-slate-300",
+    hover:
+      "hover:border-blue-300/60 hover:bg-blue-100/80 hover:text-blue-800 hover:shadow-sm dark:hover:border-blue-700/50 dark:hover:bg-blue-900/30 dark:hover:text-blue-200 transition-all",
+    icon: "text-blue-500 dark:text-blue-400 group-hover:scale-110 transition-transform duration-300",
+  },
+  pink: {
+    default: "border-pink-200/40 bg-pink-50/50 text-slate-700 dark:border-pink-800/30 dark:bg-pink-900/10 dark:text-slate-300",
+    hover:
+      "hover:border-pink-300/60 hover:bg-pink-100/80 hover:text-pink-800 hover:shadow-sm dark:hover:border-pink-700/50 dark:hover:bg-pink-900/30 dark:hover:text-pink-200 transition-all",
+    icon: "text-pink-500 dark:text-pink-400 group-hover:scale-110 transition-transform duration-300",
+  },
 };
 
 const EXPANDABLE_ACTION_KEYS = new Set([
@@ -308,8 +322,9 @@ export function WorkbenchRightRailActionSections({
                     type="button"
                     data-testid={`workbench-right-rail-action-${item.key}`}
                     className={cn(
-                      "h-[58px] rounded-xl border px-3 py-2 text-left transition-colors",
-                      CARD_TONE_CLASS[item.tone],
+                      "group relative h-[58px] rounded-xl border px-3 py-2 text-left transition-all",
+                      CARD_TONE_CLASS[item.tone].default,
+                      CARD_TONE_CLASS[item.tone].hover,
                     )}
                     onClick={() => {
                       if (EXPANDABLE_ACTION_KEYS.has(item.key)) {
@@ -318,7 +333,7 @@ export function WorkbenchRightRailActionSections({
                     }}
                   >
                     <div className="flex items-center gap-2 text-xs font-medium leading-none">
-                      <Icon className="h-3.5 w-3.5" />
+                      <Icon className={cn("h-3.5 w-3.5 transition-colors", CARD_TONE_CLASS[item.tone].icon)} />
                       <span className="leading-tight">{item.label}</span>
                     </div>
                   </button>

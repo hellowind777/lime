@@ -206,6 +206,8 @@ export function useInputbarController({
     renderThemeWorkbenchGeneratingPanel,
     visibleA2UISubmissionNotice,
     isA2UISubmissionNoticeVisible,
+    activeSkill,
     setActiveSkill,
+    clearActiveSkill,
   };
 }

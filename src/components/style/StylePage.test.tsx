@@ -40,6 +40,8 @@ describe("StylePage", () => {
     await flushEffects();
 
     expect(container.textContent).toContain("先确认状态与下一步动作");
+    expect(container.textContent).toContain("风格资产数");
+    expect(container.textContent).toContain("当前状态");
     expect(container.textContent).toContain("最近使用的风格");
     expect(container.textContent).toContain("最近应用到的项目");
     expect(container.textContent).not.toContain("结构化编辑");

@@ -1,4 +1,5 @@
 import { useState, forwardRef, useImperativeHandle, useRef } from "react";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   CheckCircle2,
   ChevronDown,
@@ -50,10 +51,8 @@ const sectionStyleMap = {
     displayTitle: "内置技能",
     summaryClassName:
       "bg-[linear-gradient(135deg,rgba(255,247,237,0.9),rgba(255,255,255,0.98))]",
-    iconClassName:
-      "border-orange-200 bg-orange-100/80 text-orange-700",
-    countClassName:
-      "bg-orange-100 text-orange-700",
+    iconClassName: "border-orange-200 bg-orange-100/80 text-orange-700",
+    countClassName: "bg-orange-100 text-orange-700",
     hint: "随应用提供，默认可用",
   },
   local: {
@@ -61,10 +60,8 @@ const sectionStyleMap = {
     displayTitle: "本地技能",
     summaryClassName:
       "bg-[linear-gradient(135deg,rgba(241,245,249,0.92),rgba(255,255,255,0.98))]",
-    iconClassName:
-      "border-slate-200 bg-slate-100/90 text-slate-700",
-    countClassName:
-      "bg-slate-100 text-slate-700",
+    iconClassName: "border-slate-200 bg-slate-100/90 text-slate-700",
+    countClassName: "bg-slate-100 text-slate-700",
     hint: "项目与本地技能可直接查看",
   },
   remote: {
@@ -72,10 +69,8 @@ const sectionStyleMap = {
     displayTitle: "远程技能",
     summaryClassName:
       "bg-[linear-gradient(135deg,rgba(236,253,245,0.9),rgba(255,255,255,0.98))]",
-    iconClassName:
-      "border-emerald-200 bg-emerald-100/80 text-emerald-700",
-    countClassName:
-      "bg-emerald-100 text-emerald-700",
+    iconClassName: "border-emerald-200 bg-emerald-100/80 text-emerald-700",
+    countClassName: "bg-emerald-100 text-emerald-700",
     hint: "缓存展示，支持安装前预检",
   },
 } as const;
@@ -106,6 +101,7 @@ export const SkillsPage = forwardRef<SkillsPageRef, SkillsPageProps>(
     const contentRequestIdRef = useRef(0);
     const [scaffoldDialogOpen, setScaffoldDialogOpen] = useState(false);
     const [scaffoldCreating, setScaffoldCreating] = useState(false);
+    const [importingLocalSkill, setImportingLocalSkill] = useState(false);
 
     const {
       skills,
@@ -204,6 +200,28 @@ export const SkillsPage = forwardRef<SkillsPageRef, SkillsPageProps>(
         setContentDialogOpen(true);
       } finally {
         setScaffoldCreating(false);
+      }
+    };
+
+    const handleImportLocalSkill = async () => {
+      const selected = await openDialog({
+        directory: true,
+        multiple: false,
+        title: "选择一个包含 SKILL.md 的技能目录",
+      });
+
+      if (!selected || Array.isArray(selected)) {
+        return;
+      }
+
+      setImportingLocalSkill(true);
+      try {
+        await skillsApi.importLocalSkill(selected, app);
+        await refresh();
+      } catch (e) {
+        alert(`导入失败: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setImportingLocalSkill(false);
       }
     };
 
@@ -384,6 +402,16 @@ export const SkillsPage = forwardRef<SkillsPageRef, SkillsPageProps>(
                     className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
                   />
                   刷新
+                </button>
+                <button
+                  onClick={() => void handleImportLocalSkill()}
+                  disabled={loading || importingLocalSkill}
+                  className={secondaryActionButtonClassName}
+                >
+                  <FolderOpen
+                    className={`h-4 w-4 ${importingLocalSkill ? "animate-pulse" : ""}`}
+                  />
+                  {importingLocalSkill ? "导入中..." : "导入 Skill"}
                 </button>
                 <button
                   onClick={() => setScaffoldDialogOpen(true)}

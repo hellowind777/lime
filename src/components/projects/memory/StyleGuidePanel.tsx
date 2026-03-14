@@ -14,6 +14,7 @@ import {
 import {
   FileEdit,
   Gauge,
+  CheckCircle2,
   LibraryBig,
   Layers3,
   Palette,
@@ -350,8 +351,45 @@ export function StyleGuidePanel({
       buildStylePromptFromProfile(previewProfile, {
         title: "### 写作风格",
         includeExamples: true,
-      }),
+    }),
     [previewProfile],
+  );
+  const summaryStats = useMemo(
+    () => [
+      {
+        label: "风格类别",
+        value: getStyleCategoryLabel(previewProfile.category),
+        description: "项目默认风格当前归属的表达类型",
+      },
+      {
+        label: "适用主题",
+        value: String(previewProfile.applicableThemes.length || 1),
+        description:
+          previewProfile.applicableThemes.length > 0
+            ? previewProfile.applicableThemes.join(" / ")
+            : "通用创作",
+      },
+      {
+        label: "模拟强度",
+        value: String(previewProfile.simulationStrength),
+        description: hasChanges ? "当前有未保存的风格变更" : "当前内容已与保存状态同步",
+      },
+    ],
+    [hasChanges, previewProfile],
+  );
+  const topBadges = useMemo(
+    () =>
+      [
+        previewProfile.name || formData.profileName,
+        hasChanges ? "未保存变更" : "已同步",
+        highlightSourceEntryId ? "来自风格资产回流" : "项目内独立维护",
+      ].filter(Boolean),
+    [
+      formData.profileName,
+      hasChanges,
+      highlightSourceEntryId,
+      previewProfile.name,
+    ],
   );
 
   const loadStyleGuide = useCallback(async () => {
@@ -477,52 +515,92 @@ export function StyleGuidePanel({
   return (
     <>
       <div className="mx-auto w-full max-w-6xl space-y-5 pb-6">
-        <Card className="border bg-card">
-          <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-start lg:justify-between">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <FileEdit className="h-4 w-4" />
-                <span className="text-sm">项目风格系统</span>
+        <section className="relative overflow-hidden rounded-[30px] border border-amber-200/70 bg-[linear-gradient(135deg,rgba(255,250,240,0.96)_0%,rgba(248,250,252,0.98)_46%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+          <div className="pointer-events-none absolute -left-16 top-[-56px] h-48 w-48 rounded-full bg-amber-200/30 blur-3xl" />
+          <div className="pointer-events-none absolute right-[-60px] top-[-22px] h-48 w-48 rounded-full bg-sky-200/25 blur-3xl" />
+          <div className="relative flex flex-col gap-6 p-6 lg:p-7">
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+              <div className="max-w-3xl space-y-4">
+                <div className="flex items-center gap-2 text-slate-500">
+                  <FileEdit className="h-4 w-4" />
+                  <span className="text-sm">项目风格系统</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="text-2xl font-semibold tracking-tight text-slate-900">
+                    统一项目表达方式
+                  </div>
+                  <div className="text-sm leading-6 text-slate-600">
+                    先选预设或导入风格资产，再按项目需要微调，避免整页信息同时抢注意力。
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {topBadges.map((item) => (
+                    <span
+                      key={item}
+                      className="rounded-full border border-white/90 bg-white/85 px-3 py-1 text-xs font-medium text-slate-600 shadow-sm"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div>
-                <div className="text-lg font-semibold">统一项目表达方式</div>
-                <div className="mt-1 text-sm text-muted-foreground">
-                  先选预设或导入风格资产，再按项目需要微调，避免整页信息同时抢注意力。
+
+              <div className="flex flex-col gap-4 xl:min-w-[420px] xl:items-end">
+                <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => setStyleLibraryDialogOpen(true)}
+                  >
+                    <LibraryBig className="mr-2 h-4 w-4" />
+                    从我的风格库导入
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={loadStyleGuide}
+                    disabled={loading}
+                  >
+                    <RefreshCw
+                      className={cn("h-4 w-4", loading && "animate-spin")}
+                    />
+                  </Button>
+                  <Button onClick={handleSave} disabled={saving || !hasChanges}>
+                    <Save className="mr-2 h-4 w-4" />
+                    {saving ? "保存中..." : "保存"}
+                  </Button>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-3 xl:w-full">
+                  {summaryStats.map((item) => (
+                    <div
+                      key={item.label}
+                      className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm shadow-slate-950/5"
+                    >
+                      <div className="text-sm font-semibold text-slate-800">
+                        {item.label}
+                      </div>
+                      <div className="mt-1 text-xs leading-5 text-slate-500">
+                        {item.description}
+                      </div>
+                      <div className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">
+                        {item.value}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
-
-            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setStyleLibraryDialogOpen(true)}
-              >
-                <LibraryBig className="mr-2 h-4 w-4" />
-                从我的风格库导入
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={loadStyleGuide}
-                disabled={loading}
-              >
-                <RefreshCw
-                  className={cn("h-4 w-4", loading && "animate-spin")}
-                />
-              </Button>
-              <Button onClick={handleSave} disabled={saving || !hasChanges}>
-                <Save className="mr-2 h-4 w-4" />
-                {saving ? "保存中..." : "保存"}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
 
         {highlightSourceEntryId ? (
-          <Card className="border border-violet-200 bg-violet-50/60 dark:border-violet-900/60 dark:bg-violet-950/20">
+          <Card className="rounded-[26px] border border-sky-200/70 bg-[linear-gradient(180deg,rgba(239,246,255,0.82)_0%,rgba(255,255,255,0.96)_40%,rgba(255,255,255,1)_100%)] shadow-sm shadow-slate-950/5">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base">来源风格资产</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-base text-slate-900">
+                来源风格资产
+              </CardTitle>
+              <CardDescription className="text-slate-600">
                 你是从“最近应用项目”回到这里的，可直接对来源资产重新导入或对照当前项目策略。
               </CardDescription>
             </CardHeader>
@@ -544,7 +622,7 @@ export function StyleGuidePanel({
                         </Badge>
                       ))}
                   </div>
-                  <div className="text-sm text-muted-foreground">
+                  <div className="rounded-[20px] border border-white/90 bg-white/90 px-4 py-4 text-sm leading-6 text-slate-600">
                     {highlightedSourceEntry.profile.description ||
                       "该来源资产尚未填写整体风格定位。"}
                   </div>
@@ -566,7 +644,7 @@ export function StyleGuidePanel({
                   </div>
                 </>
               ) : (
-                <div className="text-sm text-muted-foreground">
+                <div className="rounded-[20px] border border-dashed border-slate-300 px-4 py-6 text-sm text-slate-500">
                   该来源风格资产当前不可用，可能已被删除；你仍可以继续编辑当前项目风格策略。
                 </div>
               )}
@@ -574,13 +652,13 @@ export function StyleGuidePanel({
           </Card>
         ) : null}
 
-        <Card className="border bg-card">
+        <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
           <CardHeader className="pb-3">
-            <CardTitle className="flex items-center gap-2 text-base">
+            <CardTitle className="flex items-center gap-2 text-base text-slate-900">
               <Sparkles className="h-4 w-4" />
               风格预设与模拟
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-slate-600">
               先用预设打底，再按项目需要微调。预设不会覆盖你的事实内容，只会帮助统一表达方式。
             </CardDescription>
           </CardHeader>
@@ -591,10 +669,15 @@ export function StyleGuidePanel({
                   key={preset.id}
                   type="button"
                   onClick={() => handleApplyPreset(preset.id)}
-                  className="flex min-h-[92px] flex-col rounded-xl border px-4 py-3 text-left transition-colors hover:bg-muted/50"
+                  className="flex min-h-[104px] flex-col rounded-[22px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.98)_100%)] px-4 py-3 text-left shadow-sm shadow-slate-950/5 transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
                 >
-                  <div className="text-sm font-medium">{preset.name}</div>
-                  <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-slate-900">
+                      {preset.name}
+                    </div>
+                    <Wand2 className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <div className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
                     {preset.description}
                   </div>
                 </button>
@@ -604,30 +687,45 @@ export function StyleGuidePanel({
         </Card>
 
         <Tabs defaultValue="overview" className="w-full space-y-4">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-xl bg-muted/50 p-1 md:grid-cols-5">
-            <TabsTrigger value="overview" className="gap-1 rounded-lg py-2">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-2 rounded-[22px] border border-slate-200/80 bg-white p-1 shadow-sm shadow-slate-950/5 md:grid-cols-5">
+            <TabsTrigger
+              value="overview"
+              className="gap-1 rounded-[18px] py-2 data-[state=active]:bg-slate-900 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            >
               <Palette className="h-3.5 w-3.5" />
               概览
             </TabsTrigger>
-            <TabsTrigger value="tone" className="gap-1 rounded-lg py-2">
+            <TabsTrigger
+              value="tone"
+              className="gap-1 rounded-[18px] py-2 data-[state=active]:bg-slate-900 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            >
               <Gauge className="h-3.5 w-3.5" />
               语气
             </TabsTrigger>
-            <TabsTrigger value="structure" className="gap-1 rounded-lg py-2">
+            <TabsTrigger
+              value="structure"
+              className="gap-1 rounded-[18px] py-2 data-[state=active]:bg-slate-900 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            >
               <Layers3 className="h-3.5 w-3.5" />
               结构
             </TabsTrigger>
-            <TabsTrigger value="lexicon" className="gap-1 rounded-lg py-2">
+            <TabsTrigger
+              value="lexicon"
+              className="gap-1 rounded-[18px] py-2 data-[state=active]:bg-slate-900 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            >
               <Type className="h-3.5 w-3.5" />
               词汇
             </TabsTrigger>
-            <TabsTrigger value="preview" className="gap-1 rounded-lg py-2">
+            <TabsTrigger
+              value="preview"
+              className="gap-1 rounded-[18px] py-2 data-[state=active]:bg-slate-900 data-[state=active]:text-white data-[state=active]:shadow-sm"
+            >
               <Wand2 className="h-3.5 w-3.5" />
               预览
             </TabsTrigger>
           </TabsList>
 
-          <Card className="border bg-card">
+          <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
             <CardContent className="p-5">
               <TabsContent value="overview" className="mt-0 space-y-5">
                 <div className="grid gap-5 lg:grid-cols-2">
@@ -741,7 +839,7 @@ export function StyleGuidePanel({
               </TabsContent>
 
               <TabsContent value="tone" className="mt-0 space-y-5">
-                <Card className="border bg-muted/20">
+                <Card className="rounded-[22px] border border-slate-200/80 bg-slate-50/70">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">风格模拟强度</CardTitle>
                   </CardHeader>
@@ -901,7 +999,7 @@ export function StyleGuidePanel({
               </TabsContent>
 
               <TabsContent value="preview" className="mt-0 space-y-5">
-                <Card className="border bg-muted/20">
+                <Card className="rounded-[22px] border border-slate-200/80 bg-slate-50/70">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">风格摘要</CardTitle>
                   </CardHeader>
@@ -938,12 +1036,12 @@ export function StyleGuidePanel({
                   </CardContent>
                 </Card>
 
-                <Card className="border bg-muted/20">
+                <Card className="rounded-[22px] border border-slate-200/80 bg-slate-50/70">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base">Prompt 预览</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg bg-background p-4 text-xs leading-6 text-muted-foreground">
+                    <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-[18px] bg-slate-950 p-4 text-xs leading-6 text-emerald-50">
                       {previewPrompt}
                     </pre>
                   </CardContent>
@@ -955,7 +1053,8 @@ export function StyleGuidePanel({
 
         {hasChanges && (
           <div className="flex items-center justify-end">
-            <div className="rounded-full border bg-muted/40 px-3 py-1 text-sm text-muted-foreground">
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-sm text-amber-700">
+              <CheckCircle2 className="h-4 w-4" />
               有未保存的风格变更
             </div>
           </div>

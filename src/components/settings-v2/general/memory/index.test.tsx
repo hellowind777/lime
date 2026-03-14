@@ -208,6 +208,19 @@ afterEach(() => {
 });
 
 describe("MemorySettings", () => {
+  it("应渲染新的记忆概览与主要分区", async () => {
+    const container = renderComponent();
+    await flushEffects();
+    await flushEffects();
+
+    const text = container.textContent ?? "";
+    expect(text).toContain("MEMORY SNAPSHOT");
+    expect(text).toContain("偏好画像");
+    expect(text).toContain("三层记忆可用性");
+    expect(text).toContain("记忆来源策略");
+    expect(text).toContain("自动记忆（Auto Memory）");
+  });
+
   it("初始化时应加载来源与自动记忆索引", async () => {
     renderComponent();
     await flushEffects();

@@ -270,3 +270,28 @@ describe("useAgentChat 偏好持久化", () => {
     }
   });
 });
+
+describe("useAgentChat 会话创建", () => {
+  it("创建新会话时不应默认注入已安装 skills", async () => {
+    const harness = mountHook("ws-session-create");
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().sendMessage("普通对话消息", [], false, false);
+      });
+
+      expect(mockCreateAgentSession).toHaveBeenCalledTimes(1);
+      expect(mockCreateAgentSession).toHaveBeenCalledWith(
+        "claude",
+        "ws-session-create",
+        "claude-sonnet-4-5",
+        undefined,
+      );
+      expect(mockCreateAgentSession.mock.calls[0]).toHaveLength(4);
+    } finally {
+      harness.unmount();
+    }
+  });
+});

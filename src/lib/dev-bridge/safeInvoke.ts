@@ -45,8 +45,14 @@ const INVOKE_ERROR_TEXT_LIMIT = 800;
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._-]+\b/gi, "Bearer ***"],
   [/\bapi[_-]?key\s*[:=]\s*["']?[A-Za-z0-9._-]+["']?/gi, "api_key=***"],
-  [/\baccess[_-]?token\s*[:=]\s*["']?[A-Za-z0-9._-]+["']?/gi, "access_token=***"],
-  [/\brefresh[_-]?token\s*[:=]\s*["']?[A-Za-z0-9._-]+["']?/gi, "refresh_token=***"],
+  [
+    /\baccess[_-]?token\s*[:=]\s*["']?[A-Za-z0-9._-]+["']?/gi,
+    "access_token=***",
+  ],
+  [
+    /\brefresh[_-]?token\s*[:=]\s*["']?[A-Za-z0-9._-]+["']?/gi,
+    "refresh_token=***",
+  ],
   [/\btoken\s*[:=]\s*["']?[A-Za-z0-9._-]{10,}["']?/gi, "token=***"],
   [/\bsk-[A-Za-z0-9]{12,}\b/g, "sk-***"],
 ];
@@ -280,7 +286,10 @@ export async function safeInvoke<T = any>(
     (window as any).__TAURI__?.core?.invoke
   ) {
     try {
-      const result = await (window as any).__TAURI__.core.invoke(cmd, args) as T;
+      const result = (await (window as any).__TAURI__.core.invoke(
+        cmd,
+        args,
+      )) as T;
       recordInvokeTrace(cmd, args, "tauri-ipc", "success", startedAt);
       return result;
     } catch (error) {
@@ -293,7 +302,7 @@ export async function safeInvoke<T = any>(
   // Legacy check for older Tauri versions
   if (typeof window !== "undefined" && (window as any).__TAURI__?.invoke) {
     try {
-      const result = await (window as any).__TAURI__.invoke(cmd, args) as T;
+      const result = (await (window as any).__TAURI__.invoke(cmd, args)) as T;
       recordInvokeTrace(cmd, args, "tauri-legacy", "success", startedAt);
       return result;
     } catch (error) {
@@ -306,7 +315,7 @@ export async function safeInvoke<T = any>(
   // 2. 浏览器开发模式下，部分原生/非关键命令直接优先走 mock。
   if (isDevBridgeAvailable() && shouldPreferMockInBrowser(cmd)) {
     try {
-      const result = await baseInvoke(cmd, args) as T;
+      const result = (await baseInvoke(cmd, args)) as T;
       recordInvokeTrace(cmd, args, "fallback-invoke", "success", startedAt);
       return result;
     } catch (error) {
@@ -342,14 +351,8 @@ export async function safeInvoke<T = any>(
       );
 
       try {
-        const result = await baseInvoke(cmd, args) as T;
-        recordInvokeTrace(
-          cmd,
-          args,
-          "fallback-invoke",
-          "success",
-          startedAt,
-        );
+        const result = (await baseInvoke(cmd, args)) as T;
+        recordInvokeTrace(cmd, args, "fallback-invoke", "success", startedAt);
         return result;
       } catch (fallbackError) {
         recordInvokeError(cmd, args, fallbackError, "fallback-invoke");
@@ -368,7 +371,7 @@ export async function safeInvoke<T = any>(
 
   // 4. Fallback 到 mock（Vite alias 会替换 @tauri-apps 导入）
   try {
-    const result = await baseInvoke(cmd, args) as T;
+    const result = (await baseInvoke(cmd, args)) as T;
     recordInvokeTrace(cmd, args, "fallback-invoke", "success", startedAt);
     return result;
   } catch (error) {
@@ -396,6 +399,12 @@ export async function safeListen<T = any>(
 
   // 2. Fallback 到 mock（Vite alias 会替换 @tauri-apps 导入）
   return baseListen(event, handler);
+}
+
+export function hasNativeTauriEventSupport(): boolean {
+  return Boolean(
+    typeof window !== "undefined" && (window as any).__TAURI__?.event?.listen,
+  );
 }
 
 /**

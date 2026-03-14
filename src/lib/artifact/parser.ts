@@ -362,6 +362,7 @@ export class ArtifactParser {
       svg: "SVG",
       mermaid: "Diagram",
       react: "React Component",
+      browser_assist: "Browser Assist",
       "canvas:document": "Document",
       "canvas:poster": "Poster",
       "canvas:music": "Music",

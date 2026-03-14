@@ -64,6 +64,7 @@ import { cn } from "@/lib/utils";
 interface StyleLibraryPanelProps {
   projectId?: string | null;
   onOpenProjectStyleGuide?: () => void;
+  compactHeader?: boolean;
 }
 
 interface EntryEditorState {
@@ -158,20 +159,22 @@ function StyleAssetListItem({
       type="button"
       onClick={() => onSelect(entry.id)}
       className={cn(
-        "w-full rounded-xl border px-4 py-3 text-left transition-colors",
+        "w-full rounded-[20px] border px-4 py-3 text-left shadow-sm shadow-slate-950/5 transition",
         active
-          ? "border-primary bg-primary/5"
-          : "border-border hover:bg-muted/30",
+          ? "border-sky-300 bg-sky-50/90"
+          : "border-slate-200/80 bg-white hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50",
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium">{entry.profile.name}</span>
+        <span className="text-sm font-medium text-slate-900">
+          {entry.profile.name}
+        </span>
         <Badge variant="outline">{entry.sourceLabel}</Badge>
       </div>
-      <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+      <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
         {entry.profile.description || "暂无风格说明"}
       </p>
-      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-500">
         <span>
           关键词：
           {entry.profile.toneKeywords.slice(0, 4).join(" / ") || "待补充"}
@@ -190,13 +193,13 @@ function EmptyWorkspaceState({
   onCreateManual: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed px-6 py-12 text-center">
-      <div className="rounded-full bg-muted p-4 text-muted-foreground">
+    <div className="flex flex-col items-center justify-center gap-4 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/60 px-6 py-12 text-center">
+      <div className="rounded-full bg-white p-4 text-slate-500 shadow-sm">
         <FileUp className="h-6 w-6" />
       </div>
       <div className="space-y-1">
-        <div className="text-sm font-medium">还没有风格资产</div>
-        <p className="text-sm text-muted-foreground">
+        <div className="text-sm font-medium text-slate-900">还没有风格资产</div>
+        <p className="text-sm text-slate-500">
           先上传样本或新建一套手动风格，再进入结构化编辑和项目应用流程。
         </p>
       </div>
@@ -217,6 +220,7 @@ function EmptyWorkspaceState({
 export function StyleLibraryPanel({
   projectId,
   onOpenProjectStyleGuide,
+  compactHeader = false,
 }: StyleLibraryPanelProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { entries, enabled, activeEntryId } = useStyleLibrary();
@@ -314,6 +318,17 @@ export function StyleLibraryPanel({
       JSON.stringify(editor) !== JSON.stringify(buildEditorState(selectedEntry))
     );
   }, [editor, selectedEntry]);
+  const headerBadges = useMemo(
+    () =>
+      [
+        `${entries.length} 条资产`,
+        `当前条目：${selectedEntry?.profile.name || "未选择"}`,
+        projectId
+          ? `当前项目：${project?.name || "正在加载项目..."}`
+          : "当前项目：未选择",
+      ].filter(Boolean),
+    [entries.length, project?.name, projectId, selectedEntry?.profile.name],
+  );
 
   const toggleTheme = useCallback((theme: ThemeType) => {
     setEditor((previous) => ({
@@ -508,6 +523,51 @@ export function StyleLibraryPanel({
       setDeleting(false);
     }
   }, [selectedEntry]);
+  const headerActions = (
+    <div className="flex flex-wrap items-center gap-2">
+      <div
+        className={cn(
+          "flex items-center gap-3 rounded-2xl border px-4 py-2.5 shadow-sm shadow-slate-950/5",
+          compactHeader
+            ? "border-slate-200/80 bg-white/92"
+            : "border-slate-200/80 bg-white",
+        )}
+      >
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-slate-900">启用我的风格</div>
+          <div className="text-xs text-slate-500">
+            决定风格资产是否出现在创作任务选择器中。
+          </div>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={setStyleLibraryEnabled}
+        />
+      </div>
+
+      <Button
+        onClick={() => fileInputRef.current?.click()}
+        disabled={uploading}
+      >
+        {uploading ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            上传中...
+          </>
+        ) : (
+          <>
+            <Upload className="mr-2 h-4 w-4" />
+            上传样本
+          </>
+        )}
+      </Button>
+
+      <Button variant="outline" onClick={handleCreateManualStyle}>
+        <Plus className="mr-2 h-4 w-4" />
+        新建风格
+      </Button>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -522,56 +582,46 @@ export function StyleLibraryPanel({
         }}
       />
 
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="text-sm text-muted-foreground">风格库工作台</div>
-          <h2 className="mt-1 text-xl font-semibold">管理风格资产</h2>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            左侧选择资产，中间做结构化编辑，右侧查看预览并应用到项目。
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-2.5">
-            <div className="min-w-0">
-              <div className="text-sm font-medium">启用我的风格</div>
-              <div className="text-xs text-muted-foreground">
-                决定风格资产是否出现在创作任务选择器中。
+      {compactHeader ? (
+        <div className="relative overflow-hidden rounded-[26px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(248,250,252,0.98)_0%,rgba(255,255,255,1)_55%,rgba(239,246,255,0.92)_100%)] p-5 shadow-sm shadow-slate-950/5">
+          <div className="pointer-events-none absolute right-[-56px] top-[-28px] h-36 w-36 rounded-full bg-sky-200/30 blur-3xl" />
+          <div className="relative flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {headerBadges.map((item) => (
+                  <span
+                    key={item}
+                    className="rounded-full border border-white/90 bg-white/85 px-3 py-1 text-xs font-medium text-slate-600 shadow-sm"
+                  >
+                    {item}
+                  </span>
+                ))}
               </div>
+              <p className="max-w-3xl text-sm leading-6 text-slate-600">
+                在这里完成资产整理、结构化编辑、Prompt 预览与项目默认风格应用。
+              </p>
             </div>
-            <Switch
-              checked={enabled}
-              onCheckedChange={setStyleLibraryEnabled}
-            />
+
+            {headerActions}
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-sm text-muted-foreground">风格库工作台</div>
+            <h2 className="mt-1 text-xl font-semibold">管理风格资产</h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              左侧选择资产，中间做结构化编辑，右侧查看预览并应用到项目。
+            </p>
           </div>
 
-          <Button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-          >
-            {uploading ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                上传中...
-              </>
-            ) : (
-              <>
-                <Upload className="mr-2 h-4 w-4" />
-                上传样本
-              </>
-            )}
-          </Button>
-
-          <Button variant="outline" onClick={handleCreateManualStyle}>
-            <Plus className="mr-2 h-4 w-4" />
-            新建风格
-          </Button>
+          {headerActions}
         </div>
-      </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)_360px]">
         <div className="space-y-4">
-          <Card className="border bg-card">
+          <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">资产列表</CardTitle>
               <CardDescription>
@@ -597,7 +647,7 @@ export function StyleLibraryPanel({
                   onCreateManual={handleCreateManualStyle}
                 />
               ) : filteredEntries.length === 0 ? (
-                <div className="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="rounded-[20px] border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">
                   没有匹配的风格资产，试试换个关键词。
                 </div>
               ) : (
@@ -617,7 +667,7 @@ export function StyleLibraryPanel({
             </CardContent>
           </Card>
 
-          <Card className="border bg-card">
+          <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -655,7 +705,7 @@ export function StyleLibraryPanel({
                     key={preset.id}
                     type="button"
                     onClick={() => handleAddPreset(preset.id)}
-                    className="rounded-xl border px-4 py-3 text-left transition-colors hover:bg-muted/40"
+                    className="rounded-[20px] border border-slate-200/80 px-4 py-3 text-left transition-colors hover:bg-slate-50"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-sm font-medium">{preset.name}</div>
@@ -671,7 +721,7 @@ export function StyleLibraryPanel({
           </Card>
         </div>
 
-        <Card className="border bg-card">
+        <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">结构化编辑</CardTitle>
             <CardDescription>
@@ -868,7 +918,7 @@ export function StyleLibraryPanel({
         </Card>
 
         <div className="space-y-4">
-          <Card className="border bg-card">
+          <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <Palette className="h-4 w-4" />
@@ -926,7 +976,7 @@ export function StyleLibraryPanel({
             </CardContent>
           </Card>
 
-          <Card className="border bg-card">
+          <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">风格摘要</CardTitle>
               <CardDescription>
@@ -981,7 +1031,7 @@ export function StyleLibraryPanel({
             </CardContent>
           </Card>
 
-          <Card className="border bg-card">
+          <Card className="rounded-[26px] border border-slate-200/80 bg-white shadow-sm shadow-slate-950/5">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Prompt 预览</CardTitle>
               <CardDescription>
@@ -1006,7 +1056,7 @@ export function StyleLibraryPanel({
           </Card>
 
           {selectedEntry ? (
-            <Card className="border border-red-200 bg-card dark:border-red-900/50">
+            <Card className="rounded-[26px] border border-red-200 bg-white shadow-sm shadow-slate-950/5 dark:border-red-900/50">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">条目管理</CardTitle>
                 <CardDescription>

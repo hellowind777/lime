@@ -245,12 +245,12 @@ afterEach(() => {
 });
 
 describe("ImageGenPage", () => {
-  it("点击左上角返回按钮应回到首页新会话", () => {
+  it("点击左上角返回按钮应回到新建任务页", () => {
     const onNavigate = vi.fn();
     const container = renderPage(onNavigate);
 
     const backButton = container.querySelector<HTMLButtonElement>(
-      'button[title="返回首页"]',
+      'button[title="返回新建任务"]',
     );
     expect(backButton).not.toBeNull();
 

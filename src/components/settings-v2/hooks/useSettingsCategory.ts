@@ -12,7 +12,6 @@ import {
   User,
   BarChart3,
   Palette,
-  MessageSquare,
   Keyboard,
   Brain,
   Bot,
@@ -105,11 +104,6 @@ export function useSettingsCategory(): CategoryGroup[] {
           key: SettingsTabs.Appearance,
           label: t("settings.tab.appearance", "外观"),
           icon: Palette,
-        },
-        {
-          key: SettingsTabs.ChatAppearance,
-          label: t("settings.tab.chatAppearance", "聊天外观"),
-          icon: MessageSquare,
         },
         {
           key: SettingsTabs.Hotkeys,

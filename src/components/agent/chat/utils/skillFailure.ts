@@ -17,7 +17,7 @@ export interface SkillFailureInfo {
 const DEFAULT_FAILURE: SkillFailureInfo = {
   code: "skill_execute_failed",
   message: "执行过程中发生未知错误",
-  recoveryHint: "请重试；若持续失败，请切换模型或新建话题后再试。",
+  recoveryHint: "请重试；若持续失败，请切换模型或新建任务后再试。",
 };
 
 function normalizeErrorMessage(error: unknown): string {
@@ -78,7 +78,7 @@ function byCode(code: SkillFailureCode, message: string): SkillFailureInfo {
       return {
         code,
         message,
-        recoveryHint: "请先新建话题或重新选择项目后再执行技能。",
+        recoveryHint: "请先新建任务或重新选择项目后再执行技能。",
       };
     case "skill_provider_unavailable":
       return {
@@ -90,7 +90,7 @@ function byCode(code: SkillFailureCode, message: string): SkillFailureInfo {
       return {
         code,
         message,
-        recoveryHint: "项目目录已变化，请回到首页重新进入该项目后再试。",
+        recoveryHint: "项目目录已变化，请返回新建任务重新进入该项目后再试。",
       };
     case "skill_stream_failed":
       return {

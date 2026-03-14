@@ -4,6 +4,7 @@ const RESOURCE_PROJECT_CHANGE_EVENT = "proxycast:resource-project-change";
 
 export type ResourceProjectChangeSource =
   | "resources"
+  | "general-chat"
   | "image-gen-target"
   | "image-gen-save"
   | "unknown";

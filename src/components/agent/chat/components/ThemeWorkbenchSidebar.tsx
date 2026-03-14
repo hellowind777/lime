@@ -3044,14 +3044,14 @@ function ThemeWorkbenchSidebarComponent({
                 <DropdownMenuTrigger asChild>
                   <NewTopicButton>
                     <Plus size={14} />
-                    {isVersionMode ? '创建版本快照' : '新建分支话题'}
+                    {isVersionMode ? '创建版本快照' : '新建分支任务'}
                     <ChevronDown size={12} style={{ marginLeft: 'auto' }} />
                   </NewTopicButton>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" style={{ width: '260px' }}>
                   <DropdownMenuItem onClick={onNewTopic}>
                     <GitBranch size={14} />
-                    <span>{isVersionMode ? '创建版本快照' : '新建分支话题'}</span>
+                    <span>{isVersionMode ? '创建版本快照' : '新建分支任务'}</span>
                   </DropdownMenuItem>
                   {onAddImage && (
                     <DropdownMenuItem onClick={onAddImage}>
@@ -3098,7 +3098,7 @@ function ThemeWorkbenchSidebarComponent({
               <BranchList className="custom-scrollbar">
                 {branchItems.length === 0 ? (
                   <ActivityMeta>
-                    {isVersionMode ? '暂无文稿版本，先生成或创建快照' : '暂无分支话题'}
+                    {isVersionMode ? '暂无文稿版本，先生成或创建快照' : '暂无分支任务'}
                   </ActivityMeta>
                 ) : (
                   branchItems.map((item) => (

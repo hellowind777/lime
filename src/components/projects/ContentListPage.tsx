@@ -19,7 +19,6 @@ import {
   Users,
   Globe,
   FileEdit,
-  Settings,
   Palette,
   Film,
   MapPin,
@@ -29,6 +28,7 @@ import {
   Copy,
   LucideIcon,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -272,6 +272,28 @@ export function ContentListPage({
       ? (stats.completed / stats.count) * 100
       : 0
     : 0;
+  const projectTabs =
+    PROJECT_TAB_CONFIG[project.workspaceType] || PROJECT_TAB_CONFIG.general;
+  const currentTabMeta = projectTabs.find((tab) => tab.value === currentTab);
+  const defaultContentType = getDefaultContentTypeForProject(project.workspaceType);
+  const summaryCards = [
+    {
+      label: "内容总数",
+      value: String(stats?.count || 0),
+      description: `当前项目包含的${getContentTypeLabel(defaultContentType)}数量`,
+    },
+    {
+      label: "已完成",
+      value: String(stats?.completed || 0),
+      description:
+        (stats?.completed || 0) > 0 ? "已有内容进入完成状态" : "还没有完成的内容条目",
+    },
+    {
+      label: "总字数",
+      value: formatWordCount(stats?.words || 0),
+      description: "聚合所有内容条目的正文统计",
+    },
+  ];
 
   // 获取状态图标
   const getStatusIcon = (status: string) => {
@@ -286,271 +308,344 @@ export function ContentListPage({
   };
 
   return (
-    <div className="flex flex-col h-full">
-      {/* 头部 */}
-      <div className="flex items-center gap-4 mb-4">
-        <Button variant="ghost" size="icon" onClick={onBack}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <span>{project.icon || "📁"}</span>
-            <span>{project.name}</span>
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {getProjectTypeLabel(project.workspaceType)}
-          </p>
-        </div>
-        <Button variant="outline" size="sm">
-          <Settings className="h-4 w-4 mr-2" />
-          设置
-        </Button>
-      </div>
-
-      {/* 项目信息卡片 */}
-      <div className="bg-card rounded-lg border p-4 mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-muted-foreground">
-            进度: {stats?.completed || 0}/{stats?.count || 0} (
-            {progress.toFixed(0)}%)
-          </span>
-          <span className="text-sm text-muted-foreground">
-            总字数: {formatWordCount(stats?.words || 0)}
-          </span>
-        </div>
-        <Progress value={progress} className="h-2" />
-      </div>
-
-      {/* 标签页 */}
-      <Tabs
-        value={currentTab}
-        onValueChange={(v) => setCurrentTab(v as ContentTab)}
-        className="mb-4"
-      >
-        <TabsList>
-          {(
-            PROJECT_TAB_CONFIG[project.workspaceType] ||
-            PROJECT_TAB_CONFIG.general
-          ).map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value} className="gap-2">
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
-
-      {/* 内容列表区域 */}
-      {currentTab === "contents" && (
-        <>
-          {/* 工具栏 */}
-          <div className="flex items-center gap-4 mb-4">
-            <div className="flex items-center gap-2">
-              {(["all", "completed", "draft"] as ContentFilter[]).map(
-                (filter) => (
+    <div className="h-full overflow-auto bg-[linear-gradient(180deg,rgba(248,250,252,0.96)_0%,rgba(255,255,255,1)_22%,rgba(241,245,249,0.94)_100%)]">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-4 pb-6 pt-4 lg:px-6">
+        <section className="relative overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(247,250,252,0.98)_0%,rgba(255,255,255,0.98)_48%,rgba(240,249,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+          <div className="pointer-events-none absolute -left-14 top-[-42px] h-44 w-44 rounded-full bg-sky-200/30 blur-3xl" />
+          <div className="pointer-events-none absolute right-[-58px] top-[-26px] h-48 w-48 rounded-full bg-emerald-200/25 blur-3xl" />
+          <div className="relative flex flex-col gap-6 p-5 lg:p-6">
+            <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+              <div className="max-w-3xl space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
-                    key={filter}
-                    variant={currentFilter === filter ? "secondary" : "ghost"}
+                    variant="outline"
                     size="sm"
-                    onClick={() => setCurrentFilter(filter)}
+                    onClick={onBack}
+                    className="rounded-full border-white/90 bg-white/85 px-3 shadow-sm shadow-slate-950/5"
                   >
-                    {filter === "all"
-                      ? "全部"
-                      : filter === "completed"
-                        ? "已完成"
-                        : "草稿"}
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    返回项目列表
                   </Button>
-                ),
-              )}
-            </div>
-            <div className="flex-1" />
-            <div className="relative w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="搜索..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-9"
-              />
-            </div>
-            <Button onClick={handleCreateContent}>
-              <Plus className="h-4 w-4 mr-2" />
-              新建
-            </Button>
-          </div>
+                  <Badge className="border-0 bg-slate-900/90 text-white hover:bg-slate-900/90">
+                    {getProjectTypeLabel(project.workspaceType)}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="border-slate-200/80 bg-white/80 text-slate-600"
+                  >
+                    当前工作区：{currentTabMeta?.label || "内容"}
+                  </Badge>
+                </div>
 
-          {/* 内容表格 */}
-          <div className="flex-1 overflow-auto border rounded-lg">
-            {loading ? (
-              <div className="flex items-center justify-center h-40">
-                <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-[18px] border border-white/90 bg-white/88 text-2xl shadow-sm shadow-slate-950/5">
+                      {project.icon || "📁"}
+                    </div>
+                    <h1 className="text-3xl font-semibold tracking-tight text-slate-900">
+                      {project.name}
+                    </h1>
+                  </div>
+                  <p className="max-w-2xl text-sm leading-6 text-slate-600">
+                    在一个更宽的工作台里统一管理内容、项目记忆与默认风格；风格设置会直接作为当前项目的表达基线。
+                  </p>
+                </div>
               </div>
-            ) : filteredContents.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-                <p className="mb-4">还没有内容</p>
-                <Button onClick={handleCreateContent}>创建第一个内容</Button>
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">#</TableHead>
-                    <TableHead>标题</TableHead>
-                    <TableHead className="w-24">状态</TableHead>
-                    <TableHead className="w-24">字数</TableHead>
-                    <TableHead className="w-32">更新时间</TableHead>
-                    <TableHead className="w-20">操作</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredContents.map((content) => (
-                    <TableRow
-                      key={content.id}
-                      className="cursor-pointer hover:bg-accent/50"
-                      onClick={() => onSelectContent?.(content)}
+
+              <div className="flex flex-col gap-4 xl:min-w-[420px] xl:items-end">
+                <Button
+                  onClick={handleCreateContent}
+                  className="self-start xl:self-auto"
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  新建{getContentTypeLabel(defaultContentType)}
+                </Button>
+                <div className="grid gap-3 sm:grid-cols-3 xl:w-full">
+                  {summaryCards.map((item) => (
+                    <div
+                      key={item.label}
+                      className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm shadow-slate-950/5"
                     >
-                      <TableCell className="font-mono text-muted-foreground">
-                        {content.order + 1}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {content.title}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          {getStatusIcon(content.status)}
-                          <span className="text-sm">
-                            {getContentStatusLabel(
-                              content.status as ContentStatus,
-                            )}
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {formatWordCount(content.word_count)}
-                      </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {formatRelativeTime(content.updated_at)}
-                      </TableCell>
-                      <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onClick={() => {
-                                onSelectContent?.(content);
-                              }}
-                            >
-                              <Edit2 className="h-4 w-4 mr-2" />
-                              编辑
-                            </DropdownMenuItem>
-                            {content.status !== "completed" && (
-                              <DropdownMenuItem
-                                onClick={() => {
-                                  handleUpdateStatus(content, "completed");
-                                }}
-                              >
-                                <CheckCircle2 className="h-4 w-4 mr-2" />
-                                标记完成
-                              </DropdownMenuItem>
-                            )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              onClick={() => {
-                                handleDeleteContent(content);
-                              }}
-                              className="text-destructive focus:text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              删除
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </TableCell>
-                    </TableRow>
+                      <div className="text-sm font-semibold text-slate-800">
+                        {item.label}
+                      </div>
+                      <div className="mt-1 text-xs leading-5 text-slate-500">
+                        {item.description}
+                      </div>
+                      <div className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">
+                        {item.value}
+                      </div>
+                    </div>
                   ))}
-                </TableBody>
-              </Table>
-            )}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-[24px] border border-white/90 bg-white/84 p-4 shadow-sm shadow-slate-950/5">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <div className="text-sm font-semibold text-slate-900">
+                    创作进度
+                  </div>
+                  <div className="text-xs leading-5 text-slate-500">
+                    已完成 {stats?.completed || 0} / {stats?.count || 0}，当前完成度{" "}
+                    {progress.toFixed(0)}%。
+                  </div>
+                </div>
+                <div className="text-sm text-slate-600">
+                  总字数 {formatWordCount(stats?.words || 0)}
+                </div>
+              </div>
+              <Progress value={progress} className="mt-3 h-2.5" />
+            </div>
           </div>
-        </>
-      )}
+        </section>
 
-      {/* 角色标签页 */}
-      {currentTab === "characters" && (
-        <div className="flex-1 overflow-hidden">
-          <CharacterPanel projectId={project.id} />
-        </div>
-      )}
-
-      {/* 世界观标签页 */}
-      {currentTab === "world" && (
-        <div className="flex-1 overflow-hidden">
-          <WorldBuildingPanel projectId={project.id} />
-        </div>
-      )}
-
-      {/* 风格指南标签页 */}
-      {currentTab === "style" && (
-        <div className="flex-1 overflow-hidden">
-          <StyleGuidePanel projectId={project.id} />
-        </div>
-      )}
-
-      {/* 大纲标签页 */}
-      {currentTab === "outline" && (
-        <div className="flex-1 overflow-hidden">
-          <OutlinePanel projectId={project.id} />
-        </div>
-      )}
-
-      {/* 场景标签页（短剧） */}
-      {currentTab === "scenes" && (
-        <div className="flex-1 overflow-hidden flex items-center justify-center text-muted-foreground">
-          <div className="text-center">
-            <MapPin className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>场景管理功能开发中...</p>
+        <Tabs
+          value={currentTab}
+          onValueChange={(v) => setCurrentTab(v as ContentTab)}
+          className="space-y-5"
+        >
+          <div className="rounded-[26px] border border-slate-200/80 bg-white/90 p-2 shadow-sm shadow-slate-950/5">
+            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-2 bg-transparent p-0">
+              {projectTabs.map((tab) => (
+                <TabsTrigger
+                  key={tab.value}
+                  value={tab.value}
+                  className="gap-2 rounded-[18px] px-4 py-2.5 text-slate-600 data-[state=active]:bg-slate-900 data-[state=active]:text-white data-[state=active]:shadow-sm"
+                >
+                  <tab.icon className="h-4 w-4" />
+                  {tab.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
           </div>
-        </div>
-      )}
 
-      {/* 分镜标签页（短剧） */}
-      {currentTab === "storyboard" && (
-        <div className="flex-1 overflow-hidden flex items-center justify-center text-muted-foreground">
-          <div className="text-center">
-            <LayoutGrid className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>分镜管理功能开发中...</p>
-          </div>
-        </div>
-      )}
+          {currentTab === "contents" && (
+            <>
+              <div className="rounded-[26px] border border-slate-200/80 bg-white/90 p-4 shadow-sm shadow-slate-950/5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(["all", "completed", "draft"] as ContentFilter[]).map(
+                      (filter) => (
+                        <Button
+                          key={filter}
+                          variant={
+                            currentFilter === filter ? "default" : "outline"
+                          }
+                          size="sm"
+                          onClick={() => setCurrentFilter(filter)}
+                          className={
+                            currentFilter === filter
+                              ? "bg-slate-900 text-white hover:bg-slate-800"
+                              : "border-slate-200/80 bg-white text-slate-600 hover:bg-slate-50"
+                          }
+                        >
+                          {filter === "all"
+                            ? "全部"
+                            : filter === "completed"
+                              ? "已完成"
+                              : "草稿"}
+                        </Button>
+                      ),
+                    )}
+                  </div>
+                  <div className="flex-1" />
+                  <div className="relative w-full lg:w-72">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      placeholder="搜索标题或条目"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="h-10 border-slate-200/80 bg-slate-50/70 pl-9"
+                    />
+                  </div>
+                </div>
+              </div>
 
-      {/* 素材标签页（社媒） */}
-      {currentTab === "assets" && (
-        <div className="flex-1 overflow-hidden flex items-center justify-center text-muted-foreground">
-          <div className="text-center">
-            <Image className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>素材管理功能开发中...</p>
-          </div>
-        </div>
-      )}
+              <div className="overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/92 shadow-sm shadow-slate-950/5">
+                {loading ? (
+                  <div className="flex h-48 items-center justify-center">
+                    <RefreshCw className="h-6 w-6 animate-spin text-slate-400" />
+                  </div>
+                ) : filteredContents.length === 0 ? (
+                  <div className="flex h-56 flex-col items-center justify-center gap-4 text-center text-slate-500">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                      <FileText className="h-6 w-6" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-slate-700">
+                        还没有内容
+                      </p>
+                      <p className="text-sm">
+                        先创建第一条内容，再继续补充项目记忆与默认风格。
+                      </p>
+                    </div>
+                    <Button onClick={handleCreateContent}>
+                      创建第一个内容
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="overflow-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="border-slate-200/80">
+                          <TableHead className="w-12">#</TableHead>
+                          <TableHead>标题</TableHead>
+                          <TableHead className="w-24">状态</TableHead>
+                          <TableHead className="w-24">字数</TableHead>
+                          <TableHead className="w-32">更新时间</TableHead>
+                          <TableHead className="w-20">操作</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredContents.map((content) => (
+                          <TableRow
+                            key={content.id}
+                            className="cursor-pointer border-slate-200/70 hover:bg-slate-50/80"
+                            onClick={() => onSelectContent?.(content)}
+                          >
+                            <TableCell className="font-mono text-muted-foreground">
+                              {content.order + 1}
+                            </TableCell>
+                            <TableCell className="font-medium text-slate-900">
+                              {content.title}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                {getStatusIcon(content.status)}
+                                <span className="text-sm">
+                                  {getContentStatusLabel(
+                                    content.status as ContentStatus,
+                                  )}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatWordCount(content.word_count)}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground text-sm">
+                              {formatRelativeTime(content.updated_at)}
+                            </TableCell>
+                            <TableCell>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      onSelectContent?.(content);
+                                    }}
+                                  >
+                                    <Edit2 className="mr-2 h-4 w-4" />
+                                    编辑
+                                  </DropdownMenuItem>
+                                  {content.status !== "completed" && (
+                                    <DropdownMenuItem
+                                      onClick={() => {
+                                        handleUpdateStatus(content, "completed");
+                                      }}
+                                    >
+                                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                                      标记完成
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuSeparator />
+                                  <DropdownMenuItem
+                                    onClick={() => {
+                                      handleDeleteContent(content);
+                                    }}
+                                    className="text-destructive focus:text-destructive"
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    删除
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
-      {/* 模板标签页（文档） */}
-      {currentTab === "templates" && (
-        <div className="flex-1 overflow-hidden flex items-center justify-center text-muted-foreground">
-          <div className="text-center">
-            <Copy className="h-12 w-12 mx-auto mb-4 opacity-50" />
-            <p>模板管理功能开发中...</p>
-          </div>
-        </div>
-      )}
+          {currentTab === "characters" && (
+            <div className="overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/92 shadow-sm shadow-slate-950/5">
+              <CharacterPanel projectId={project.id} />
+            </div>
+          )}
+
+          {currentTab === "world" && (
+            <div className="overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/92 shadow-sm shadow-slate-950/5">
+              <WorldBuildingPanel projectId={project.id} />
+            </div>
+          )}
+
+          {currentTab === "style" && (
+            <div className="relative overflow-hidden rounded-[32px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.92)_0%,rgba(255,255,255,0.98)_42%,rgba(240,249,255,0.92)_100%)] p-4 shadow-sm shadow-slate-950/5 lg:p-5">
+              <div className="pointer-events-none absolute -left-12 top-8 h-36 w-36 rounded-full bg-sky-200/25 blur-3xl" />
+              <div className="pointer-events-none absolute right-[-32px] top-0 h-40 w-40 rounded-full bg-amber-200/20 blur-3xl" />
+              <div className="relative">
+                <StyleGuidePanel projectId={project.id} />
+              </div>
+            </div>
+          )}
+
+          {currentTab === "outline" && (
+            <div className="overflow-hidden rounded-[28px] border border-slate-200/80 bg-white/92 shadow-sm shadow-slate-950/5">
+              <OutlinePanel projectId={project.id} />
+            </div>
+          )}
+
+          {currentTab === "scenes" && (
+            <div className="flex min-h-[320px] items-center justify-center rounded-[28px] border border-dashed border-slate-300/80 bg-white/80 text-muted-foreground">
+              <div className="text-center">
+                <MapPin className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                <p>场景管理功能开发中...</p>
+              </div>
+            </div>
+          )}
+
+          {currentTab === "storyboard" && (
+            <div className="flex min-h-[320px] items-center justify-center rounded-[28px] border border-dashed border-slate-300/80 bg-white/80 text-muted-foreground">
+              <div className="text-center">
+                <LayoutGrid className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                <p>分镜管理功能开发中...</p>
+              </div>
+            </div>
+          )}
+
+          {currentTab === "assets" && (
+            <div className="flex min-h-[320px] items-center justify-center rounded-[28px] border border-dashed border-slate-300/80 bg-white/80 text-muted-foreground">
+              <div className="text-center">
+                <Image className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                <p>素材管理功能开发中...</p>
+              </div>
+            </div>
+          )}
+
+          {currentTab === "templates" && (
+            <div className="flex min-h-[320px] items-center justify-center rounded-[28px] border border-dashed border-slate-300/80 bg-white/80 text-muted-foreground">
+              <div className="text-center">
+                <Copy className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                <p>模板管理功能开发中...</p>
+              </div>
+            </div>
+          )}
+        </Tabs>
+      </div>
     </div>
   );
 }

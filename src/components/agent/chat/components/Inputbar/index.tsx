@@ -8,8 +8,14 @@ import { InputbarComposerSection } from "./components/InputbarComposerSection";
 import { InputbarOverlayShell } from "./components/InputbarOverlayShell";
 import { InputbarSurface } from "./components/InputbarSurface";
 import type { A2UISubmissionNoticeData } from "./components/A2UISubmissionNotice";
-import type { A2UIResponse, A2UIFormData } from "@/components/content-creator/a2ui/types";
-import type { ThemeWorkbenchGateState, ThemeWorkbenchWorkflowStep } from "./hooks/useThemeWorkbenchInputState";
+import type {
+  A2UIResponse,
+  A2UIFormData,
+} from "@/components/content-creator/a2ui/types";
+import type {
+  ThemeWorkbenchGateState,
+  ThemeWorkbenchWorkflowStep,
+} from "./hooks/useThemeWorkbenchInputState";
 import { type InputbarToolStates } from "./hooks/useInputbarToolState";
 import { useInputbarController } from "./hooks/useInputbarController";
 
@@ -46,10 +52,16 @@ interface InputbarProps {
   characters?: Character[];
   /** 技能列表（用于 @ 引用） */
   skills?: Skill[];
+  /** 技能列表加载状态 */
+  isSkillsLoading?: boolean;
   /** 选择角色回调 */
   onSelectCharacter?: (character: Character) => void;
   /** 跳转到设置页安装技能 */
   onNavigateToSettings?: () => void;
+  /** 导入本地技能 */
+  onImportSkill?: () => void | Promise<void>;
+  /** 刷新技能 */
+  onRefreshSkills?: () => void | Promise<void>;
   providerType?: string;
   setProviderType?: (type: string) => void;
   model?: string;
@@ -93,8 +105,11 @@ export const Inputbar: React.FC<InputbarProps> = ({
   onTaskFileClick,
   characters = [],
   skills = [],
+  isSkillsLoading = false,
   onSelectCharacter,
   onNavigateToSettings,
+  onImportSkill,
+  onRefreshSkills,
   providerType,
   setProviderType,
   model,
@@ -141,7 +156,9 @@ export const Inputbar: React.FC<InputbarProps> = ({
     renderThemeWorkbenchGeneratingPanel,
     visibleA2UISubmissionNotice,
     isA2UISubmissionNoticeVisible,
+    activeSkill,
     setActiveSkill,
+    clearActiveSkill,
   } = useInputbarController({
     input,
     setInput,
@@ -202,11 +219,16 @@ export const Inputbar: React.FC<InputbarProps> = ({
         inputAdapter={inputAdapter}
         characters={characters}
         skills={skills}
+        isSkillsLoading={isSkillsLoading}
         textareaRef={textareaRef}
         input={input}
+        activeSkill={activeSkill}
         onSelectCharacter={onSelectCharacter}
         onSelectSkill={setActiveSkill}
+        onClearSkill={clearActiveSkill}
         onNavigateToSettings={onNavigateToSettings}
+        onImportSkill={onImportSkill}
+        onRefreshSkills={onRefreshSkills}
         onSend={handleSend}
         onToolClick={handleToolClick}
         activeTools={activeTools}

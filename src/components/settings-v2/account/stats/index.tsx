@@ -1,19 +1,18 @@
 /**
  * 数据统计页面组件
  *
- * 参考成熟产品的数据统计实现
- * 功能包括：使用统计数据展示、Token 消耗统计等
+ * 采用设置首页一致的浅渐变摘要头图与信息面板布局，
+ * 聚合使用强度、模型分布与趋势信息。
  */
 
 import { useState, useEffect, useCallback } from "react";
 import {
   BarChart3,
-  MessageSquare,
-  Timer,
+  Brain,
+  CalendarDays,
   Coins,
-  TrendingUp,
-  Download,
   RefreshCw,
+  TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -25,13 +24,155 @@ import {
   type UsageStatsResponse,
 } from "@/lib/api/usageStats";
 
+type TimeRange = "week" | "month" | "all";
+
+interface TimeRangeOption {
+  key: TimeRange;
+  label: string;
+  description: string;
+}
+
+interface SegmentCardProps {
+  title: string;
+  description: string;
+  conversations: number;
+  messages: number;
+  tokens: number;
+  minutes: number;
+  accentClassName: string;
+}
+
+interface MetricTileProps {
+  label: string;
+  value: string;
+}
+
+const TIME_RANGE_OPTIONS: TimeRangeOption[] = [
+  {
+    key: "week",
+    label: "本周",
+    description: "聚焦最近 7 天的使用波动。",
+  },
+  {
+    key: "month",
+    label: "本月",
+    description: "观察近 30 天的日常使用节奏。",
+  },
+  {
+    key: "all",
+    label: "全部",
+    description: "回看累计使用规模与长期趋势。",
+  },
+];
+
+const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+
+function formatNumber(num: number): string {
+  if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
+  if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
+  return num.toString();
+}
+
+function formatTime(minutes: number): string {
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  }
+  return `${minutes}m`;
+}
+
+function parseUsageDate(date: string) {
+  return new Date(date.includes("T") ? date : `${date}T00:00:00`);
+}
+
+function formatShortDate(date: string) {
+  return parseUsageDate(date).toLocaleDateString("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+  });
+}
+
+function estimateMinutesFromTokens(
+  tokens: number,
+  totalTokens: number,
+  totalMinutes: number,
+) {
+  if (tokens <= 0 || totalTokens <= 0 || totalMinutes <= 0) {
+    return 0;
+  }
+
+  return Math.round((tokens / totalTokens) * totalMinutes);
+}
+
+function resolveHeatmapTone(tokens: number, maxTokens: number) {
+  if (tokens <= 0 || maxTokens <= 0) {
+    return "bg-slate-100";
+  }
+
+  const ratio = tokens / maxTokens;
+  if (ratio < 0.2) return "bg-emerald-100";
+  if (ratio < 0.4) return "bg-emerald-200";
+  if (ratio < 0.6) return "bg-emerald-300";
+  if (ratio < 0.8) return "bg-emerald-400";
+  return "bg-emerald-500";
+}
+
+function SegmentCard({
+  title,
+  description,
+  conversations,
+  messages,
+  tokens,
+  minutes,
+  accentClassName,
+}: SegmentCardProps) {
+  return (
+    <article className="rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex-1 space-y-2">
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-3 py-1 text-xs font-medium",
+              accentClassName,
+            )}
+          >
+            {title}
+          </span>
+          <p className="text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+        <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+          {messages} 条消息
+        </span>
+      </div>
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3 xl:min-w-[420px]">
+        <MetricTile label="对话" value={conversations.toString()} />
+        <MetricTile label="Token" value={formatNumber(tokens)} />
+        <MetricTile label="时长" value={formatTime(minutes)} />
+      </div>
+    </article>
+  );
+}
+
+function MetricTile({ label, value }: MetricTileProps) {
+  return (
+    <div className="rounded-[18px] border border-white/90 bg-white/92 px-4 py-4 shadow-sm">
+      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="mt-2 text-[30px] font-semibold tracking-tight text-slate-900">
+        {value}
+      </p>
+    </div>
+  );
+}
+
 export function StatsSettings() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<UsageStatsResponse | null>(null);
   const [modelUsage, setModelUsage] = useState<ModelUsage[]>([]);
   const [dailyUsage, setDailyUsage] = useState<DailyUsage[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<"week" | "month" | "all">("month");
+  const [timeRange, setTimeRange] = useState<TimeRange>("month");
 
   const loadStats = useCallback(async () => {
     setLoading(true);
@@ -62,331 +203,600 @@ export function StatsSettings() {
     loadStats();
   }, [loadStats]);
 
-  const formatNumber = (num: number): string => {
-    if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;
-    if (num >= 1000) return `${(num / 1000).toFixed(1)}K`;
-    return num.toString();
-  };
-
-  const formatTime = (minutes: number): string => {
-    if (minutes >= 60) {
-      const hours = Math.floor(minutes / 60);
-      const mins = minutes % 60;
-      return `${hours}h ${mins}m`;
-    }
-    return `${minutes}m`;
-  };
-
-  const StatCard = ({
-    icon: Icon,
-    label,
-    value,
-    subvalue,
-    trend,
-  }: {
-    icon: any;
-    label: string;
-    value: string;
-    subvalue?: string;
-    trend?: number;
-  }) => (
-    <div className="flex-1 min-w-[140px] p-4 rounded-lg border bg-gradient-to-br from-primary/5 to-primary/10">
-      <div className="flex items-center gap-2 mb-2">
-        <Icon className="h-4 w-4 text-primary" />
-        <span className="text-xs text-muted-foreground">{label}</span>
-      </div>
-      <div className="text-2xl font-bold text-primary mb-1">{value}</div>
-      {subvalue && (
-        <div className="text-xs text-muted-foreground">{subvalue}</div>
-      )}
-      {trend !== undefined && (
-        <div className="flex items-center gap-1 mt-1">
-          <TrendingUp className="h-3 w-3 text-green-500" />
-          <span className="text-xs text-green-500">{trend}%</span>
-        </div>
-      )}
-    </div>
-  );
-
   const maxDailyTokens =
     dailyUsage.length > 0
       ? Math.max(...dailyUsage.map((day) => day.tokens))
       : 0;
+  const totalRangeTokens = dailyUsage.reduce((sum, day) => sum + day.tokens, 0);
+  const totalRangeConversations = dailyUsage.reduce(
+    (sum, day) => sum + day.conversations,
+    0,
+  );
+  const activeDays = dailyUsage.filter(
+    (day) => day.tokens > 0 || day.conversations > 0,
+  ).length;
+  const averageDailyTokens =
+    activeDays > 0 ? Math.round(totalRangeTokens / activeDays) : 0;
+  const peakDay = dailyUsage.reduce<DailyUsage | null>((currentPeak, day) => {
+    if (!currentPeak || day.tokens > currentPeak.tokens) {
+      return day;
+    }
+    return currentPeak;
+  }, null);
+  const topModel = modelUsage[0] || null;
+  const secondaryModels = modelUsage.slice(1, 4);
+  const selectedRange =
+    TIME_RANGE_OPTIONS.find((option) => option.key === timeRange) ||
+    TIME_RANGE_OPTIONS[1];
+  const peakDayLabel = peakDay
+    ? `${formatShortDate(peakDay.date)} · ${formatNumber(peakDay.tokens)} Token`
+    : "暂无数据";
+  const chartGuideValues =
+    maxDailyTokens > 0
+      ? [1, 0.75, 0.5, 0.25, 0].map((ratio) =>
+          Math.round(maxDailyTokens * ratio),
+        )
+      : [0, 0, 0, 0, 0];
+  const trendLabelStep =
+    dailyUsage.length > 10 ? Math.ceil(dailyUsage.length / 7) : 1;
+  const heatmapDays = dailyUsage.slice(-35);
+  const heatmapRangeLabel =
+    heatmapDays.length > 0
+      ? `${formatShortDate(heatmapDays[0].date)} - ${formatShortDate(
+          heatmapDays[heatmapDays.length - 1].date,
+        )}`
+      : "暂无活跃记录";
+  const heatmapCells: Array<DailyUsage | null> = [
+    ...Array.from(
+      { length: Math.max(35 - heatmapDays.length, 0) },
+      () => null,
+    ),
+    ...heatmapDays,
+  ];
+  const isInitialLoading = loading && !stats && !error;
 
-  return (
-    <div className="space-y-4 max-w-4xl">
-      {/* 时间范围选择 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <BarChart3 className="h-5 w-5 text-primary" />
-          <h2 className="text-lg font-semibold">使用统计</h2>
+  if (isInitialLoading) {
+    return (
+      <div className="space-y-6 pb-8">
+        <div className="h-[228px] animate-pulse rounded-[30px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)]" />
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.95fr)]">
+          <div className="h-[398px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+          <div className="space-y-6">
+            <div className="h-[260px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+            <div className="h-[220px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setTimeRange("week")}
-            className={cn(
-              "px-3 py-1.5 rounded text-sm transition-colors",
-              timeRange === "week"
-                ? "bg-primary text-primary-foreground"
-                : "hover:bg-muted",
-            )}
-          >
-            本周
-          </button>
-          <button
-            onClick={() => setTimeRange("month")}
-            className={cn(
-              "px-3 py-1.5 rounded text-sm transition-colors",
-              timeRange === "month"
-                ? "bg-primary text-primary-foreground"
-                : "hover:bg-muted",
-            )}
-          >
-            本月
-          </button>
-          <button
-            onClick={() => setTimeRange("all")}
-            className={cn(
-              "px-3 py-1.5 rounded text-sm transition-colors",
-              timeRange === "all"
-                ? "bg-primary text-primary-foreground"
-                : "hover:bg-muted",
-            )}
-          >
-            全部
-          </button>
-          <button
-            onClick={loadStats}
-            disabled={loading}
-            className="p-2 rounded hover:bg-muted transition-colors"
-          >
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-          </button>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.95fr)]">
+          <div className="h-[320px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+          <div className="h-[320px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
         </div>
       </div>
+    );
+  }
 
+  return (
+    <div className="space-y-6 pb-8">
       {error && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {error}
+        <div className="flex items-center justify-between gap-4 rounded-[20px] border border-rose-200 bg-rose-50/90 px-4 py-3 text-sm text-rose-700 shadow-sm shadow-slate-950/5">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={loadStats}
+            className="rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:border-rose-300 hover:bg-rose-50"
+          >
+            重新加载
+          </button>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex items-center justify-center py-16">
-          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
-        </div>
-      ) : stats ? (
-        <>
-          {/* 今日统计 */}
-          <div>
-            <h3 className="text-sm font-medium mb-3">今日</h3>
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              <StatCard
-                icon={MessageSquare}
-                label="对话"
-                value={stats.today_conversations.toString()}
-                subvalue={`${stats.today_messages} 条消息`}
-              />
-              <StatCard
-                icon={Coins}
-                label="Token"
-                value={formatNumber(stats.today_tokens)}
-              />
-              <StatCard
-                icon={Timer}
-                label="时长"
-                value={formatTime(
-                  Math.round(
-                    (stats.today_tokens / (stats.total_tokens || 1)) *
-                      stats.total_time_minutes,
-                  ),
-                )}
-              />
-            </div>
-          </div>
+      <section className="relative overflow-hidden rounded-[30px] border border-emerald-200/70 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+        <div className="pointer-events-none absolute -left-20 top-[-72px] h-56 w-56 rounded-full bg-emerald-200/30 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-76px] top-[-24px] h-56 w-56 rounded-full bg-sky-200/28 blur-3xl" />
 
-          {/* 本月统计 */}
-          <div>
-            <h3 className="text-sm font-medium mb-3">本月</h3>
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              <StatCard
-                icon={MessageSquare}
-                label="对话"
-                value={stats.monthly_conversations.toString()}
-                subvalue={`${stats.monthly_messages} 条消息`}
-              />
-              <StatCard
-                icon={Coins}
-                label="Token"
-                value={formatNumber(stats.monthly_tokens)}
-              />
-              <StatCard
-                icon={Timer}
-                label="时长"
-                value={formatTime(
-                  Math.round(
-                    (stats.monthly_tokens / (stats.total_tokens || 1)) *
-                      stats.total_time_minutes,
-                  ),
-                )}
-              />
-            </div>
-          </div>
-
-          {/* 总计 */}
-          <div>
-            <h3 className="text-sm font-medium mb-3">总计</h3>
-            <div className="flex gap-3 overflow-x-auto pb-2">
-              <StatCard
-                icon={MessageSquare}
-                label="对话"
-                value={stats.total_conversations.toString()}
-                subvalue={`${stats.total_messages} 条消息`}
-              />
-              <StatCard
-                icon={Coins}
-                label="Token"
-                value={formatNumber(stats.total_tokens)}
-              />
-              <StatCard
-                icon={Timer}
-                label="时长"
-                value={formatTime(stats.total_time_minutes)}
-              />
-            </div>
-          </div>
-
-          {/* 模型使用排行 */}
-          <div className="rounded-lg border p-4">
-            <h3 className="text-sm font-medium mb-4">模型使用排行</h3>
-            {modelUsage.length > 0 ? (
-              <div className="space-y-3">
-                {modelUsage.map((model, index) => (
-                  <div key={model.model} className="space-y-1">
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">
-                          #{index + 1}
-                        </span>
-                        <span className="font-medium">{model.model}</span>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                        <span>{model.conversations} 次对话</span>
-                        <span>{formatNumber(model.tokens)} Token</span>
-                        <span className="text-primary font-medium">
-                          {model.percentage}%
-                        </span>
-                      </div>
-                    </div>
-                    <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-primary rounded-full transition-all"
-                        style={{ width: `${Math.min(model.percentage, 100)}%` }}
-                      />
-                    </div>
-                  </div>
-                ))}
+        <div className="relative flex flex-col gap-6 p-6 lg:p-8">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(380px,0.92fr)] xl:items-stretch">
+            <div className="max-w-3xl space-y-5">
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-emerald-700 shadow-sm">
+                USAGE SNAPSHOT
+              </span>
+              <div className="space-y-2">
+                <p className="text-[28px] font-semibold tracking-tight text-slate-900">
+                  观察最近的使用强度
+                </p>
+                <p className="max-w-2xl text-sm leading-7 text-slate-600">
+                  将当前区间的 Token 消耗、活跃天数与主力模型放在同一个视图里，
+                  方便快速判断近期是否进入高频使用状态。
+                </p>
               </div>
-            ) : (
-              <div className="text-sm text-muted-foreground">
-                暂无模型使用数据
-              </div>
-            )}
-          </div>
 
-          {/* 每日使用趋势 */}
-          <div className="rounded-lg border p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium">每日使用趋势</h3>
-              <button className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-                <Download className="h-3 w-3" />
-                导出
-              </button>
-            </div>
-            <div className="h-40 flex items-end gap-1">
-              {dailyUsage.map((day, _index) => {
-                const height =
-                  maxDailyTokens > 0 ? (day.tokens / maxDailyTokens) * 100 : 0;
-                return (
-                  <div
-                    key={day.date}
-                    className="flex-1 flex flex-col items-center gap-1 group"
-                  >
-                    <div
-                      className="w-full bg-primary/60 hover:bg-primary rounded-t transition-colors relative"
-                      style={{ height: `${Math.max(height, 4)}%` }}
-                    >
-                      <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-popover border px-2 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                        {formatNumber(day.tokens)} Token
-                      </div>
-                    </div>
-                    <div className="text-[10px] text-muted-foreground truncate w-full text-center">
-                      {new Date(day.date).toLocaleDateString("zh-CN", {
-                        month: "numeric",
-                        day: "numeric",
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* 使用日历热力图（简化版） */}
-          <div className="rounded-lg border p-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-medium">活跃度日历</h3>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>少</span>
-                <div className="flex gap-0.5">
-                  <div className="w-3 h-3 rounded-sm bg-primary/10" />
-                  <div className="w-3 h-3 rounded-sm bg-primary/30" />
-                  <div className="w-3 h-3 rounded-sm bg-primary/50" />
-                  <div className="w-3 h-3 rounded-sm bg-primary/70" />
-                  <div className="w-3 h-3 rounded-sm bg-primary" />
-                </div>
-                <span>多</span>
-              </div>
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {["日", "一", "二", "三", "四", "五", "六"].map((day) => (
-                <div
-                  key={day}
-                  className="text-xs text-muted-foreground text-center py-1"
-                >
-                  {day}
-                </div>
-              ))}
-              {Array.from({ length: 35 }).map((_, index) => {
-                const dayData = dailyUsage[index];
-                const getIntensity = (tokens: number) => {
-                  if (!dayData) return "bg-muted";
-                  if (maxDailyTokens <= 0) return "bg-primary/10";
-                  const max = maxDailyTokens;
-                  const ratio = tokens / max;
-                  if (ratio < 0.2) return "bg-primary/10";
-                  if (ratio < 0.4) return "bg-primary/30";
-                  if (ratio < 0.6) return "bg-primary/50";
-                  if (ratio < 0.8) return "bg-primary/70";
-                  return "bg-primary";
-                };
-                return (
-                  <div
-                    key={index}
+              <div className="flex flex-wrap items-center gap-2">
+                {TIME_RANGE_OPTIONS.map((option) => (
+                  <button
+                    key={option.key}
+                    type="button"
+                    onClick={() => setTimeRange(option.key)}
                     className={cn(
-                      "aspect-square rounded-sm",
-                      dayData ? getIntensity(dayData.tokens) : "bg-muted",
+                      "rounded-full px-3 py-1.5 text-sm font-medium transition",
+                      timeRange === option.key
+                        ? "bg-slate-900 text-white shadow-sm"
+                        : "border border-white/90 bg-white/85 text-slate-600 shadow-sm hover:border-slate-300 hover:text-slate-900",
                     )}
-                    title={
-                      dayData ? `${dayData.date}: ${dayData.tokens} Token` : ""
-                    }
+                  >
+                    {option.label}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  onClick={loadStats}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 rounded-full border border-white/90 bg-white/85 px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  <RefreshCw
+                    className={cn("h-4 w-4", loading && "animate-spin")}
                   />
-                );
-              })}
+                  刷新数据
+                </button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <span className="rounded-full border border-white/90 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  当前统计口径：{selectedRange.label}
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  活跃 {activeDays} 天
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  日均 {formatNumber(averageDailyTokens)} Token
+                </span>
+              </div>
+
+              <p className="text-xs leading-5 text-slate-500">
+                {selectedRange.description}
+              </p>
             </div>
+
+            <article className="flex h-full flex-col rounded-[26px] border border-white/90 bg-white/84 p-5 shadow-sm shadow-slate-950/5 backdrop-blur-[2px]">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <TrendingUp className="h-4 w-4 text-sky-600" />
+                    当前观察
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    用一个摘要面板快速查看这段时间的主要节奏。
+                  </p>
+                </div>
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+                  {selectedRange.label}
+                </span>
+              </div>
+
+              <div className="mt-5 rounded-[24px] border border-slate-200/80 bg-[linear-gradient(145deg,rgba(255,255,255,0.95)_0%,rgba(239,246,255,0.82)_100%)] p-5 shadow-sm">
+                <div className="flex items-center gap-2 text-xs font-medium tracking-[0.12em] text-slate-500">
+                  <Coins className="h-3.5 w-3.5 text-slate-400" />
+                  当前区间 TOKEN
+                </div>
+                <p className="mt-3 text-4xl font-semibold tracking-tight text-slate-900">
+                  {formatNumber(totalRangeTokens)}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {topModel
+                    ? `主力模型 ${topModel.model}，占比 ${topModel.percentage}%`
+                    : "当前区间还没有模型排行数据"}
+                </p>
+              </div>
+
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                    <CalendarDays className="h-3.5 w-3.5 text-slate-400" />
+                    活跃天数
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                    {activeDays}
+                  </p>
+                </div>
+                <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                    <BarChart3 className="h-3.5 w-3.5 text-slate-400" />
+                    日均 Token
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                    {formatNumber(averageDailyTokens)}
+                  </p>
+                </div>
+                <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                    <Brain className="h-3.5 w-3.5 text-slate-400" />
+                    主力模型
+                  </div>
+                  <p className="mt-2 truncate text-lg font-semibold tracking-tight text-slate-900">
+                    {topModel?.model || "暂无数据"}
+                  </p>
+                </div>
+                <div className="rounded-[20px] border border-slate-200/80 bg-slate-50/70 px-4 py-4">
+                  <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                    <TrendingUp className="h-3.5 w-3.5 text-slate-400" />
+                    峰值日期
+                  </div>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-900">
+                    {peakDayLabel}
+                  </p>
+                </div>
+              </div>
+            </article>
           </div>
+        </div>
+      </section>
+
+      {stats ? (
+        <>
+          <section className="grid gap-6 xl:grid-cols-[minmax(0,1.72fr)_minmax(360px,0.82fr)]">
+            <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <BarChart3 className="h-4 w-4 text-sky-600" />
+                    阶段概览
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    按今日、本月与累计三个区段拆解对话量、Token 消耗和估算时长。
+                  </p>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-500">
+                  3 个区段
+                </span>
+              </div>
+
+              <div className="mt-5 space-y-4">
+                <SegmentCard
+                  title="今日"
+                  description="快速判断当前是否处于高频使用状态。"
+                  conversations={stats.today_conversations}
+                  messages={stats.today_messages}
+                  tokens={stats.today_tokens}
+                  minutes={estimateMinutesFromTokens(
+                    stats.today_tokens,
+                    stats.total_tokens,
+                    stats.total_time_minutes,
+                  )}
+                  accentClassName="border-sky-200 bg-sky-50 text-sky-700"
+                />
+                <SegmentCard
+                  title="本月"
+                  description="观察最近一个月的常态使用节奏。"
+                  conversations={stats.monthly_conversations}
+                  messages={stats.monthly_messages}
+                  tokens={stats.monthly_tokens}
+                  minutes={estimateMinutesFromTokens(
+                    stats.monthly_tokens,
+                    stats.total_tokens,
+                    stats.total_time_minutes,
+                  )}
+                  accentClassName="border-emerald-200 bg-emerald-50 text-emerald-700"
+                />
+                <SegmentCard
+                  title="累计"
+                  description="回看整体使用规模与长期投入。"
+                  conversations={stats.total_conversations}
+                  messages={stats.total_messages}
+                  tokens={stats.total_tokens}
+                  minutes={stats.total_time_minutes}
+                  accentClassName="border-slate-200 bg-slate-100 text-slate-700"
+                />
+              </div>
+            </article>
+
+            <div className="space-y-6">
+              <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                      <Brain className="h-4 w-4 text-emerald-600" />
+                      模型使用排行
+                    </div>
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      查看当前区间内最常使用的模型与使用占比。
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
+                    {modelUsage.length} 个模型
+                  </span>
+                </div>
+
+                <div className="mt-5 space-y-4">
+                  {modelUsage.length > 0 ? (
+                    <>
+                      <article className="rounded-[24px] border border-emerald-200/80 bg-[linear-gradient(145deg,rgba(248,252,250,0.98)_0%,rgba(240,249,255,0.92)_100%)] p-5 shadow-sm">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0">
+                            <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/90 px-3 py-1 text-[11px] font-medium text-emerald-700">
+                              #1 主力模型
+                            </span>
+                            <p className="mt-3 truncate text-2xl font-semibold tracking-tight text-slate-900">
+                              {topModel?.model}
+                            </p>
+                            <p className="mt-2 text-sm leading-6 text-slate-500">
+                              {topModel?.conversations || 0} 次对话 ·{" "}
+                              {formatNumber(topModel?.tokens || 0)} Token
+                            </p>
+                          </div>
+                          <div className="rounded-[20px] border border-white/90 bg-white/88 px-4 py-3 text-right shadow-sm">
+                            <p className="text-xs font-medium text-slate-500">
+                              使用占比
+                            </p>
+                            <p className="mt-2 text-3xl font-semibold tracking-tight text-slate-900">
+                              {topModel?.percentage || 0}%
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/90">
+                          <div
+                            className="h-full rounded-full bg-[linear-gradient(90deg,rgba(16,185,129,0.9)_0%,rgba(15,23,42,0.92)_100%)] transition-all"
+                            style={{
+                              width: `${Math.min(topModel?.percentage || 0, 100)}%`,
+                            }}
+                          />
+                        </div>
+                      </article>
+
+                      {secondaryModels.length > 0 ? (
+                        <div className="space-y-3">
+                          {secondaryModels.map((model, index) => (
+                            <div
+                              key={model.model}
+                              className="rounded-[20px] border border-slate-200/80 bg-slate-50/60 p-4"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                                      #{index + 2}
+                                    </span>
+                                    <p className="truncate text-sm font-semibold text-slate-900">
+                                      {model.model}
+                                    </p>
+                                  </div>
+                                  <p className="mt-2 text-xs leading-5 text-slate-500">
+                                    {model.conversations} 次对话 ·{" "}
+                                    {formatNumber(model.tokens)} Token
+                                  </p>
+                                </div>
+                                <span className="text-sm font-semibold text-slate-900">
+                                  {model.percentage}%
+                                </span>
+                              </div>
+                              <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
+                                <div
+                                  className="h-full rounded-full bg-slate-900 transition-all"
+                                  style={{
+                                    width: `${Math.min(model.percentage, 100)}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="rounded-[20px] border border-dashed border-slate-300 bg-slate-50/60 px-4 py-6 text-sm leading-6 text-slate-500">
+                      当前区间还没有模型使用数据。
+                    </div>
+                  )}
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section className="grid gap-6 xl:grid-cols-[minmax(0,1.72fr)_minmax(360px,0.82fr)]">
+            <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <Coins className="h-4 w-4 text-emerald-600" />
+                    每日使用趋势
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    观察 {selectedRange.label} 内每日 Token 波动，识别高峰与低谷。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                    {formatNumber(totalRangeTokens)} Token
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
+                    {totalRangeConversations} 次对话
+                  </span>
+                </div>
+              </div>
+
+              {dailyUsage.length > 0 ? (
+                <div className="mt-6 rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-[18px] border border-white/90 bg-white/88 px-4 py-3 shadow-sm">
+                      <p className="text-xs font-medium text-slate-500">
+                        峰值日
+                      </p>
+                      <p className="mt-2 text-sm font-semibold leading-6 text-slate-900">
+                        {peakDayLabel}
+                      </p>
+                    </div>
+                    <div className="rounded-[18px] border border-white/90 bg-white/88 px-4 py-3 shadow-sm">
+                      <p className="text-xs font-medium text-slate-500">
+                        活跃天数
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                        {activeDays}
+                      </p>
+                    </div>
+                    <div className="rounded-[18px] border border-white/90 bg-white/88 px-4 py-3 shadow-sm">
+                      <p className="text-xs font-medium text-slate-500">
+                        区间均值
+                      </p>
+                      <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                        {formatNumber(averageDailyTokens)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 grid grid-cols-[44px_minmax(0,1fr)] gap-3">
+                    <div className="relative h-64">
+                      {chartGuideValues.map((value, index) => (
+                        <div
+                          key={`${value}-${index}`}
+                          className="absolute right-0 translate-y-1/2 text-[10px] font-medium text-slate-400"
+                          style={{
+                            bottom: `${(index / (chartGuideValues.length - 1)) * 100}%`,
+                          }}
+                        >
+                          {formatNumber(value)}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="relative h-64">
+                      <div className="pointer-events-none absolute inset-0">
+                        {chartGuideValues.map((_, index) => (
+                          <div
+                            key={index}
+                            className="absolute inset-x-0 border-t border-dashed border-slate-200"
+                            style={{
+                              bottom: `${(index / (chartGuideValues.length - 1)) * 100}%`,
+                            }}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="relative flex h-full items-end gap-2">
+                        {dailyUsage.map((day, index) => {
+                          const height =
+                            maxDailyTokens > 0
+                              ? (day.tokens / maxDailyTokens) * 100
+                              : 0;
+                          const showLabel =
+                            index % trendLabelStep === 0 ||
+                            index === dailyUsage.length - 1;
+
+                          return (
+                            <div
+                              key={day.date}
+                              className="group flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-2"
+                            >
+                              <div className="relative flex w-full flex-1 items-end rounded-[16px] border border-white/90 bg-white/80 px-1.5 pb-1.5 shadow-sm">
+                                <div
+                                  className="w-full rounded-[12px] bg-[linear-gradient(180deg,rgba(15,23,42,0.72)_0%,rgba(15,23,42,0.96)_100%)] transition-all group-hover:brightness-105"
+                                  style={{ height: `${Math.max(height, 6)}%` }}
+                                >
+                                  <div className="absolute -top-8 left-1/2 -translate-x-1/2 rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-slate-600 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 whitespace-nowrap">
+                                    {formatNumber(day.tokens)} Token
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="h-4 text-[10px] text-slate-400">
+                                {showLabel ? formatShortDate(day.date) : ""}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 rounded-[22px] border border-dashed border-slate-300 bg-slate-50/60 px-4 py-10 text-center text-sm leading-6 text-slate-500">
+                  当前区间还没有每日趋势数据。
+                </div>
+              )}
+            </article>
+
+            <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                    <CalendarDays className="h-4 w-4 text-sky-600" />
+                    活跃度日历
+                  </div>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    以最近 35 天的活跃热度查看调用分布，颜色越深表示 Token 越多。
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span>少</span>
+                  <div className="flex gap-1">
+                    <div className="h-3 w-3 rounded-sm bg-emerald-100" />
+                    <div className="h-3 w-3 rounded-sm bg-emerald-200" />
+                    <div className="h-3 w-3 rounded-sm bg-emerald-300" />
+                    <div className="h-3 w-3 rounded-sm bg-emerald-400" />
+                    <div className="h-3 w-3 rounded-sm bg-emerald-500" />
+                  </div>
+                  <span>多</span>
+                </div>
+              </div>
+
+              <div className="mt-6 rounded-[24px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[18px] border border-white/90 bg-white/88 px-4 py-3 shadow-sm">
+                    <p className="text-xs font-medium text-slate-500">
+                      覆盖范围
+                    </p>
+                    <p className="mt-2 text-sm font-semibold leading-6 text-slate-900">
+                      {heatmapRangeLabel}
+                    </p>
+                  </div>
+                  <div className="rounded-[18px] border border-white/90 bg-white/88 px-4 py-3 shadow-sm">
+                    <p className="text-xs font-medium text-slate-500">
+                      有效活跃格
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
+                      {activeDays}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid grid-cols-7 gap-2">
+                  {WEEKDAY_LABELS.map((day) => (
+                    <div
+                      key={day}
+                      className="pb-1 text-center text-[11px] font-medium text-slate-400"
+                    >
+                      {day}
+                    </div>
+                  ))}
+                  {heatmapCells.map((day, index) => (
+                    <div
+                      key={`${day?.date || "empty"}-${index}`}
+                      className={cn(
+                        "group relative aspect-square rounded-[10px] border border-white/80 shadow-sm transition-transform hover:-translate-y-0.5",
+                        day
+                          ? resolveHeatmapTone(day.tokens, maxDailyTokens)
+                          : "bg-slate-100",
+                      )}
+                      title={
+                        day
+                          ? `${day.date}: ${formatNumber(day.tokens)} Token`
+                          : ""
+                      }
+                    >
+                      {day ? (
+                        <div className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-[calc(100%+6px)] rounded-full border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-slate-600 opacity-0 shadow-sm transition-opacity group-hover:opacity-100 whitespace-nowrap">
+                          {formatShortDate(day.date)} · {formatNumber(day.tokens)}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+          </section>
         </>
-      ) : null}
+      ) : (
+        <article className="rounded-[26px] border border-dashed border-slate-300 bg-white/80 px-6 py-12 text-center text-sm leading-6 text-slate-500 shadow-sm shadow-slate-950/5">
+          还没有可展示的统计数据。
+        </article>
+      )}
     </div>
   );
 }

@@ -949,7 +949,15 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("系统时间异常")
             .as_nanos();
-        std::env::temp_dir().join(format!("proxycast-log-tail-test-{nanos}.log"))
+        let log_dir = std::env::temp_dir().join(format!("proxycast-log-tail-test-{nanos}"));
+        fs::create_dir_all(&log_dir).expect("创建测试日志目录失败");
+        log_dir.join("proxycast.log")
+    }
+
+    fn cleanup_log_fixture(path: &Path) {
+        if let Some(log_dir) = path.parent() {
+            let _ = fs::remove_dir_all(log_dir);
+        }
     }
 
     #[test]
@@ -975,7 +983,7 @@ mod tests {
         assert_eq!(entries[1].level, "error");
         assert_eq!(entries[1].message, "third line");
 
-        let _ = fs::remove_file(path);
+        cleanup_log_fixture(&path);
     }
 
     #[test]
@@ -1017,9 +1025,7 @@ mod tests {
         assert_eq!(entries[1].message, "rotated line");
         assert_eq!(entries[2].message, "current line");
 
-        let _ = fs::remove_file(current);
-        let _ = fs::remove_file(rotated);
-        let _ = fs::remove_file(gz_path);
+        cleanup_log_fixture(&current);
     }
 
     #[test]
@@ -1050,9 +1056,7 @@ mod tests {
             "raw_response_demo.txt"
         );
 
-        let _ = fs::remove_file(current);
-        let _ = fs::remove_file(rotated);
-        let _ = fs::remove_file(raw);
+        cleanup_log_fixture(&current);
     }
 
     #[test]
@@ -1093,7 +1097,7 @@ mod tests {
         assert!(!gz_path.exists());
         assert!(!raw.exists());
 
-        let _ = fs::remove_file(current);
+        cleanup_log_fixture(&current);
     }
 
     #[test]

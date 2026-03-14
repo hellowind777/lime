@@ -12,15 +12,17 @@ import { useAgentContext } from "./useAgentContext";
 import { useAgentSession } from "./useAgentSession";
 import { useAgentTools } from "./useAgentTools";
 import { useAgentStream } from "./useAgentStream";
-import type {
-  SendMessageFn,
-  UseAsterAgentChatOptions,
+import {
+  buildLiveTaskSnapshot,
+  type SendMessageFn,
+  type UseAsterAgentChatOptions,
 } from "./agentChatShared";
 
 export type { Topic } from "./agentChatShared";
 
 export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
-  const { systemPrompt, onWriteFile, workspaceId } = options;
+  const { systemPrompt, onWriteFile, workspaceId, disableSessionRestore = false } =
+    options;
   const runtime = defaultAgentRuntimeAdapter;
 
   const [isInitialized, setIsInitialized] = useState(false);
@@ -49,6 +51,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
   const session = useAgentSession({
     runtime,
     workspaceId,
+    disableSessionRestore,
     isInitialized,
     executionStrategy: context.executionStrategy,
     providerTypeRef: context.providerTypeRef,
@@ -146,6 +149,37 @@ export function useAsterAgentChat(options: UseAsterAgentChatOptions) {
     session.sessionId,
     session.threadTurns,
     stream.isSending,
+  ]);
+
+  useEffect(() => {
+    const activeSessionId = session.sessionId;
+    const messages = session.messages;
+    const queuedTurnCount = session.queuedTurns.length;
+    const updateTopicSnapshot = session.updateTopicSnapshot;
+    const pendingActionCount = tools.pendingActions.length;
+    const workspacePathMissing = context.workspacePathMissing;
+
+    if (!activeSessionId) {
+      return;
+    }
+
+    const snapshot = buildLiveTaskSnapshot({
+      messages,
+      isSending: stream.isSending,
+      pendingActionCount,
+      queuedTurnCount,
+      workspaceError: Boolean(workspacePathMissing),
+    });
+
+    updateTopicSnapshot(activeSessionId, snapshot);
+  }, [
+    session.sessionId,
+    session.messages,
+    session.queuedTurns.length,
+    session.updateTopicSnapshot,
+    stream.isSending,
+    tools.pendingActions.length,
+    context.workspacePathMissing,
   ]);
 
   const handleStartProcess = async () => {

@@ -104,16 +104,16 @@ export function RuntimeStyleControlBar({
   };
 
   return (
-    <Card className="mx-4 mt-3 border-dashed bg-muted/20">
+    <Card className="mx-4 mt-3 overflow-hidden rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.92)_0%,rgba(255,255,255,1)_42%)] shadow-sm shadow-slate-950/5">
       <CardContent className="space-y-3 p-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="mr-1 inline-flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <Palette className="h-4 w-4" />
+          <div className="mr-1 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm font-medium text-slate-600 shadow-sm">
+            <Palette className="h-4 w-4 text-slate-700" />
             任务风格
           </div>
 
           <Select value={selection.presetId} onValueChange={handlePresetChange}>
-            <SelectTrigger className="h-9 w-[210px] bg-background">
+            <SelectTrigger className="h-9 w-[210px] border-slate-200 bg-white">
               <SelectValue placeholder="选择本次任务风格" />
             </SelectTrigger>
             <SelectContent>
@@ -133,7 +133,7 @@ export function RuntimeStyleControlBar({
                 本次模拟说明
               </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-96 space-y-3" align="start">
+            <PopoverContent className="w-96 space-y-3 rounded-[20px] border border-slate-200/80 bg-white shadow-lg shadow-slate-950/10" align="start">
               <div>
                 <div className="text-sm font-medium">临时风格备注</div>
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -184,33 +184,33 @@ export function RuntimeStyleControlBar({
           </Button>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-center">
+        <div className="grid gap-3 rounded-[20px] border border-slate-200/80 bg-white/92 px-4 py-4 lg:grid-cols-[minmax(0,1fr)_220px] lg:items-center">
           <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
               <span>{summary}</span>
               {selection.source === "library" && selection.sourceLabel ? (
                 <button
                   type="button"
                   onClick={clearLibrarySelection}
-                  className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-50"
                 >
                   来自我的风格：{selection.sourceLabel}
                   <X className="h-3 w-3" />
                 </button>
               ) : null}
             </div>
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+            <p className="mt-1 line-clamp-2 text-xs text-slate-500">
               {previewPrompt || "未设置临时风格覆盖，将沿用项目默认风格与当前创作上下文。"}
             </p>
             {!hasProjectDefaultStyle && (
-              <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
                 当前项目还没有默认风格，建议先点“编辑项目风格”配置基线风格。
               </p>
             )}
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex items-center justify-between text-xs text-slate-500">
               <span>风格强度</span>
               <span>{selection.strength}</span>
             </div>
@@ -232,7 +232,7 @@ export function RuntimeStyleControlBar({
 
       <Dialog open={styleGuideDialogOpen} onOpenChange={setStyleGuideDialogOpen}>
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto p-0">
-          <DialogHeader className="border-b px-6 py-4">
+          <DialogHeader className="sr-only">
             <DialogTitle>项目默认风格</DialogTitle>
           </DialogHeader>
           <div className="p-6">

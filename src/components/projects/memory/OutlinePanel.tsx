@@ -18,6 +18,7 @@ import {
   ArrowDown,
   FileText,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -224,46 +225,148 @@ export function OutlinePanel({ projectId }: OutlinePanelProps) {
       toast.error("移动失败");
     }
   };
+  const rootNodeCount = nodes.filter((node) => !node.parent_id).length;
+  const leafNodeCount = nodes.filter(
+    (node) => !nodes.some((candidate) => candidate.parent_id === node.id),
+  ).length;
+  const topBadges = [
+    nodes.length > 0 ? `${nodes.length} 个大纲节点` : "待建立结构骨架",
+    rootNodeCount > 0 ? `${rootNodeCount} 个一级节点` : "暂无一级节点",
+    expandedNodes.size > 0 ? `已展开 ${expandedNodes.size} 个节点` : "未展开节点",
+  ];
+  const summaryCards = [
+    {
+      label: "节点总数",
+      value: String(nodes.length),
+      description: "当前项目已经建立的结构节点总量",
+    },
+    {
+      label: "一级节点",
+      value: String(rootNodeCount),
+      description:
+        rootNodeCount > 0 ? "顶层章节或结构块已建立" : "还没有主结构节点",
+    },
+    {
+      label: "叶子节点",
+      value: String(leafNodeCount),
+      description:
+        leafNodeCount > 0 ? "已有可继续扩写的末端节点" : "当前还没有叶子节点",
+    },
+  ];
 
   return (
-    <div className="flex flex-col h-full">
-      {/* 工具栏 */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-sm text-muted-foreground">
-          共 {nodes.length} 个节点
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={loadNodes}
-            disabled={loading}
-          >
-            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-          </Button>
-          <Button onClick={() => handleOpenCreate(null)}>
-            <Plus className="h-4 w-4 mr-2" />
-            新建节点
-          </Button>
-        </div>
-      </div>
+    <div className="mx-auto w-full max-w-6xl space-y-5 pb-6">
+      <section className="relative overflow-hidden rounded-[30px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(248,250,252,0.98)_0%,rgba(255,255,255,0.98)_44%,rgba(254,249,195,0.85)_100%)] shadow-sm shadow-slate-950/5">
+        <div className="pointer-events-none absolute -left-14 top-[-42px] h-44 w-44 rounded-full bg-slate-200/25 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-46px] top-[-16px] h-44 w-44 rounded-full bg-amber-200/20 blur-3xl" />
+        <div className="relative flex flex-col gap-6 p-6 lg:p-7">
+          <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+            <div className="max-w-3xl space-y-4">
+              <div className="flex items-center gap-2 text-slate-500">
+                <FileText className="h-4 w-4" />
+                <span className="text-sm">项目结构骨架</span>
+              </div>
+              <div className="space-y-2">
+                <div className="text-2xl font-semibold tracking-tight text-slate-900">
+                  大纲层级与章节骨架
+                </div>
+                <div className="text-sm leading-6 text-slate-600">
+                  先把顶层结构和子节点关系搭出来，再让具体内容沿着同一棵树扩写，避免章节散掉。
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {topBadges.map((item) => (
+                  <span
+                    key={item}
+                    className="rounded-full border border-white/90 bg-white/85 px-3 py-1 text-xs font-medium text-slate-600 shadow-sm"
+                  >
+                    {item}
+                  </span>
+                ))}
+              </div>
+            </div>
 
-      {/* 大纲树 */}
-      <div className="flex-1 overflow-auto">
-        {loading ? (
-          <div className="flex items-center justify-center h-40">
-            <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+            <div className="flex flex-col gap-4 xl:min-w-[420px] xl:items-end">
+              <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={loadNodes}
+                  disabled={loading}
+                >
+                  <RefreshCw
+                    className={cn("h-4 w-4", loading && "animate-spin")}
+                  />
+                </Button>
+                <Button onClick={() => handleOpenCreate(null)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  新建节点
+                </Button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-3 xl:w-full">
+                {summaryCards.map((item) => (
+                  <div
+                    key={item.label}
+                    className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm shadow-slate-950/5"
+                  >
+                    <div className="text-sm font-semibold text-slate-800">
+                      {item.label}
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-slate-500">
+                      {item.description}
+                    </div>
+                    <div className="mt-4 text-3xl font-semibold tracking-tight text-slate-900">
+                      {item.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        ) : tree.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 text-muted-foreground">
-            <FileText className="h-12 w-12 mb-4 opacity-50" />
-            <p className="mb-4">还没有大纲</p>
-            <Button onClick={() => handleOpenCreate(null)}>
-              创建第一个节点
-            </Button>
+        </div>
+      </section>
+
+      {loading ? (
+        <div className="flex h-48 items-center justify-center rounded-[28px] border border-slate-200/80 bg-white/92 shadow-sm shadow-slate-950/5">
+          <RefreshCw className="h-6 w-6 animate-spin text-slate-400" />
+        </div>
+      ) : tree.length === 0 ? (
+        <div className="flex min-h-[300px] flex-col items-center justify-center rounded-[28px] border border-dashed border-slate-300/80 bg-white/92 px-6 text-center text-slate-500 shadow-sm shadow-slate-950/5">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+            <FileText className="h-7 w-7" />
           </div>
-        ) : (
-          <div className="space-y-1">
+          <div className="mt-5 space-y-2">
+            <div className="text-base font-medium text-slate-800">
+              还没有大纲节点
+            </div>
+            <p className="max-w-md text-sm leading-6">
+              先建立一级节点，再逐步补出子节点和节点内容，项目结构会更容易持续扩写。
+            </p>
+          </div>
+          <Button onClick={() => handleOpenCreate(null)} className="mt-5">
+            创建第一个节点
+          </Button>
+        </div>
+      ) : (
+        <section className="rounded-[28px] border border-slate-200/80 bg-white/92 p-5 shadow-sm shadow-slate-950/5">
+          <div className="mb-4 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-slate-900">
+                结构树
+              </div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">
+                支持继续加子节点、调整顺序和修改节点内容；缩进层级会直接反映父子关系。
+              </div>
+            </div>
+            <Badge
+              variant="outline"
+              className="w-fit border-slate-200/80 bg-slate-50 text-slate-600"
+            >
+              结构视图
+            </Badge>
+          </div>
+          <div className="space-y-3">
             {tree.map((node) => (
               <OutlineTreeItem
                 key={node.id}
@@ -279,45 +382,67 @@ export function OutlinePanel({ projectId }: OutlinePanelProps) {
               />
             ))}
           </div>
-        )}
-      </div>
+        </section>
+      )}
 
       {/* 新建/编辑对话框 */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{editingNode ? "编辑节点" : "新建节点"}</DialogTitle>
+        <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.96)_0%,rgba(255,255,255,0.98)_38%,rgba(255,251,235,0.92)_100%)] p-0">
+          <DialogHeader className="border-b border-white/80 px-6 py-5">
+            <DialogTitle className="text-left text-lg text-slate-900">
+              {editingNode ? "编辑节点" : "新建节点"}
+            </DialogTitle>
+            <p className="text-sm leading-6 text-slate-600">
+              节点标题负责表达结构，节点内容负责补充章节目标、冲突或场景说明。
+            </p>
           </DialogHeader>
 
-          <div className="grid gap-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="title">节点标题 *</Label>
-              <Input
-                id="title"
-                value={formData.title}
-                onChange={(e) =>
-                  setFormData({ ...formData, title: e.target.value })
-                }
-                placeholder="输入节点标题"
-              />
+          <div className="grid max-h-[70vh] gap-5 overflow-auto p-5">
+            <div className="rounded-[24px] border border-white/90 bg-white/88 p-5 shadow-sm shadow-slate-950/5">
+              <div className="space-y-2">
+                <Label htmlFor="title">节点标题 *</Label>
+                <Input
+                  id="title"
+                  value={formData.title}
+                  onChange={(e) =>
+                    setFormData({ ...formData, title: e.target.value })
+                  }
+                  placeholder="输入节点标题"
+                />
+              </div>
+
+              <div className="mt-4 space-y-2">
+                <Label htmlFor="content">节点内容</Label>
+                <Textarea
+                  id="content"
+                  value={formData.content}
+                  onChange={(e) =>
+                    setFormData({ ...formData, content: e.target.value })
+                  }
+                  placeholder="输入节点内容或描述"
+                  rows={8}
+                />
+              </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="content">节点内容</Label>
-              <Textarea
-                id="content"
-                value={formData.content}
-                onChange={(e) =>
-                  setFormData({ ...formData, content: e.target.value })
-                }
-                placeholder="输入节点内容或描述"
-                rows={4}
-              />
+            <div className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(248,250,252,0.88)_0%,rgba(255,255,255,0.98)_100%)] p-5 shadow-sm shadow-slate-950/5">
+              <div className="text-sm font-semibold text-slate-900">
+                录入建议
+              </div>
+              <div className="mt-2 space-y-2 text-xs leading-5 text-slate-500">
+                <p>标题尽量写成章节动作或结构目的，而不是笼统名词。</p>
+                <p>节点内容适合记录冲突、目标、节奏点或关键转折。</p>
+                <p>子节点应该比父节点更具体，避免层级看起来一样平。</p>
+              </div>
             </div>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
+          <DialogFooter className="border-t border-white/80 px-6 py-4">
+            <Button
+              variant="outline"
+              className="border-slate-200/80 bg-white"
+              onClick={() => setDialogOpen(false)}
+            >
               取消
             </Button>
             <Button onClick={handleSave} disabled={saving}>
@@ -358,86 +483,124 @@ function OutlineTreeItem({
   const isExpanded = expandedNodes.has(node.id);
 
   return (
-    <div>
+    <div className="space-y-3">
       <div
         className={cn(
-          "flex items-center gap-1 py-1.5 px-2 rounded hover:bg-accent/50 group",
-          level > 0 && "ml-4",
+          "group rounded-[22px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.95)_100%)] p-3 shadow-sm shadow-slate-950/5 transition hover:shadow-md",
+          level > 0 && "bg-slate-50/80",
         )}
-        style={{ paddingLeft: `${level * 16 + 8}px` }}
+        style={{ marginLeft: `${level * 18}px` }}
       >
-        {/* 展开/折叠按钮 */}
-        <button
-          onClick={() => onToggleExpand(node.id)}
-          className={cn(
-            "p-0.5 rounded hover:bg-accent",
-            !hasChildren && "invisible",
-          )}
-        >
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-        </button>
-
-        {/* 拖拽手柄 */}
-        <GripVertical className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 cursor-grab" />
-
-        {/* 标题 */}
-        <span className="flex-1 text-sm truncate">{node.title}</span>
-
-        {/* 操作按钮 */}
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={() => onMoveUp(node)}
-            title="上移"
+        <div className="flex items-start gap-3">
+          <button
+            onClick={() => {
+              if (hasChildren) {
+                onToggleExpand(node.id);
+              }
+            }}
+            className={cn(
+              "mt-1 flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/80 bg-white text-slate-500 transition hover:bg-slate-50",
+              !hasChildren && "cursor-default opacity-60",
+            )}
           >
-            <ArrowUp className="h-3 w-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-6 w-6"
-            onClick={() => onMoveDown(node)}
-            title="下移"
-          >
-            <ArrowDown className="h-3 w-3" />
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onEdit(node)}>
-                <Edit2 className="h-4 w-4 mr-2" />
-                编辑
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onAddChild(node.id)}>
-                <Plus className="h-4 w-4 mr-2" />
-                添加子节点
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => onDelete(node)}
-                className="text-destructive focus:text-destructive"
+            {hasChildren ? (
+              isExpanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )
+            ) : (
+              <GripVertical className="h-4 w-4" />
+            )}
+          </button>
+
+          <div className="flex h-10 w-10 items-center justify-center rounded-[16px] border border-slate-200/80 bg-slate-50 text-slate-600">
+            <FileText className="h-4 w-4" />
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="truncate text-sm font-semibold text-slate-900">
+                {node.title}
+              </span>
+              <Badge
+                variant="outline"
+                className="border-slate-200/80 bg-white text-[10px] text-slate-600"
               >
-                <Trash2 className="h-4 w-4 mr-2" />
-                删除
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                层级 {level + 1}
+              </Badge>
+              <Badge
+                variant="outline"
+                className="border-slate-200/80 bg-white text-[10px] text-slate-600"
+              >
+                {hasChildren ? `${node.children.length} 个子节点` : "叶子节点"}
+              </Badge>
+            </div>
+            {node.content ? (
+              <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">
+                {node.content}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs leading-5 text-slate-400">
+                暂无节点内容，可补充章节目标、冲突或关键说明。
+              </p>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-full text-slate-500"
+              onClick={() => onMoveUp(node)}
+              title="上移"
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 rounded-full text-slate-500"
+              onClick={() => onMoveDown(node)}
+              title="下移"
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 rounded-full text-slate-500"
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onEdit(node)}>
+                  <Edit2 className="mr-2 h-4 w-4" />
+                  编辑
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => onAddChild(node.id)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  添加子节点
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => onDelete(node)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  删除
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </div>
 
-      {/* 子节点 */}
       {hasChildren && isExpanded && (
-        <div>
+        <div className="space-y-3">
           {node.children.map((child) => (
             <OutlineTreeItem
               key={child.id}

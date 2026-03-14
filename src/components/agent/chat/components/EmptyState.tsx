@@ -53,6 +53,7 @@ import {
 import { ChatModelSelector } from "./ChatModelSelector";
 import { CharacterMention } from "./Inputbar/components/CharacterMention";
 import { SkillBadge } from "./Inputbar/components/SkillBadge";
+import { SkillSelector } from "./Inputbar/components/SkillSelector";
 import { useActiveSkill } from "./Inputbar/hooks/useActiveSkill";
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
@@ -410,8 +411,18 @@ interface EmptyStateProps {
   characters?: Character[];
   /** 技能列表（用于 @ 引用） */
   skills?: Skill[];
+  /** 技能列表加载状态 */
+  isSkillsLoading?: boolean;
   /** 跳转到设置页安装技能 */
   onNavigateToSettings?: () => void;
+  /** 导入本地技能 */
+  onImportSkill?: () => void | Promise<void>;
+  /** 刷新技能 */
+  onRefreshSkills?: () => void | Promise<void>;
+  /** 启动浏览器协助 */
+  onLaunchBrowserAssist?: () => void | Promise<void>;
+  /** 浏览器协助启动中 */
+  browserAssistLoading?: boolean;
 }
 
 const ENTRY_THEME_ID = "social-media";
@@ -544,7 +555,12 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   selectedText = "",
   characters = [],
   skills = [],
+  isSkillsLoading = false,
   onNavigateToSettings,
+  onImportSkill,
+  onRefreshSkills,
+  onLaunchBrowserAssist,
+  browserAssistLoading = false,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { activeSkill, setActiveSkill, clearActiveSkill, wrapTextWithSkill } =
@@ -980,6 +996,18 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
           <Toolbar>
             <ToolLoginLeft>
+              {isGeneralTheme && (
+                <SkillSelector
+                  skills={skills}
+                  activeSkill={activeSkill}
+                  isLoading={isSkillsLoading}
+                  onSelectSkill={setActiveSkill}
+                  onClearSkill={clearActiveSkill}
+                  onNavigateToSettings={onNavigateToSettings}
+                  onImportSkill={onImportSkill}
+                  onRefreshSkills={onRefreshSkills}
+                />
+              )}
               <ChatModelSelector
                 providerType={providerType}
                 setProviderType={setProviderType}
@@ -1288,7 +1316,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                     }`}
                     onClick={() => onTaskEnabledChange?.(!taskEnabled)}
                     aria-pressed={taskEnabled}
-                    title={taskEnabled ? "关闭后台任务偏好" : "开启后台任务偏好"}
+                    title={
+                      taskEnabled ? "关闭后台任务偏好" : "开启后台任务偏好"
+                    }
                   >
                     <ListChecks className="w-4 h-4 opacity-70" />
                   </Button>
@@ -1302,7 +1332,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
                     }`}
                     onClick={() => onSubagentEnabledChange?.(!subagentEnabled)}
                     aria-pressed={subagentEnabled}
-                    title={subagentEnabled ? "关闭多代理偏好" : "开启多代理偏好"}
+                    title={
+                      subagentEnabled ? "关闭多代理偏好" : "开启多代理偏好"
+                    }
                   >
                     <Workflow className="w-4 h-4 opacity-70" />
                   </Button>
@@ -1378,6 +1410,31 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
             </Button>
           </Toolbar>
         </InputCard>
+
+        {isGeneralTheme && onLaunchBrowserAssist ? (
+          <div className="w-full max-w-[800px] rounded-2xl border border-border/70 bg-card/70 px-4 py-4 shadow-sm">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">
+                  浏览器协助
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  在右侧画布实时查看远程浏览器，必要时可人工接管处理登录、验证码和临时操作。
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void onLaunchBrowserAssist()}
+                disabled={browserAssistLoading}
+                className="h-10 shrink-0 rounded-xl px-4"
+              >
+                <Globe className="mr-2 h-4 w-4" />
+                {browserAssistLoading ? "启动中..." : "打开浏览器协助"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         {/* Dynamic Inspiration/Tips based on Tab - Styled nicely */}
         {selectedTextPreview && (

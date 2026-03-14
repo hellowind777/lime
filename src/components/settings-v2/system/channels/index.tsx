@@ -4,7 +4,13 @@
  * Telegram / Discord / 飞书 三个 Bot 渠道的内联表单配置
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Eye,
@@ -19,6 +25,7 @@ import {
   SlidersHorizontal,
   Network,
   ScrollText,
+  type LucideIcon,
 } from "lucide-react";
 import { getConfig, saveConfig, type Config } from "@/lib/api/appConfig";
 import {
@@ -49,6 +56,7 @@ import {
   getProviderModelCompatibilityIssue,
 } from "@/components/agent/chat/utils/providerModelCompatibility";
 import { ChannelLogTailPanel } from "./ChannelLogTailPanel";
+import { cn } from "@/lib/utils";
 
 // ============================================================================
 // 默认值
@@ -102,6 +110,98 @@ type TabKey = "telegram" | "discord" | "feishu";
 type ChannelSubPage = "overview" | "config" | "gateway" | "logs";
 type DebugTabKey = "telegram" | "feishu" | "discord";
 
+const INPUT_CLASS_NAME =
+  "w-full rounded-[16px] border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-300 focus:ring-2 focus:ring-slate-200";
+const MONO_INPUT_CLASS_NAME = `${INPUT_CLASS_NAME} font-mono`;
+const PANEL_CLASS_NAME =
+  "space-y-4 rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5";
+const SOFT_CARD_CLASS_NAME =
+  "rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4";
+const SECTION_TABS_CLASS_NAME =
+  "grid w-full max-w-md grid-cols-3 rounded-[18px] border border-slate-200 bg-slate-50 p-1";
+const SECTION_TAB_TRIGGER_CLASS_NAME =
+  "rounded-[14px] px-3 py-2 text-sm font-medium text-slate-600 transition data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm";
+
+interface SurfacePanelProps {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  aside?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}
+
+interface SummaryStatProps {
+  label: string;
+  value: string;
+  description: string;
+}
+
+function SurfacePanel({
+  icon: Icon,
+  title,
+  description,
+  aside,
+  children,
+  className,
+}: SurfacePanelProps) {
+  return (
+    <article
+      className={cn(
+        "rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5",
+        className,
+      )}
+    >
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <Icon className="h-4 w-4 text-sky-600" />
+            {title}
+          </div>
+          <p className="text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+        {aside ? (
+          <div className="flex flex-wrap items-center gap-2">{aside}</div>
+        ) : null}
+      </div>
+
+      <div className="mt-5">{children}</div>
+    </article>
+  );
+}
+
+function SummaryStat({ label, value, description }: SummaryStatProps) {
+  return (
+    <div className="rounded-[22px] border border-white/90 bg-white/88 p-4 shadow-sm">
+      <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">{description}</p>
+    </div>
+  );
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-6 pb-8">
+      <div className="h-[228px] animate-pulse rounded-[30px] border border-slate-200/80 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)]" />
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.16fr)_minmax(320px,0.84fr)]">
+        <div className="space-y-6">
+          <div className="h-[320px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+          <div className="h-[420px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+        </div>
+        <div className="space-y-6">
+          <div className="h-[240px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+          <div className="h-[240px] animate-pulse rounded-[26px] border border-slate-200/80 bg-white" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // 模型选择器子组件
 // ============================================================================
@@ -136,11 +236,13 @@ function DefaultModelSelect({
 
   return (
     <div>
-      <label className="block text-sm font-medium mb-1.5">默认模型</label>
+      <label className="mb-1.5 block text-sm font-medium text-slate-900">
+        默认模型
+      </label>
       <select
         value={value || ""}
         onChange={(e) => onChange(e.target.value || undefined)}
-        className="w-full px-3 py-2 rounded-lg border bg-background text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+        className={INPUT_CLASS_NAME}
       >
         <option value="">未指定（使用全局默认）</option>
         {providersLoading && <option disabled>加载中...</option>}
@@ -162,7 +264,7 @@ function DefaultModelSelect({
           );
         })}
       </select>
-      <p className="text-xs text-muted-foreground mt-1">
+      <p className="mt-1 text-xs leading-5 text-slate-500">
         为此渠道指定默认使用的 AI 模型
       </p>
     </div>
@@ -189,24 +291,26 @@ function PasswordInput({
   const [show, setShow] = useState(false);
   return (
     <div>
-      <label className="block text-sm font-medium mb-1.5">{label}</label>
+      <label className="mb-1.5 block text-sm font-medium text-slate-900">
+        {label}
+      </label>
       <div className="relative">
         <input
           type={show ? "text" : "password"}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
-          className="w-full px-3 py-2 pr-10 rounded-lg border bg-background text-sm font-mono focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+          className={`${MONO_INPUT_CLASS_NAME} pr-10`}
         />
         <button
           type="button"
           onClick={() => setShow(!show)}
-          className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-muted"
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
         >
           {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
         </button>
       </div>
-      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+      {hint ? <p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p> : null}
     </div>
   );
 }
@@ -240,7 +344,9 @@ function StringListInput({
 
   return (
     <div>
-      <label className="block text-sm font-medium mb-1.5">{label}</label>
+      <label className="mb-1.5 block text-sm font-medium text-slate-900">
+        {label}
+      </label>
       <div className="flex gap-2">
         <input
           type="text"
@@ -250,12 +356,12 @@ function StringListInput({
             e.key === "Enter" && (e.preventDefault(), addItem())
           }
           placeholder={placeholder}
-          className="flex-1 px-3 py-2 rounded-lg border bg-background text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none"
+          className={`flex-1 ${INPUT_CLASS_NAME}`}
         />
         <button
           type="button"
           onClick={addItem}
-          className="px-3 py-2 rounded-lg border hover:bg-muted text-sm"
+          className="rounded-[16px] border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
         >
           <Plus className="h-4 w-4" />
         </button>
@@ -265,13 +371,13 @@ function StringListInput({
           {values.map((v) => (
             <span
               key={v}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-muted text-sm"
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-sm text-slate-600"
             >
               {v}
               <button
                 type="button"
                 onClick={() => onChange(values.filter((x) => x !== v))}
-                className="hover:text-destructive"
+                className="rounded-full text-slate-400 transition hover:text-rose-600"
               >
                 <X className="h-3 w-3" />
               </button>
@@ -279,7 +385,7 @@ function StringListInput({
           ))}
         </div>
       )}
-      {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+      {hint ? <p className="mt-1 text-xs leading-5 text-slate-500">{hint}</p> : null}
     </div>
   );
 }
@@ -294,16 +400,21 @@ function ConfigGuideCard({
   note?: string;
 }) {
   return (
-    <div className="rounded-lg border bg-muted/20 p-4">
-      <h3 className="text-sm font-medium">{title}</h3>
-      <div className="mt-2 space-y-1">
+    <div className={SOFT_CARD_CLASS_NAME}>
+      <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+      <div className="mt-3 space-y-2">
         {steps.map((step, index) => (
-          <p key={step} className="text-xs text-muted-foreground">
-            {index + 1}. {step}
-          </p>
+          <div key={step} className="flex gap-2 text-sm leading-6 text-slate-500">
+            <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-[11px] font-semibold text-slate-600">
+              {index + 1}
+            </span>
+            <p>{step}</p>
+          </div>
         ))}
       </div>
-      {note && <p className="mt-2 text-xs text-muted-foreground">{note}</p>}
+      {note ? (
+        <p className="mt-3 text-xs leading-5 text-slate-500">{note}</p>
+      ) : null}
     </div>
   );
 }
@@ -374,7 +485,7 @@ function GatewayTunnelPanel({
   };
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border">
+    <div className={PANEL_CLASS_NAME}>
       <div>
         <h3 className="text-sm font-medium">Gateway 公共隧道</h3>
         <p className="text-xs text-muted-foreground">
@@ -710,7 +821,7 @@ function TelegramForm({
   onChange: (c: TelegramBotConfig) => void;
 }) {
   return (
-    <div className="space-y-4 p-4 rounded-lg border">
+    <div className={PANEL_CLASS_NAME}>
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-medium">启用 Telegram Bot</h3>
@@ -819,7 +930,7 @@ function TelegramGatewayDebugPanel() {
   const busy = busyAction !== null;
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border">
+    <div className={PANEL_CLASS_NAME}>
       <div>
         <h3 className="text-sm font-medium">Telegram Gateway 调试工具</h3>
         <p className="text-xs text-muted-foreground">
@@ -1025,7 +1136,7 @@ function FeishuGatewayDebugPanel() {
   const busy = busyAction !== null;
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border">
+    <div className={PANEL_CLASS_NAME}>
       <div>
         <h3 className="text-sm font-medium">Feishu Gateway 调试工具</h3>
         <p className="text-xs text-muted-foreground">
@@ -1219,7 +1330,7 @@ function DiscordGatewayDebugPanel() {
   const busy = busyAction !== null;
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border">
+    <div className={PANEL_CLASS_NAME}>
       <div>
         <h3 className="text-sm font-medium">Discord Gateway 调试工具</h3>
         <p className="text-xs text-muted-foreground">
@@ -1472,7 +1583,7 @@ function DiscordForm({
   const replyToMode = (config.reply_to_mode || "off").toLowerCase();
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border">
+    <div className={PANEL_CLASS_NAME}>
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-medium">启用 Discord Bot</h3>
@@ -1873,7 +1984,7 @@ function FeishuForm({
   const replyToMode = (config.reply_to_mode || "off").toLowerCase();
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border">
+    <div className={PANEL_CLASS_NAME}>
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-medium">启用飞书 Bot</h3>
@@ -2201,11 +2312,7 @@ export function ChannelsSettings({ className }: ChannelsSettingsProps) {
   };
 
   if (!config) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <LoadingSkeleton />;
   }
 
   const TAB_LABELS: Record<TabKey, string> = {
@@ -2220,7 +2327,12 @@ export function ChannelsSettings({ className }: ChannelsSettingsProps) {
     logs: "日志与调试",
   };
 
-  const channelOverview = [
+  const channelOverview: Array<{
+    key: TabKey;
+    label: string;
+    enabled: boolean;
+    model: string;
+  }> = [
     {
       key: "telegram",
       label: "Telegram",
@@ -2274,27 +2386,119 @@ export function ChannelsSettings({ className }: ChannelsSettingsProps) {
   ];
 
   const enabledCount = channelOverview.filter((item) => item.enabled).length;
+  const configuredModelCount = channelOverview.filter(
+    (item) => item.model !== "跟随全局默认",
+  ).length;
+  const tunnelEnabled = gateway.tunnel?.enabled === true;
   const currentScopeLabel =
     activeSubPage === "config"
       ? `${SUB_PAGE_LABELS[activeSubPage]} / ${TAB_LABELS[activeTab]}`
       : SUB_PAGE_LABELS[activeSubPage];
 
   return (
-    <div className={`space-y-6 ${className || ""}`}>
+    <div className={cn("space-y-6 pb-8", className)}>
       {message && (
         <div
-          className={`rounded-lg border p-3 text-sm mb-4 ${
+          className={cn(
+            "flex items-center gap-2 rounded-[20px] border px-4 py-3 text-sm shadow-sm shadow-slate-950/5",
             message.type === "error"
-              ? "border-destructive bg-destructive/10 text-destructive"
-              : "border-green-500 bg-green-50 text-green-700 dark:bg-green-900/20 dark:text-green-400"
-          }`}
+              ? "border-rose-200 bg-rose-50/90 text-rose-700"
+              : "border-emerald-200 bg-emerald-50/90 text-emerald-700",
+          )}
         >
+          <AlertCircle className="h-4 w-4" />
           {message.text}
         </div>
       )}
 
-      <div className="rounded-xl border bg-background/40 p-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+      <section className="relative overflow-hidden rounded-[30px] border border-emerald-200/70 bg-[linear-gradient(135deg,rgba(244,251,248,0.98)_0%,rgba(248,250,252,0.98)_45%,rgba(241,246,255,0.96)_100%)] shadow-sm shadow-slate-950/5">
+        <div className="pointer-events-none absolute -left-20 top-[-72px] h-56 w-56 rounded-full bg-emerald-200/30 blur-3xl" />
+        <div className="pointer-events-none absolute right-[-76px] top-[-24px] h-56 w-56 rounded-full bg-sky-200/28 blur-3xl" />
+
+        <div className="relative flex flex-col gap-6 p-6 lg:p-8">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1.08fr)_minmax(360px,0.92fr)]">
+            <div className="max-w-3xl space-y-5">
+              <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white/85 px-3 py-1 text-xs font-semibold tracking-[0.16em] text-emerald-700 shadow-sm">
+                CHANNEL CONTROL
+              </span>
+              <div className="space-y-2">
+                <p className="text-[28px] font-semibold tracking-tight text-slate-900">
+                  把渠道配置、公网入口和运行调试收拢到一个操作台里
+                </p>
+                <p className="max-w-2xl text-sm leading-7 text-slate-600">
+                  这里按“概览、配置、网关、日志”组织渠道工作流，减少在多个零散表单之间来回切换。
+                  保存逻辑保持不变，改动后仍然通过底部操作条统一提交。
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  Telegram / Discord / 飞书共用同一页治理流程
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  先配渠道，再接公网入口，最后看日志与调试
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  当前视图：{currentScopeLabel}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 xl:content-start">
+              <SummaryStat
+                label="已启用渠道"
+                value={`${enabledCount}/${channelOverview.length}`}
+                description="当前已经打开开关并参与运行的渠道数量。"
+              />
+              <SummaryStat
+                label="已设默认模型"
+                value={configuredModelCount.toString()}
+                description="已为渠道显式指定默认模型的数量。"
+              />
+              <SummaryStat
+                label="公网隧道"
+                value={tunnelEnabled ? "已启用" : "未启用"}
+                description="统一公网入口的当前状态，用于承接回调与外部请求。"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-4 rounded-[24px] border border-white/90 bg-white/80 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium",
+                    isDirty
+                      ? "border-amber-200 bg-amber-50 text-amber-700"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                  )}
+                >
+                  {isDirty ? "存在未保存变更" : "配置已同步"}
+                </span>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                  网关隧道 {tunnelEnabled ? "开启" : "关闭"}
+                </span>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
+                  当前子页 {SUB_PAGE_LABELS[activeSubPage]}
+                </span>
+              </div>
+              <p className="text-sm leading-6 text-slate-600">
+                {isDirty
+                  ? "你已经修改了当前渠道配置，底部操作条会保留“取消”和“保存”。"
+                  : "建议先在概览确认启用状态，再进入配置或网关分区做细节调整。"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <SurfacePanel
+        icon={LayoutDashboard}
+        title="工作区切换"
+        description="按工作流切换当前区域，而不是在一个超长页面里滚动查找。"
+      >
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {subPages.map((page) => {
             const Icon = page.icon;
             const isActive = activeSubPage === page.key;
@@ -2303,249 +2507,516 @@ export function ChannelsSettings({ className }: ChannelsSettingsProps) {
                 key={page.key}
                 type="button"
                 onClick={() => setActiveSubPage(page.key)}
-                className={`text-left rounded-lg border px-3 py-2 transition-colors ${
+                className={cn(
+                  "group rounded-[22px] border p-4 text-left transition",
                   isActive
-                    ? "border-primary bg-primary/10"
-                    : "border-transparent hover:border-border hover:bg-muted/40"
-                }`}
+                    ? "border-slate-300 bg-slate-900 text-white shadow-sm"
+                    : "border-slate-200/80 bg-slate-50/60 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white",
+                )}
               >
-                <div className="flex items-center gap-2">
-                  <Icon className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">{page.label}</span>
+                <div className="flex items-start justify-between gap-3">
+                  <div
+                    className={cn(
+                      "flex h-11 w-11 items-center justify-center rounded-2xl border",
+                      isActive
+                        ? "border-white/20 bg-white/10 text-white"
+                        : "border-slate-200 bg-white text-slate-700",
+                    )}
+                  >
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <span
+                    className={cn(
+                      "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                      isActive
+                        ? "border-white/15 bg-white/10 text-white"
+                        : "border-slate-200 bg-white text-slate-500",
+                    )}
+                  >
+                    {page.label}
+                  </span>
                 </div>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p
+                  className={cn(
+                    "mt-4 text-sm font-semibold",
+                    isActive ? "text-white" : "text-slate-900",
+                  )}
+                >
+                  {page.label}
+                </p>
+                <p
+                  className={cn(
+                    "mt-1 text-sm leading-6",
+                    isActive ? "text-white/80" : "text-slate-500",
+                  )}
+                >
                   {page.description}
                 </p>
               </button>
             );
           })}
         </div>
-      </div>
+      </SurfacePanel>
 
       {activeSubPage === "overview" && (
-        <div className="space-y-6">
-          <div className="rounded-xl border bg-background/40 p-4 md:p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-base font-semibold">渠道总览</h2>
-                <p className="text-xs text-muted-foreground">
-                  已启用 {enabledCount} / {channelOverview.length} 个渠道
-                </p>
-              </div>
-              <div className="rounded-md border bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-                建议流程：先完成「渠道配置」，再进入「网关与隧道」与「日志与调试」验证。
-              </div>
-            </div>
-            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.16fr)_minmax(320px,0.84fr)]">
+          <SurfacePanel
+            icon={LayoutDashboard}
+            title="渠道总览"
+            description="从这里快速判断哪些渠道已经具备基本可用条件。"
+            aside={
+              <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
+                已启用 {enabledCount} / {channelOverview.length}
+              </span>
+            }
+          >
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {channelOverview.map((item) => (
-                <div
+                <button
                   key={item.key}
-                  className="rounded-lg border bg-muted/20 p-4"
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(item.key);
+                    setActiveSubPage("config");
+                  }}
+                  className="group rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4 text-left transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white"
                 >
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-medium">{item.label}</h3>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      {item.label}
+                    </h3>
                     <span
-                      className={`rounded px-2 py-0.5 text-xs ${
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[11px] font-medium",
                         item.enabled
-                          ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                          : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                      }`}
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-white text-slate-500",
+                      )}
                     >
                       {item.enabled ? "已启用" : "未启用"}
                     </span>
                   </div>
-                  <p className="mt-2 text-xs text-muted-foreground break-all">
+                  <p className="mt-3 text-sm leading-6 text-slate-500">
                     默认模型：{item.model}
                   </p>
-                </div>
+                  <p className="mt-4 text-xs font-medium text-slate-400 transition group-hover:text-slate-600">
+                    进入渠道配置
+                  </p>
+                </button>
               ))}
             </div>
+          </SurfacePanel>
+
+          <div className="space-y-6">
+            <SurfacePanel
+              icon={SlidersHorizontal}
+              title="推荐顺序"
+              description="按这个顺序做，可以减少渠道接入时的排障往返。"
+            >
+              <div className="space-y-3">
+                <div className={SOFT_CARD_CLASS_NAME}>
+                  <p className="text-sm font-semibold text-slate-900">
+                    先完成渠道基础配置
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    填好 Token、App Secret、白名单和默认模型，确保基础参数完整。
+                  </p>
+                </div>
+                <div className={SOFT_CARD_CLASS_NAME}>
+                  <p className="text-sm font-semibold text-slate-900">
+                    再检查公网入口
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    需要外部回调时，再进入“网关与隧道”处理 tunnel、webhook 和回调同步。
+                  </p>
+                </div>
+                <div className={SOFT_CARD_CLASS_NAME}>
+                  <p className="text-sm font-semibold text-slate-900">
+                    最后看日志与调试
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    通过状态查询、探测账号和实时日志判断链路是否打通，而不是盲改表单字段。
+                  </p>
+                </div>
+              </div>
+            </SurfacePanel>
+
+            <SurfacePanel
+              icon={Network}
+              title="入口状态"
+              description="当前统一入口和保存状态摘要。"
+            >
+              <div className="grid gap-3">
+                <div className={SOFT_CARD_CLASS_NAME}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">
+                      公网隧道
+                    </p>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                        tunnelEnabled
+                          ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          : "border-slate-200 bg-white text-slate-500",
+                      )}
+                    >
+                      {tunnelEnabled ? "已启用" : "未启用"}
+                    </span>
+                  </div>
+                </div>
+                <div className={SOFT_CARD_CLASS_NAME}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-slate-900">
+                      未保存更改
+                    </p>
+                    <span
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                        isDirty
+                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700",
+                      )}
+                    >
+                      {isDirty ? "待处理" : "无"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </SurfacePanel>
           </div>
         </div>
       )}
 
       {activeSubPage === "config" && (
-        <div className="rounded-xl border bg-background/40 p-4 md:p-5">
-          <div className="mb-4">
-            <h2 className="text-base font-semibold">渠道配置</h2>
-            <p className="text-xs text-muted-foreground">
-              仅维护渠道基础参数，不包含运行调试操作。
-            </p>
-          </div>
-          <div className="mb-4">
-            <ConfigGuideCard
-              title="配置说明（通用）"
-              steps={[
-                "先开启渠道开关，再填写密钥或 Token。",
-                "建议先设置默认模型，避免走到全局默认导致行为不一致。",
-                "点底部“保存”后，再切到“日志与调试”验证链路是否通畅。",
-              ]}
-              note="敏感凭证仅用于本地配置保存，排查问题时可在“日志与调试”查看网关行为。"
-            />
-          </div>
-          <Tabs
-            value={activeTab}
-            onValueChange={(v) => setActiveTab(v as TabKey)}
-            className="w-full"
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+          <SurfacePanel
+            icon={SlidersHorizontal}
+            title="渠道配置"
+            description="这里只处理基础参数，不包含运行态调试动作。"
+            aside={
+              <span className="rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-xs font-medium text-slate-500">
+                当前渠道：{TAB_LABELS[activeTab]}
+              </span>
+            }
           >
-            <TabsList className="grid w-full max-w-md grid-cols-3">
-              <TabsTrigger value="telegram">Telegram</TabsTrigger>
-              <TabsTrigger value="discord">Discord</TabsTrigger>
-              <TabsTrigger value="feishu">飞书</TabsTrigger>
-            </TabsList>
+            <div className="space-y-4">
+              <ConfigGuideCard
+                title="配置说明（通用）"
+                steps={[
+                  "先开启渠道开关，再填写密钥或 Token。",
+                  "建议先设置默认模型，避免走到全局默认导致行为不一致。",
+                  "点底部“保存”后，再切到“日志与调试”验证链路是否通畅。",
+                ]}
+                note="敏感凭证仅用于本地配置保存，排查问题时可在“日志与调试”查看网关行为。"
+              />
 
-            <TabsContent value="telegram" className="mt-5">
-              <div className="space-y-4">
-                <ConfigGuideCard
-                  title="Telegram 配置说明"
-                  steps={[
-                    "在 @BotFather 创建机器人并复制 Bot Token。",
-                    "如果要限制访问，填写允许的用户 ID 列表；留空表示不过滤。",
-                    "建议先选默认模型，再保存并到日志页筛选 TelegramGateway 检查消息链路。",
-                  ]}
-                />
-                <TelegramForm
-                  config={channels.telegram}
-                  onChange={(tg) => setChannels({ ...channels, telegram: tg })}
-                />
-              </div>
-            </TabsContent>
+              <Tabs
+                value={activeTab}
+                onValueChange={(v) => setActiveTab(v as TabKey)}
+                className="w-full"
+              >
+                <TabsList className={SECTION_TABS_CLASS_NAME}>
+                  <TabsTrigger
+                    value="telegram"
+                    className={SECTION_TAB_TRIGGER_CLASS_NAME}
+                  >
+                    Telegram
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="discord"
+                    className={SECTION_TAB_TRIGGER_CLASS_NAME}
+                  >
+                    Discord
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="feishu"
+                    className={SECTION_TAB_TRIGGER_CLASS_NAME}
+                  >
+                    飞书
+                  </TabsTrigger>
+                </TabsList>
 
-            <TabsContent value="discord" className="mt-5">
-              <div className="space-y-4">
-                <ConfigGuideCard
-                  title="Discord 配置说明"
-                  steps={[
-                    "在 Discord Developer Portal 创建应用并生成 Bot Token。",
-                    "将 Bot 邀请到目标服务器后，按需填写允许的服务器 ID。",
-                    "保存后通过日志页观察 RPC/渠道日志确认请求已进入代理链路。",
-                  ]}
-                />
-                <DiscordForm
-                  config={channels.discord}
-                  onChange={(dc) => setChannels({ ...channels, discord: dc })}
-                />
-              </div>
-            </TabsContent>
+                <TabsContent value="telegram" className="mt-5 space-y-4">
+                  <ConfigGuideCard
+                    title="Telegram 配置说明"
+                    steps={[
+                      "在 @BotFather 创建机器人并复制 Bot Token。",
+                      "如果要限制访问，填写允许的用户 ID 列表；留空表示不过滤。",
+                      "建议先选默认模型，再保存并到日志页筛选 TelegramGateway 检查消息链路。",
+                    ]}
+                  />
+                  <TelegramForm
+                    config={channels.telegram}
+                    onChange={(tg) => setChannels({ ...channels, telegram: tg })}
+                  />
+                </TabsContent>
 
-            <TabsContent value="feishu" className="mt-5">
-              <div className="space-y-4">
-                <ConfigGuideCard
-                  title="飞书配置说明"
-                  steps={[
-                    "填写 App ID / App Secret，并按需设置 Verification Token 与 Encrypt Key。",
-                    "连接模式优先使用 Webhook；Webhook Host/Port/Path 要与网关入口一致。",
-                    "保存后建议在“网关与隧道”同步回调 URL，再到日志页筛选 FeishuGateway 验证。",
-                  ]}
-                />
-                <FeishuForm
-                  config={channels.feishu}
-                  onChange={(fs) => setChannels({ ...channels, feishu: fs })}
-                />
+                <TabsContent value="discord" className="mt-5 space-y-4">
+                  <ConfigGuideCard
+                    title="Discord 配置说明"
+                    steps={[
+                      "在 Discord Developer Portal 创建应用并生成 Bot Token。",
+                      "将 Bot 邀请到目标服务器后，按需填写允许的服务器 ID。",
+                      "保存后通过日志页观察 RPC/渠道日志确认请求已进入代理链路。",
+                    ]}
+                  />
+                  <DiscordForm
+                    config={channels.discord}
+                    onChange={(dc) => setChannels({ ...channels, discord: dc })}
+                  />
+                </TabsContent>
+
+                <TabsContent value="feishu" className="mt-5 space-y-4">
+                  <ConfigGuideCard
+                    title="飞书配置说明"
+                    steps={[
+                      "填写 App ID / App Secret，并按需设置 Verification Token 与 Encrypt Key。",
+                      "连接模式优先使用 Webhook；Webhook Host/Port/Path 要与网关入口一致。",
+                      "保存后建议在“网关与隧道”同步回调 URL，再到日志页筛选 FeishuGateway 验证。",
+                    ]}
+                  />
+                  <FeishuForm
+                    config={channels.feishu}
+                    onChange={(fs) => setChannels({ ...channels, feishu: fs })}
+                  />
+                </TabsContent>
+              </Tabs>
+            </div>
+          </SurfacePanel>
+
+          <div className="space-y-6">
+            <SurfacePanel
+              icon={LayoutDashboard}
+              title="当前配置摘要"
+              description="用于确认本次准备编辑的是哪个渠道，以及哪些渠道还没配完。"
+            >
+              <div className="space-y-3">
+                {channelOverview.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setActiveTab(item.key)}
+                    className={cn(
+                      "w-full rounded-[22px] border p-4 text-left transition",
+                      activeTab === item.key
+                        ? "border-slate-300 bg-slate-900 text-white"
+                        : "border-slate-200/80 bg-slate-50/60 hover:border-slate-300 hover:bg-white",
+                    )}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-semibold">{item.label}</p>
+                      <span
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-[11px] font-medium",
+                          activeTab === item.key
+                            ? "border-white/15 bg-white/10 text-white"
+                            : item.enabled
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-500",
+                        )}
+                      >
+                        {item.enabled ? "已启用" : "未启用"}
+                      </span>
+                    </div>
+                    <p
+                      className={cn(
+                        "mt-2 text-sm leading-6",
+                        activeTab === item.key ? "text-white/80" : "text-slate-500",
+                      )}
+                    >
+                      默认模型：{item.model}
+                    </p>
+                  </button>
+                ))}
               </div>
-            </TabsContent>
-          </Tabs>
+            </SurfacePanel>
+
+            <SurfacePanel
+              icon={Network}
+              title="配置提示"
+              description="优先保证基础配置完整，再去处理运行态问题。"
+            >
+              <div className="space-y-3">
+                <div className={SOFT_CARD_CLASS_NAME}>
+                  <p className="text-sm font-semibold text-slate-900">
+                    默认模型不要留到最后
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    三个渠道的默认模型建议尽早设置，避免调试时误落到全局默认。
+                  </p>
+                </div>
+                <div className={SOFT_CARD_CLASS_NAME}>
+                  <p className="text-sm font-semibold text-slate-900">
+                    凭证填写后再切网关
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">
+                    先让 Bot 能本地正常工作，再处理公网隧道与回调同步，排障路径更短。
+                  </p>
+                </div>
+              </div>
+            </SurfacePanel>
+          </div>
         </div>
       )}
 
       {activeSubPage === "gateway" && (
-        <div className="space-y-3">
-          <div>
-            <h2 className="text-base font-semibold">网关与隧道</h2>
-            <p className="text-xs text-muted-foreground">
-              统一管理公网隧道、回调同步与连通性探测。
-            </p>
-          </div>
-          <ConfigGuideCard
-            title="网关与隧道说明"
-            steps={[
-              "先确认本地网关地址（local host/port）可访问，再配置 tunnel 参数。",
-              "Cloudflare 模式优先设置 tunnel_name 与 dns_name，再执行“创建隧道”。",
-              "隧道启动后执行“同步飞书回调 URL”，确保飞书侧回调地址一致。",
-            ]}
-            note="建议每次变更后都先“查询状态”，再到日志页观察是否有连接异常。"
-          />
-          <GatewayTunnelPanel
-            config={gateway}
-            onChange={setGateway}
-            defaultFeishuAccountId={
-              channels.feishu.default_account || "default"
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.18fr)_minmax(320px,0.82fr)]">
+          <SurfacePanel
+            icon={Network}
+            title="网关与隧道"
+            description="统一管理公网隧道、回调同步与连通性探测。"
+            aside={
+              <span
+                className={cn(
+                  "rounded-full border px-3 py-1 text-xs font-medium",
+                  tunnelEnabled
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-slate-200 bg-slate-100 text-slate-500",
+                )}
+              >
+                {tunnelEnabled ? "隧道已启用" : "隧道未启用"}
+              </span>
             }
-            onReloadConfig={loadConfig}
-          />
+          >
+            <div className="space-y-4">
+              <ConfigGuideCard
+                title="网关与隧道说明"
+                steps={[
+                  "先确认本地网关地址（local host/port）可访问，再配置 tunnel 参数。",
+                  "Cloudflare 模式优先设置 tunnel_name 与 dns_name，再执行“创建隧道”。",
+                  "隧道启动后执行“同步飞书回调 URL”，确保飞书侧回调地址一致。",
+                ]}
+                note="建议每次变更后都先“查询状态”，再到日志页观察是否有连接异常。"
+              />
+              <GatewayTunnelPanel
+                config={gateway}
+                onChange={setGateway}
+                defaultFeishuAccountId={
+                  channels.feishu.default_account || "default"
+                }
+                onReloadConfig={loadConfig}
+              />
+            </div>
+          </SurfacePanel>
+
+          <SurfacePanel
+            icon={LayoutDashboard}
+            title="入口摘要"
+            description="用于快速核对当前 tunnel 关键参数。"
+          >
+            <div className="space-y-3">
+              <div className={SOFT_CARD_CLASS_NAME}>
+                <p className="text-sm font-semibold text-slate-900">
+                  本地入口
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {(gateway.tunnel?.local_host || "127.0.0.1")}:
+                  {gateway.tunnel?.local_port ?? 3000}
+                </p>
+              </div>
+              <div className={SOFT_CARD_CLASS_NAME}>
+                <p className="text-sm font-semibold text-slate-900">
+                  Tunnel Provider / 模式
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {gateway.tunnel?.provider || "cloudflare"} /{" "}
+                  {gateway.tunnel?.mode || "managed"}
+                </p>
+              </div>
+              <div className={SOFT_CARD_CLASS_NAME}>
+                <p className="text-sm font-semibold text-slate-900">
+                  飞书默认账号
+                </p>
+                <p className="mt-2 text-sm leading-6 text-slate-500">
+                  {channels.feishu.default_account || "default"}
+                </p>
+              </div>
+            </div>
+          </SurfacePanel>
         </div>
       )}
 
       {activeSubPage === "logs" && (
-        <div className="grid grid-cols-1 2xl:grid-cols-2 gap-6">
-          <section className="space-y-3">
-            <div>
-              <h2 className="text-base font-semibold">渠道日志观察</h2>
-              <p className="text-xs text-muted-foreground">
-                支持实时 tail、过滤与清空，快速定位 TelegramGateway / RPC 问题。
-              </p>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.02fr)_minmax(0,0.98fr)]">
+          <SurfacePanel
+            icon={ScrollText}
+            title="渠道日志观察"
+            description="支持实时 tail、过滤与清空，快速定位 TelegramGateway / RPC 问题。"
+          >
+            <div className="space-y-4">
+              <ConfigGuideCard
+                title="日志排查说明"
+                steps={[
+                  "先选择过滤模式（如 TelegramGateway / RPC），缩小观察范围。",
+                  "遇到历史噪音可先“清空日志”，再复现问题获取干净样本。",
+                  "如果日志无输出，先去“运行调试”页执行状态查询确认服务已启动。",
+                ]}
+              />
+              <ChannelLogTailPanel />
             </div>
-            <ConfigGuideCard
-              title="日志排查说明"
-              steps={[
-                "先选择过滤模式（如 TelegramGateway / RPC），缩小观察范围。",
-                "遇到历史噪音可先“清空日志”，再复现问题获取干净样本。",
-                "如果日志无输出，先去“运行调试”页执行状态查询确认服务已启动。",
-              ]}
-            />
-            <ChannelLogTailPanel />
-          </section>
+          </SurfacePanel>
 
-          <section className="space-y-3">
-            <div>
-              <h2 className="text-base font-semibold">运行调试</h2>
-              <p className="text-xs text-muted-foreground">
-                用于执行渠道启停、重启、状态查询与账号探测。
-              </p>
-            </div>
-            <div className="rounded-xl border bg-background/40 p-4">
-              <Tabs
-                value={activeDebugTab}
-                onValueChange={(v) => setActiveDebugTab(v as DebugTabKey)}
-                className="w-full"
-              >
-                <TabsList className="grid w-full max-w-md grid-cols-3">
-                  <TabsTrigger value="telegram">Telegram</TabsTrigger>
-                  <TabsTrigger value="feishu">飞书</TabsTrigger>
-                  <TabsTrigger value="discord">Discord</TabsTrigger>
-                </TabsList>
+          <SurfacePanel
+            icon={Network}
+            title="运行调试"
+            description="用于执行渠道启停、重启、状态查询与账号探测。"
+          >
+            <Tabs
+              value={activeDebugTab}
+              onValueChange={(v) => setActiveDebugTab(v as DebugTabKey)}
+              className="w-full"
+            >
+              <TabsList className={SECTION_TABS_CLASS_NAME}>
+                <TabsTrigger
+                  value="telegram"
+                  className={SECTION_TAB_TRIGGER_CLASS_NAME}
+                >
+                  Telegram
+                </TabsTrigger>
+                <TabsTrigger
+                  value="feishu"
+                  className={SECTION_TAB_TRIGGER_CLASS_NAME}
+                >
+                  飞书
+                </TabsTrigger>
+                <TabsTrigger
+                  value="discord"
+                  className={SECTION_TAB_TRIGGER_CLASS_NAME}
+                >
+                  Discord
+                </TabsTrigger>
+              </TabsList>
 
-                <TabsContent value="telegram" className="mt-4">
-                  <TelegramGatewayDebugPanel />
-                </TabsContent>
+              <TabsContent value="telegram" className="mt-4">
+                <TelegramGatewayDebugPanel />
+              </TabsContent>
 
-                <TabsContent value="feishu" className="mt-4">
-                  <FeishuGatewayDebugPanel />
-                </TabsContent>
+              <TabsContent value="feishu" className="mt-4">
+                <FeishuGatewayDebugPanel />
+              </TabsContent>
 
-                <TabsContent value="discord" className="mt-4">
-                  <DiscordGatewayDebugPanel />
-                </TabsContent>
-              </Tabs>
-            </div>
-          </section>
+              <TabsContent value="discord" className="mt-4">
+                <DiscordGatewayDebugPanel />
+              </TabsContent>
+            </Tabs>
+          </SurfacePanel>
         </div>
       )}
 
       {/* 底部固定栏 */}
       {isDirty && (
-        <div className="sticky bottom-0 mt-6 flex items-center justify-between rounded-lg border bg-background/95 backdrop-blur p-3">
+        <div className="sticky bottom-0 mt-6 flex flex-col gap-3 rounded-[22px] border border-slate-200/80 bg-white/95 p-4 shadow-lg shadow-slate-950/10 backdrop-blur lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <AlertCircle className="h-4 w-4 text-yellow-500" />
             <span>未保存的更改</span>
-            <span className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
+            <span className="rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
               {currentScopeLabel}
             </span>
           </div>
           <div className="flex gap-2">
             <button
               onClick={handleCancel}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm hover:bg-muted"
+              className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
             >
               <RotateCcw className="h-3.5 w-3.5" />
               取消
@@ -2553,7 +3024,7 @@ export function ChannelsSettings({ className }: ChannelsSettingsProps) {
             <button
               onClick={handleSave}
               disabled={saving}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
             >
               {saving ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

@@ -35,6 +35,7 @@ import { skillsApi, type Skill } from "@/lib/api/skills";
 import { useGlobalMediaGenerationDefaults } from "@/hooks/useGlobalMediaGenerationDefaults";
 import { resolveMediaGenerationPreference } from "@/lib/mediaGeneration";
 import type { Page } from "@/types/page";
+import { SettingsTabs } from "@/types/settings";
 
 export interface AiImageGenTabProps {
   /** 目标项目 ID（可选） */
@@ -1060,7 +1061,7 @@ export function AiImageGenTab({ projectId, onNavigate }: AiImageGenTabProps) {
   };
 
   const goCredentialManagement = () => {
-    onNavigate?.("provider-pool");
+    onNavigate?.("settings", { tab: SettingsTabs.Providers });
   };
 
   return (

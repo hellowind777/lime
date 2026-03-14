@@ -3,7 +3,37 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatSidebar } from "./ChatSidebar";
-import type { Topic } from "../hooks/useAgentChat";
+import type { Topic } from "../hooks/agentChatShared";
+
+vi.mock("@/components/ui/badge", () => ({
+  Badge: ({
+    children,
+    className,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+  }) => <span className={className}>{children}</span>,
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    onClick,
+    className,
+  }: {
+    children: React.ReactNode;
+    onClick?: () => void;
+    className?: string;
+  }) => (
+    <button type="button" className={className} onClick={onClick}>
+      {children}
+    </button>
+  ),
+  DropdownMenuSeparator: () => <div />,
+}));
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -30,9 +60,17 @@ afterEach(() => {
 const defaultTopics: Topic[] = [
   {
     id: "topic-1",
-    title: "话题一",
+    title: "任务一",
     createdAt: new Date(),
+    updatedAt: new Date(),
     messagesCount: 2,
+    executionStrategy: "auto",
+    status: "done",
+    lastPreview: "已记录 2 条消息，可继续补充或复盘。",
+    isPinned: false,
+    hasUnread: false,
+    tag: null,
+    sourceSessionId: "topic-1",
   },
 ];
 
@@ -60,33 +98,45 @@ function renderSidebar(
 }
 
 describe("ChatSidebar", () => {
-  it("应显示新建话题入口和话题列表", () => {
+  it("应显示新建任务入口和任务列表", () => {
     const container = renderSidebar();
-    expect(container.textContent).toContain("新建话题");
-    expect(container.textContent).toContain("话题一");
+    expect(container.textContent).toContain("新建任务");
+    expect(container.textContent).toContain("任务一");
   });
 
-  it("点击话题时应触发切换", () => {
+  it("点击任务时应触发切换", () => {
     const onSwitchTopic = vi.fn();
     const container = renderSidebar({ onSwitchTopic });
-    const topicItem = Array.from(container.querySelectorAll("span")).find(
-      (element) => element.textContent === "话题一",
+    const taskItem = Array.from(
+      container.querySelectorAll('[role="button"]'),
+    ).find(
+      (element) => element.textContent?.includes("任务一"),
     );
-    expect(topicItem).toBeTruthy();
-    if (topicItem) {
+    expect(taskItem).toBeTruthy();
+    if (taskItem) {
       act(() => {
-        topicItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        taskItem.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       });
     }
     expect(onSwitchTopic).toHaveBeenCalledWith("topic-1");
   });
 
-  it("点击删除按钮时应触发删除", () => {
+  it("点击菜单删除任务时应触发删除", () => {
     const onDeleteTopic = vi.fn();
     const container = renderSidebar({ onDeleteTopic });
-    const deleteButton = container.querySelector(
-      "button.delete-btn",
+    const actionButton = container.querySelector(
+      'button[aria-label="任务操作"]',
     ) as HTMLButtonElement | null;
+    expect(actionButton).toBeTruthy();
+    if (actionButton) {
+      act(() => {
+        actionButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+
+    const deleteButton = Array.from(container.querySelectorAll("button")).find(
+      (element) => element.textContent?.includes("删除任务"),
+    );
     expect(deleteButton).toBeTruthy();
     if (deleteButton) {
       act(() => {
@@ -94,5 +144,24 @@ describe("ChatSidebar", () => {
       });
     }
     expect(onDeleteTopic).toHaveBeenCalledWith("topic-1");
+  });
+
+  it("切换为仅看进行中时应过滤已完成任务", () => {
+    const container = renderSidebar({
+      isSending: true,
+      currentTopicId: "topic-1",
+    });
+
+    const filterButton = Array.from(container.querySelectorAll("button")).find(
+      (element) => element.textContent?.includes("仅看进行中"),
+    );
+    expect(filterButton).toBeTruthy();
+
+    act(() => {
+      filterButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("任务一");
+    expect(container.textContent).toContain("进行中");
   });
 });

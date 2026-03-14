@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { Project } from "@/types/project";
-import { getAvailableProjects } from "./projectSelectorUtils";
+import {
+  canDeleteProject,
+  canRenameProject,
+  getAvailableProjects,
+  resolveProjectDeletionFallback,
+  resolveSelectedProject,
+} from "./projectSelectorUtils";
 
 function createProject(overrides: Partial<Project>): Project {
   return {
@@ -110,5 +116,68 @@ describe("getAvailableProjects", () => {
       "social-1",
       "general-1",
     ]);
+  });
+});
+
+describe("项目管理辅助逻辑", () => {
+  it("默认项目不可重命名或删除", () => {
+    const defaultProject = createProject({
+      id: "default",
+      isDefault: true,
+      workspaceType: "general",
+    });
+    const normalProject = createProject({
+      id: "normal",
+      workspaceType: "general",
+    });
+
+    expect(canRenameProject(defaultProject)).toBe(false);
+    expect(canDeleteProject(defaultProject)).toBe(false);
+    expect(canRenameProject(normalProject)).toBe(true);
+    expect(canDeleteProject(normalProject)).toBe(true);
+  });
+
+  it("删除当前项目时应优先回退到默认项目", () => {
+    const defaultProject = createProject({
+      id: "default",
+      isDefault: true,
+      workspaceType: "general",
+    });
+    const deletedProject = createProject({
+      id: "general-2",
+      workspaceType: "general",
+    });
+
+    expect(
+      resolveProjectDeletionFallback(
+        [defaultProject, deletedProject],
+        defaultProject,
+        deletedProject.id,
+      ),
+    ).toBe("default");
+  });
+
+  it("当前选择失效时应回退默认项目或首个项目", () => {
+    const defaultProject = createProject({
+      id: "default",
+      isDefault: true,
+      workspaceType: "general",
+    });
+    const secondaryProject = createProject({
+      id: "general-2",
+      workspaceType: "general",
+    });
+
+    expect(
+      resolveSelectedProject(
+        [defaultProject, secondaryProject],
+        "missing",
+        defaultProject,
+      )?.id,
+    ).toBe("default");
+
+    expect(resolveSelectedProject([secondaryProject], "missing", null)?.id).toBe(
+      "general-2",
+    );
   });
 });

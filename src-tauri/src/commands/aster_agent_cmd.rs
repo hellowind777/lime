@@ -12,7 +12,8 @@ use crate::agent::{
 };
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::commands::webview_cmd::{
-    browser_execute_action_global, BrowserActionRequest, BrowserBackendType,
+    browser_execute_action_global, ensure_managed_chrome_profile_global, BrowserActionRequest,
+    BrowserBackendType,
 };
 use crate::config::{GlobalConfigManager, GlobalConfigManagerState};
 use crate::database::dao::agent::AgentDao;
@@ -40,7 +41,8 @@ use aster::agents::{Agent, AgentEvent};
 use aster::chrome_mcp::get_chrome_mcp_tools;
 use aster::conversation::message::{Message, MessageContent};
 use aster::permission::{
-    ParameterRestriction, PermissionScope, RestrictionType, ToolPermission, ToolPermissionManager,
+    ConditionOperator, ConditionType, ParameterRestriction, PermissionCondition, PermissionScope,
+    RestrictionType, ToolPermission, ToolPermissionManager,
 };
 use aster::permission::{Permission, PermissionConfirmation, PrincipalType};
 use aster::sandbox::{
@@ -103,13 +105,31 @@ const PROXYCAST_CREATE_TYPESETTING_TASK_TOOL_NAME: &str = "proxycast_create_type
 const AUTO_CONTINUE_PROMPT_MARKER: &str = "【自动续写策略】";
 const PROXYCAST_TOOL_METADATA_BEGIN: &str = "[ProxyCast 工具元数据开始]";
 const PROXYCAST_TOOL_METADATA_END: &str = "[ProxyCast 工具元数据结束]";
+const BROWSER_ASSIST_ALLOW_PATTERN: &str = "mcp__proxycast-browser__*";
+const BROWSER_ASSIST_DENY_PATTERNS: &[&str] = &["mcp__playwright__*", "browser_*", "playwright*"];
 
 static SHARED_TASK_MANAGER: OnceLock<Arc<TaskManager>> = OnceLock::new();
+static BROWSER_ASSIST_RUNTIME_HINTS: OnceLock<
+    tokio::sync::RwLock<HashMap<String, BrowserAssistRuntimeHint>>,
+> = OnceLock::new();
 
 fn shared_task_manager() -> Arc<TaskManager> {
     SHARED_TASK_MANAGER
         .get_or_init(|| Arc::new(TaskManager::new()))
         .clone()
+}
+
+fn shared_browser_assist_runtime_hints(
+) -> &'static tokio::sync::RwLock<HashMap<String, BrowserAssistRuntimeHint>> {
+    BROWSER_ASSIST_RUNTIME_HINTS.get_or_init(|| tokio::sync::RwLock::new(HashMap::new()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BrowserAssistRuntimeHint {
+    profile_key: String,
+    preferred_backend: Option<BrowserBackendType>,
+    auto_launch: bool,
+    launch_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -881,6 +901,159 @@ fn extract_harness_bool(
         .find_map(serde_json::Value::as_bool)
 }
 
+fn extract_harness_nested_object<'a>(
+    request_metadata: Option<&'a serde_json::Value>,
+    keys: &[&str],
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    let harness = extract_harness_object(request_metadata)?;
+    keys.iter()
+        .filter_map(|key| harness.get(*key))
+        .find_map(serde_json::Value::as_object)
+}
+
+fn parse_browser_backend_hint(value: &str) -> Option<BrowserBackendType> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "aster_compat" => Some(BrowserBackendType::AsterCompat),
+        "proxycast_extension_bridge" => Some(BrowserBackendType::ProxycastExtensionBridge),
+        "cdp_direct" => Some(BrowserBackendType::CdpDirect),
+        _ => None,
+    }
+}
+
+fn extract_browser_assist_runtime_hint(
+    request_metadata: Option<&serde_json::Value>,
+) -> Option<BrowserAssistRuntimeHint> {
+    let browser_assist =
+        extract_harness_nested_object(request_metadata, &["browser_assist", "browserAssist"])?;
+    let profile_key = ["profile_key", "profileKey"]
+        .iter()
+        .filter_map(|key| browser_assist.get(*key))
+        .find_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?
+        .to_string();
+    let preferred_backend = ["preferred_backend", "preferredBackend"]
+        .iter()
+        .filter_map(|key| browser_assist.get(*key))
+        .find_map(serde_json::Value::as_str)
+        .and_then(parse_browser_backend_hint);
+    let auto_launch = ["auto_launch", "autoLaunch"]
+        .iter()
+        .filter_map(|key| browser_assist.get(*key))
+        .find_map(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let launch_url = ["launch_url", "launchUrl", "url"]
+        .iter()
+        .filter_map(|key| browser_assist.get(*key))
+        .find_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    Some(BrowserAssistRuntimeHint {
+        profile_key,
+        preferred_backend,
+        auto_launch,
+        launch_url,
+    })
+}
+
+fn is_browser_assist_enabled(request_metadata: Option<&serde_json::Value>) -> bool {
+    let Some(browser_assist) =
+        extract_harness_nested_object(request_metadata, &["browser_assist", "browserAssist"])
+    else {
+        return false;
+    };
+
+    if let Some(enabled) = ["enabled", "is_enabled", "isEnabled"]
+        .iter()
+        .filter_map(|key| browser_assist.get(*key))
+        .find_map(serde_json::Value::as_bool)
+    {
+        return enabled;
+    }
+
+    extract_browser_assist_runtime_hint(request_metadata).is_some() || !browser_assist.is_empty()
+}
+
+fn build_session_scoped_permission_conditions(session_id: &str) -> Vec<PermissionCondition> {
+    let session_id = session_id.trim();
+    if session_id.is_empty() {
+        return Vec::new();
+    }
+
+    vec![PermissionCondition {
+        condition_type: ConditionType::Session,
+        field: Some("session_id".to_string()),
+        operator: ConditionOperator::Equals,
+        value: serde_json::json!(session_id),
+        validator: None,
+        description: Some("仅对当前聊天会话生效".to_string()),
+    }]
+}
+
+fn append_browser_assist_session_permissions(
+    permissions: &mut Vec<ToolPermission>,
+    session_id: &str,
+    request_metadata: Option<&serde_json::Value>,
+) {
+    if !is_browser_assist_enabled(request_metadata) {
+        return;
+    }
+
+    let conditions = build_session_scoped_permission_conditions(session_id);
+    permissions.push(ToolPermission {
+        tool: BROWSER_ASSIST_ALLOW_PATTERN.to_string(),
+        allowed: true,
+        priority: 1100,
+        conditions: conditions.clone(),
+        parameter_restrictions: Vec::new(),
+        scope: PermissionScope::Session,
+        reason: Some(
+            "Browser Assist 会话已启用：网页任务应统一走 ProxyCast 浏览器运行时工具".to_string(),
+        ),
+        expires_at: None,
+        metadata: HashMap::new(),
+    });
+
+    for pattern in BROWSER_ASSIST_DENY_PATTERNS {
+        permissions.push(ToolPermission {
+            tool: (*pattern).to_string(),
+            allowed: false,
+            priority: 1200,
+            conditions: conditions.clone(),
+            parameter_restrictions: Vec::new(),
+            scope: PermissionScope::Session,
+            reason: Some(
+                "Browser Assist 会话禁止回退到 Playwright 浏览器工具；请改用 mcp__proxycast-browser__*，以便右侧画布附着实时浏览器会话"
+                    .to_string(),
+            ),
+            expires_at: None,
+            metadata: HashMap::new(),
+        });
+    }
+}
+
+async fn sync_browser_assist_runtime_hint(
+    session_id: &str,
+    request_metadata: Option<&serde_json::Value>,
+) {
+    let mut hints = shared_browser_assist_runtime_hints().write().await;
+    if let Some(hint) = extract_browser_assist_runtime_hint(request_metadata) {
+        hints.insert(session_id.to_string(), hint);
+    } else {
+        hints.remove(session_id);
+    }
+}
+
+async fn get_browser_assist_runtime_hint(session_id: &str) -> Option<BrowserAssistRuntimeHint> {
+    shared_browser_assist_runtime_hints()
+        .read()
+        .await
+        .get(session_id)
+        .cloned()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeChatMode {
     Agent,
@@ -905,6 +1078,20 @@ fn resolve_runtime_chat_mode(request_metadata: Option<&serde_json::Value>) -> Ru
 
 fn default_web_search_enabled_for_chat_mode(_chat_mode: RuntimeChatMode) -> bool {
     false
+}
+
+fn should_enable_model_skill_tool(request_metadata: Option<&serde_json::Value>) -> bool {
+    if let Some(explicit) = extract_harness_bool(
+        request_metadata,
+        &["allow_model_skills", "allowModelSkills"],
+    ) {
+        return explicit;
+    }
+
+    matches!(
+        extract_harness_string(request_metadata, &["session_mode", "sessionMode"]).as_deref(),
+        Some("theme_workbench")
+    )
 }
 
 fn execution_strategy_label(strategy: AsterExecutionStrategy) -> &'static str {
@@ -2804,12 +2991,7 @@ impl ProxycastBrowserMcpTool {
 
     fn parse_backend(params: &serde_json::Value) -> Option<BrowserBackendType> {
         let raw = params.get("backend")?.as_str()?.trim().to_ascii_lowercase();
-        match raw.as_str() {
-            "aster_compat" => Some(BrowserBackendType::AsterCompat),
-            "proxycast_extension_bridge" => Some(BrowserBackendType::ProxycastExtensionBridge),
-            "cdp_direct" => Some(BrowserBackendType::CdpDirect),
-            _ => None,
-        }
+        parse_browser_backend_hint(&raw)
     }
 
     fn extract_profile_key(params: &serde_json::Value, context: &ToolContext) -> Option<String> {
@@ -2823,6 +3005,25 @@ impl ProxycastBrowserMcpTool {
             .environment
             .get("PROXYCAST_BROWSER_PROFILE_KEY")
             .cloned()
+    }
+
+    fn extract_launch_url(action_name: &str, params: &serde_json::Value) -> Option<String> {
+        let normalized = action_name.trim().to_ascii_lowercase();
+        if normalized == "navigate"
+            || normalized.ends_with("navigate")
+            || normalized == "tabs_create_mcp"
+            || normalized.ends_with("tabs_create_mcp")
+            || normalized == "open_url"
+            || normalized.ends_with("open_url")
+        {
+            return params
+                .get("url")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        }
+        None
     }
 }
 
@@ -2852,8 +3053,25 @@ impl Tool for ProxycastBrowserMcpTool {
         params: serde_json::Value,
         _context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
-        let backend = Self::parse_backend(&params);
-        let profile_key = Self::extract_profile_key(&params, _context);
+        let session_hint = get_browser_assist_runtime_hint(&_context.session_id).await;
+        let backend = Self::parse_backend(&params).or_else(|| {
+            session_hint
+                .as_ref()
+                .and_then(|hint| hint.preferred_backend.clone())
+        });
+        let profile_key = Self::extract_profile_key(&params, _context)
+            .or_else(|| session_hint.as_ref().map(|hint| hint.profile_key.clone()));
+        if let (Some(hint), Some(profile_key)) = (session_hint.as_ref(), profile_key.as_ref()) {
+            if hint.auto_launch {
+                let launch_url = Self::extract_launch_url(&self.action_name, &params)
+                    .or_else(|| hint.launch_url.clone());
+                ensure_managed_chrome_profile_global(profile_key.clone(), launch_url)
+                    .await
+                    .map_err(|error| {
+                        ToolError::execution_failed(format!("自动启动浏览器协助会话失败: {error}"))
+                    })?;
+            }
+        }
         let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
         let request = BrowserActionRequest {
             profile_key,
@@ -2869,23 +3087,56 @@ impl Tool for ProxycastBrowserMcpTool {
 
         let payload = serde_json::to_string_pretty(&result)
             .unwrap_or_else(|_| format!("{{\"success\": {}}}", result.success));
+        let browser_session_metadata = if result.session_id.is_some() {
+            result
+                .data
+                .as_ref()
+                .and_then(|value| value.get("browser_session"))
+                .cloned()
+                .or_else(|| {
+                    Some(serde_json::json!({
+                        "session_id": result.session_id.clone(),
+                        "target_id": result.target_id.clone(),
+                    }))
+                })
+        } else {
+            None
+        };
 
         if result.success {
-            Ok(ToolResult::success(payload)
+            let mut tool_result = ToolResult::success(payload)
+                .with_metadata("tool_family", serde_json::json!("browser"))
                 .with_metadata("action", serde_json::json!(self.action_name))
-                .with_metadata("selected_backend", serde_json::json!(result.backend))
-                .with_metadata("attempt_count", serde_json::json!(result.attempts.len())))
+                .with_metadata(
+                    "selected_backend",
+                    serde_json::json!(result.backend.clone()),
+                )
+                .with_metadata("attempt_count", serde_json::json!(result.attempts.len()))
+                .with_metadata("attempts", serde_json::json!(result.attempts.clone()))
+                .with_metadata("result", serde_json::json!(result.clone()));
+            if let Some(browser_session) = browser_session_metadata {
+                tool_result = tool_result.with_metadata("browser_session", browser_session);
+            }
+            Ok(tool_result)
         } else {
-            Ok(ToolResult::error(
+            let mut tool_result = ToolResult::error(
                 result
                     .error
                     .clone()
                     .unwrap_or_else(|| "浏览器动作执行失败".to_string()),
             )
+            .with_metadata("tool_family", serde_json::json!("browser"))
             .with_metadata("action", serde_json::json!(self.action_name))
-            .with_metadata("selected_backend", serde_json::json!(result.backend))
-            .with_metadata("attempts", serde_json::json!(result.attempts))
-            .with_metadata("result", serde_json::json!(result)))
+            .with_metadata(
+                "selected_backend",
+                serde_json::json!(result.backend.clone()),
+            )
+            .with_metadata("attempts", serde_json::json!(result.attempts.clone()))
+            .with_metadata("result", serde_json::json!(result.clone()));
+            if let Some(browser_session) = browser_session_metadata {
+                tool_result = tool_result.with_metadata("browser_session", browser_session);
+            }
+            Ok(tool_result)
         }
     }
 }
@@ -4311,6 +4562,8 @@ async fn apply_workspace_sandbox_permissions(
     api_key_provider_service: &ApiKeyProviderServiceState,
     heartbeat_state: &HeartbeatServiceState,
     app_handle: &AppHandle,
+    session_id: &str,
+    request_metadata: Option<&serde_json::Value>,
     workspace_root: &str,
     execution_strategy: AsterExecutionStrategy,
 ) -> Result<WorkspaceSandboxApplyOutcome, String> {
@@ -4801,6 +5054,8 @@ async fn apply_workspace_sandbox_permissions(
         });
     }
 
+    append_browser_assist_session_permissions(&mut permissions, session_id, request_metadata);
+
     permissions.push(ToolPermission {
         tool: "*".to_string(),
         allowed: false,
@@ -5229,6 +5484,8 @@ async fn execute_aster_chat_request(
         api_key_provider_service,
         heartbeat_state,
         app,
+        session_id,
+        request.metadata.as_ref(),
         &workspace_root,
         requested_strategy,
     )
@@ -5274,6 +5531,8 @@ async fn execute_aster_chat_request(
     let cancel_token = state.create_cancel_token(session_id).await;
     let auto_continue_metadata = auto_continue_config.clone();
     let request_metadata = request.metadata.clone();
+    sync_browser_assist_runtime_hint(session_id, request_metadata.as_ref()).await;
+    let model_skill_tool_enabled = should_enable_model_skill_tool(request_metadata.as_ref());
     let run_start_metadata = build_chat_run_metadata_base(
         &request,
         workspace_id.as_str(),
@@ -5341,6 +5600,7 @@ async fn execute_aster_chat_request(
         session_config_builder.build()
     };
 
+    proxycast_agent::tools::set_skill_tool_session_access(session_id, model_skill_tool_enabled);
     let final_result = tracker
         .with_run_custom(
             RunSource::Chat,
@@ -5521,6 +5781,7 @@ async fn execute_aster_chat_request(
             },
         )
         .await;
+    proxycast_agent::tools::clear_skill_tool_session_access(session_id);
 
     match final_result {
         Ok(()) => {
@@ -6758,6 +7019,135 @@ mod tests {
         assert!(!default_web_search_enabled_for_chat_mode(
             RuntimeChatMode::General
         ));
+    }
+
+    #[test]
+    fn test_should_enable_model_skill_tool_defaults_to_false() {
+        let metadata = serde_json::json!({
+            "harness": {
+                "theme": "general",
+                "session_mode": "default"
+            }
+        });
+
+        assert!(!should_enable_model_skill_tool(Some(&metadata)));
+        assert!(!should_enable_model_skill_tool(None));
+    }
+
+    #[test]
+    fn test_should_enable_model_skill_tool_allows_theme_workbench() {
+        let metadata = serde_json::json!({
+            "harness": {
+                "theme": "social-media",
+                "session_mode": "theme_workbench"
+            }
+        });
+
+        assert!(should_enable_model_skill_tool(Some(&metadata)));
+    }
+
+    #[test]
+    fn test_should_enable_model_skill_tool_respects_explicit_override() {
+        let metadata = serde_json::json!({
+            "harness": {
+                "theme": "social-media",
+                "session_mode": "theme_workbench",
+                "allow_model_skills": false
+            }
+        });
+
+        assert!(!should_enable_model_skill_tool(Some(&metadata)));
+    }
+
+    #[test]
+    fn test_extract_browser_assist_runtime_hint_from_harness_metadata() {
+        let metadata = serde_json::json!({
+            "harness": {
+                "theme": "general",
+                "browser_assist": {
+                    "profile_key": "general_browser_assist",
+                    "preferred_backend": "cdp_direct",
+                    "auto_launch": true,
+                    "launch_url": "https://www.google.com"
+                }
+            }
+        });
+
+        assert_eq!(
+            extract_browser_assist_runtime_hint(Some(&metadata)),
+            Some(BrowserAssistRuntimeHint {
+                profile_key: "general_browser_assist".to_string(),
+                preferred_backend: Some(BrowserBackendType::CdpDirect),
+                auto_launch: true,
+                launch_url: Some("https://www.google.com".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn test_is_browser_assist_enabled_respects_explicit_flag() {
+        let disabled_metadata = serde_json::json!({
+            "harness": {
+                "browser_assist": {
+                    "enabled": false,
+                    "profile_key": "general_browser_assist"
+                }
+            }
+        });
+        let enabled_metadata = serde_json::json!({
+            "harness": {
+                "browser_assist": {
+                    "profile_key": "general_browser_assist"
+                }
+            }
+        });
+
+        assert!(!is_browser_assist_enabled(Some(&disabled_metadata)));
+        assert!(is_browser_assist_enabled(Some(&enabled_metadata)));
+        assert!(!is_browser_assist_enabled(None));
+    }
+
+    #[test]
+    fn test_append_browser_assist_session_permissions_adds_session_scoped_rules() {
+        let metadata = serde_json::json!({
+            "harness": {
+                "browser_assist": {
+                    "enabled": true,
+                    "profile_key": "general_browser_assist"
+                }
+            }
+        });
+        let mut permissions = Vec::new();
+
+        append_browser_assist_session_permissions(
+            &mut permissions,
+            "session-browser-1",
+            Some(&metadata),
+        );
+
+        let allow_rule = permissions
+            .iter()
+            .find(|permission| permission.tool == BROWSER_ASSIST_ALLOW_PATTERN)
+            .expect("should add browser assist allow rule");
+        assert!(allow_rule.allowed);
+        assert_eq!(allow_rule.priority, 1100);
+        assert_eq!(allow_rule.conditions.len(), 1);
+        assert_eq!(
+            allow_rule.conditions[0].field.as_deref(),
+            Some("session_id")
+        );
+        assert_eq!(
+            allow_rule.conditions[0].value,
+            serde_json::json!("session-browser-1")
+        );
+
+        let deny_rule = permissions
+            .iter()
+            .find(|permission| permission.tool == "mcp__playwright__*")
+            .expect("should add playwright deny rule");
+        assert!(!deny_rule.allowed);
+        assert_eq!(deny_rule.priority, 1200);
+        assert_eq!(deny_rule.conditions, allow_rule.conditions);
     }
 
     #[test]

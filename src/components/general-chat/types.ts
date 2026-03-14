@@ -9,6 +9,7 @@
  * @requirements 1.1, 2.1, 4.1
  */
 
+import type { ReactNode } from "react";
 import type { Page, PageParams } from "@/types/page";
 
 // ============================================================================
@@ -584,6 +585,8 @@ export interface CanvasPanelProps {
   onClose: () => void;
   /** 内容变更回调 */
   onContentChange: (content: string) => void;
+  /** 头部附加操作 */
+  toolbarActions?: ReactNode;
   /** 画布宽度 */
   width: number;
   /** 宽度变更回调 */

@@ -13,10 +13,16 @@ function readJson(filePath) {
 const repoRoot = path.resolve(process.cwd());
 const cargoTomlPath = path.join(repoRoot, "src-tauri", "Cargo.toml");
 const tauriConfigPath = path.join(repoRoot, "src-tauri", "tauri.conf.json");
+const tauriHeadlessConfigPath = path.join(
+  repoRoot,
+  "src-tauri",
+  "tauri.conf.headless.json",
+);
 const packageJsonPath = path.join(repoRoot, "package.json");
 
 const cargo = readCargoVersions(cargoTomlPath);
 const tauriConfig = readJson(tauriConfigPath);
+const tauriHeadlessConfig = readJson(tauriHeadlessConfigPath);
 const packageJson = readJson(packageJsonPath);
 
 const sourceVersion = cargo.workspaceVersion;
@@ -44,6 +50,12 @@ if ((tauriConfig.version ?? null) !== sourceVersion) {
   );
 }
 
+if ((tauriHeadlessConfig.version ?? null) !== sourceVersion) {
+  issues.push(
+    `src-tauri/tauri.conf.headless.json version (${tauriHeadlessConfig.version ?? "missing"}) 与 workspace.version (${sourceVersion ?? "missing"}) 不一致`,
+  );
+}
+
 if (issues.length > 0) {
   console.error("[proxycast] 应用版本一致性检查失败:");
   for (const issue of issues) {
@@ -53,4 +65,3 @@ if (issues.length > 0) {
 }
 
 console.log(`[proxycast] 版本一致性检查通过: ${sourceVersion}`);
-

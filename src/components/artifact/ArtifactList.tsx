@@ -56,6 +56,8 @@ function getTypeIcon(type: ArtifactType): React.ReactNode {
       return <GitBranch className={iconClass} />;
     case "react":
       return <Component className={iconClass} />;
+    case "browser_assist":
+      return <Globe className={iconClass} />;
     case "canvas:document":
       return <FileText className={iconClass} />;
     case "canvas:poster":
@@ -84,6 +86,7 @@ function getTypeDisplayName(type: ArtifactType): string {
     svg: "SVG",
     mermaid: "图表",
     react: "React",
+    browser_assist: "浏览器协助",
     "canvas:document": "文档",
     "canvas:poster": "海报",
     "canvas:music": "音乐",

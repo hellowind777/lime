@@ -46,7 +46,7 @@ interface OpenClawConfigurePageProps {
   onSync: () => void;
   onStart: () => void;
   onOpenRuntime: () => void;
-  onGoProviderPool: () => void;
+  onGoProviderSettings: () => void;
 }
 
 export function OpenClawConfigurePage({
@@ -78,7 +78,7 @@ export function OpenClawConfigurePage({
   onSync,
   onStart,
   onOpenRuntime,
-  onGoProviderPool,
+  onGoProviderSettings,
 }: OpenClawConfigurePageProps) {
   const hasProviders = compatibleProviders.length > 0;
   const gatewayStatusLabel = gatewayRunning ? "运行中" : gatewayStatus;
@@ -184,10 +184,10 @@ export function OpenClawConfigurePage({
               <div className="mt-3">
                 <button
                   type="button"
-                  onClick={onGoProviderPool}
+                  onClick={onGoProviderSettings}
                   className="text-primary hover:underline"
                 >
-                  前往凭证池
+                  前往凭证管理
                 </button>
               </div>
             </div>

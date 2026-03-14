@@ -12,6 +12,12 @@ const mockUseSkills = vi.fn();
 const mockInspectLocalSkill = vi.fn();
 const mockInspectRemoteSkill = vi.fn();
 const mockCreateSkillScaffold = vi.fn();
+const mockImportLocalSkill = vi.fn();
+const mockOpenDialog = vi.fn();
+
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: (...args: unknown[]) => mockOpenDialog(...args),
+}));
 
 vi.mock("@/hooks/useSkills", () => ({
   useSkills: (...args: unknown[]) => mockUseSkills(...args),
@@ -32,6 +38,7 @@ vi.mock("@/lib/api/skills", async () => {
         mockInspectRemoteSkill(...args),
       createSkillScaffold: (...args: unknown[]) =>
         mockCreateSkillScaffold(...args),
+      importLocalSkill: (...args: unknown[]) => mockImportLocalSkill(...args),
     },
   };
 });
@@ -113,6 +120,8 @@ beforeEach(() => {
   mockInspectLocalSkill.mockReset();
   mockInspectRemoteSkill.mockReset();
   mockCreateSkillScaffold.mockReset();
+  mockImportLocalSkill.mockReset();
+  mockOpenDialog.mockReset();
   mockInspectLocalSkill.mockResolvedValue({
     content: "# Test",
     metadata: {},
@@ -158,6 +167,8 @@ beforeEach(() => {
       deprecatedFields: [],
     },
   });
+  mockImportLocalSkill.mockResolvedValue({ directory: "imported-skill" });
+  mockOpenDialog.mockResolvedValue("/tmp/imported-skill");
 });
 
 afterEach(() => {
@@ -421,9 +432,9 @@ describe("SkillsPage", () => {
 
     renderSkillsPage();
 
-    const openButton = Array.from(document.body.querySelectorAll("button")).find(
-      (item) => item.textContent?.includes("新建 Skill"),
-    );
+    const openButton = Array.from(
+      document.body.querySelectorAll("button"),
+    ).find((item) => item.textContent?.includes("新建 Skill"));
 
     await act(async () => {
       openButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -460,6 +471,42 @@ describe("SkillsPage", () => {
         name: "Draft Skill",
         description: "Create a standard scaffold",
       },
+      "proxycast",
+    );
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("点击导入 Skill 应调用导入 API 并刷新列表", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    mockUseSkills.mockReturnValue({
+      skills: [],
+      repos: [],
+      loading: false,
+      remoteLoading: false,
+      error: null,
+      refresh,
+      install: vi.fn(),
+      uninstall: vi.fn(),
+      addRepo: vi.fn(),
+      removeRepo: vi.fn(),
+    });
+
+    const { container } = renderSkillsPage();
+    const importButton = Array.from(container.querySelectorAll("button")).find(
+      (item) => item.textContent?.includes("导入 Skill"),
+    );
+
+    await act(async () => {
+      importButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(mockOpenDialog).toHaveBeenCalledWith({
+      directory: true,
+      multiple: false,
+      title: "选择一个包含 SKILL.md 的技能目录",
+    });
+    expect(mockImportLocalSkill).toHaveBeenCalledWith(
+      "/tmp/imported-skill",
       "proxycast",
     );
     expect(refresh).toHaveBeenCalledTimes(1);

@@ -64,6 +64,8 @@ export interface GeneralAgentPromptOptions {
     gateKey?: string | null;
     runTitle?: string | null;
     contentId?: string | null;
+    browserAssistEnabled?: boolean;
+    browserAssistProfileKey?: string | null;
   };
 }
 
@@ -103,6 +105,21 @@ export function buildGeneralAgentSystemPrompt(
           .filter(Boolean)
           .join("\n")
       : "- 当前会话处于默认对话模式，可直接回答，也可在必要时升级到工具、任务或子代理。";
+  const browserAssistLines = harness?.browserAssistEnabled
+    ? [
+        "- 当前通用对话已启用 Browser Assist。只要任务涉及打开网站、点击、表单、登录、搜索、验证码、多因素认证或其他网页交互，必须优先使用 ProxyCast Browser Assist 浏览器工具。",
+        harness.browserAssistProfileKey
+          ? `- 当前 Browser Assist Profile：${harness.browserAssistProfileKey}`
+          : null,
+        "- 如果用户显式给出 URL、域名，或明确要求打开/访问/进入某个页面，并要求在右侧画布展示实时浏览器画面，必须先复用或启动 Browser Assist 并导航到该地址，不得先退化成 WebSearch。",
+        "- 网页任务的第一步应先建立或复用 Browser Assist 浏览器会话，并尽量显式带上当前 profile_key。",
+        "- 新闻、最新动态、热点盘点等规则，只有在用户没有提供明确 URL 时才优先走 WebSearch；一旦给了 URL，先打开页面，再决定是否补充检索。",
+        "- 不要改用 Playwright code、browser_run_code、browser_navigate 或其他通用 Playwright 浏览器工具，否则右侧画布无法持续附着实时会话。",
+        "- 浏览器工具输出必须保留 browser session 信息，确保右侧画布可以实时展示、接管和调试浏览器。",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "- 当前回合未显式绑定 Browser Assist；只有在确实需要网页交互时，才升级到浏览器会话。";
 
   return `你是 ProxyCast 的通用 AI Agent。你参考的是具备纪律性、可升级工具链、会规划与会自检的 agent 工作方式，但你的默认服务对象是通用对话、知识处理、现实任务推进和多模态协作，不是只面向编程。
 
@@ -157,6 +174,9 @@ ${toolPreferenceLines}
 
 Harness 上下文：
 ${harnessLines}
+
+Browser Assist 协议：
+${browserAssistLines}
 
 当前主题侧重点：
 ${themeGuidanceBlock}`;

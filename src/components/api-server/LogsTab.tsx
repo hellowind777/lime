@@ -91,36 +91,36 @@ export function LogsTab() {
       <div className="flex items-center justify-end gap-2">
         <button
           onClick={handleExport}
-          className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
         >
           <Download className="h-4 w-4" />
           导出
         </button>
         <button
           onClick={handleClear}
-          className="flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm hover:bg-muted"
+          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
         >
           <Trash2 className="h-4 w-4" />
           清空
         </button>
       </div>
 
-      <div className="rounded-lg border bg-card">
+      <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/60">
         <div
           ref={logsContainerRef}
           className="max-h-[500px] overflow-auto p-4 font-mono text-xs"
         >
           {logs.length === 0 ? (
-            <p className="text-center text-muted-foreground">
+            <p className="py-10 text-center text-slate-500">
               暂无日志，软件运行时将显示网关与系统日志
             </p>
           ) : (
             logs.map((log, i) => (
               <div
                 key={i}
-                className={`flex gap-2 py-0.5 px-2 rounded ${getLevelBg(log.level)}`}
+                className={`flex gap-2 rounded-[14px] px-3 py-1.5 ${getLevelBg(log.level)}`}
               >
-                <span className="text-muted-foreground shrink-0">
+                <span className="shrink-0 text-slate-400">
                   {new Date(log.timestamp).toLocaleTimeString()}
                 </span>
                 <span

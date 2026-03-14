@@ -234,7 +234,10 @@ export function WorkbenchPage({
         rightRail={
           shouldHideVideoRightRailInWorkspace ? null : (
             <WorkbenchRightRail
-              shouldRender={shouldRenderWorkspaceRightRail}
+              shouldRender={
+                shouldRenderWorkspaceRightRail &&
+                !(activeWorkspaceView === "create" && !selectedContentId)
+              }
               isCreateWorkspaceView={isCreateWorkspaceView}
               projectId={selectedProjectId}
               theme={theme}

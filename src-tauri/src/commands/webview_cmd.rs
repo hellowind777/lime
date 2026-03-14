@@ -13,18 +13,24 @@ use aster::chrome_mcp::{
     get_chrome_mcp_tools, is_chrome_integration_configured, is_chrome_integration_supported,
 };
 use once_cell::sync::Lazy;
+use proxycast_browser_runtime::{
+    BrowserEvent, BrowserRuntimeManager, BrowserStreamMode, CdpSessionState, CdpTargetInfo,
+    EventBufferSnapshot, OpenSessionRequest,
+};
 use proxycast_server::chrome_bridge::{
     self, ChromeBridgeCommandRequest, ChromeBridgeCommandResult, ChromeBridgeStatusSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Arc;
-use std::time::Duration;
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use sysinfo::{Pid, Signal, System};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 use tokio::sync::{Mutex, RwLock};
+use tokio::task::JoinHandle;
 
 /// Webview 面板信息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,9 +125,19 @@ pub struct ChromeProfileManagerWrapper(pub Arc<Mutex<ChromeProfileManagerState>>
 
 static SHARED_CHROME_PROFILE_MANAGER: Lazy<Arc<Mutex<ChromeProfileManagerState>>> =
     Lazy::new(|| Arc::new(Mutex::new(ChromeProfileManagerState::new())));
+static SHARED_BROWSER_RUNTIME: Lazy<Arc<BrowserRuntimeManager>> =
+    Lazy::new(|| Arc::new(BrowserRuntimeManager::new()));
+static BROWSER_STREAM_RELAY_TASKS: Lazy<Mutex<HashMap<String, JoinHandle<()>>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
+
+const MANAGED_CHROME_RECOVERY_WAIT_MS: u64 = 800;
 
 pub fn shared_chrome_profile_manager() -> Arc<Mutex<ChromeProfileManagerState>> {
     SHARED_CHROME_PROFILE_MANAGER.clone()
+}
+
+pub fn shared_browser_runtime() -> Arc<BrowserRuntimeManager> {
+    SHARED_BROWSER_RUNTIME.clone()
 }
 
 /// 创建嵌入式 webview 的请求参数
@@ -236,6 +252,8 @@ const ASTER_CHROME_TOOL_PREFIX: &str = "mcp__proxycast-browser__";
 const DEFAULT_BROWSER_ACTION_TIMEOUT_MS: u64 = 30_000;
 const MIN_BROWSER_ACTION_TIMEOUT_MS: u64 = 1_000;
 const MAX_BROWSER_ACTION_TIMEOUT_MS: u64 = 120_000;
+const MANAGED_CDP_READY_MAX_ATTEMPTS: usize = 60;
+const MANAGED_CDP_READY_RETRY_INTERVAL_MS: u64 = 250;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
@@ -314,6 +332,10 @@ pub struct BrowserActionResult {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<BrowserBackendType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
     pub action: String,
     pub request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -323,15 +345,62 @@ pub struct BrowserActionResult {
     pub attempts: Vec<BrowserActionAttempt>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct CdpTargetInfo {
-    id: String,
-    title: String,
-    url: String,
-    #[serde(rename = "type")]
-    target_type: String,
-    #[serde(rename = "webSocketDebuggerUrl")]
-    web_socket_debugger_url: Option<String>,
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenCdpSessionRequest {
+    pub profile_key: String,
+    #[serde(default)]
+    pub target_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListCdpTargetsRequest {
+    #[serde(default)]
+    pub profile_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StartBrowserStreamRequest {
+    pub session_id: String,
+    pub mode: BrowserStreamMode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StopBrowserStreamRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BrowserSessionStateRequest {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UpdateBrowserSessionControlRequest {
+    pub session_id: String,
+    #[serde(default)]
+    pub human_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BrowserEventBufferRequest {
+    pub session_id: String,
+    #[serde(default)]
+    pub cursor: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EventBufferSnapshotResponse {
+    pub events: Vec<BrowserEvent>,
+    pub next_cursor: u64,
+}
+
+impl From<EventBufferSnapshot> for EventBufferSnapshotResponse {
+    fn from(value: EventBufferSnapshot) -> Self {
+        Self {
+            events: value.events,
+            next_cursor: value.next_cursor,
+        }
+    }
 }
 
 static BROWSER_BACKEND_POLICY: Lazy<RwLock<BrowserBackendPolicy>> =
@@ -481,11 +550,10 @@ pub async fn create_webview_panel(
 }
 
 /// 使用独立 profile 启动外部 Chrome 窗口
-#[tauri::command]
-pub async fn open_chrome_profile_window(
+async fn open_chrome_profile_window_with_manager(
     app: AppHandle,
-    app_state: tauri::State<'_, AppState>,
-    state: tauri::State<'_, ChromeProfileManagerWrapper>,
+    app_state: AppState,
+    manager: Arc<Mutex<ChromeProfileManagerState>>,
     request: OpenChromeProfileRequest,
 ) -> Result<OpenChromeProfileResponse, String> {
     let profile_key = normalize_profile_key(&request.profile_key);
@@ -533,6 +601,27 @@ pub async fn open_chrome_profile_window(
     let remote_port = profile_remote_debugging_port(&profile_key);
     let devtools_http_url = format!("http://127.0.0.1:{remote_port}/json/version");
 
+    if wait_for_managed_cdp_ready(remote_port, None).await.is_ok() {
+        tracing::info!(
+            "[ChromeProfile] 复用未登记的 CDP 会话: profile_key={}, port={}",
+            profile_key,
+            remote_port
+        );
+        return Ok(OpenChromeProfileResponse {
+            success: true,
+            reused: true,
+            browser_source: Some(browser_source.clone()),
+            browser_path: Some(browser_path.clone()),
+            profile_dir: Some(profile_dir.to_string_lossy().to_string()),
+            remote_debugging_port: Some(remote_port),
+            pid: find_chrome_profile_process_pid(&profile_dir),
+            devtools_http_url: Some(devtools_http_url),
+            error: None,
+        });
+    }
+
+    let _ = cleanup_orphan_chrome_profile_processes(&profile_dir).await?;
+
     // 准备 Chrome 扩展（获取 server 配置并生成 auto_config.json）
     let extension_dir = {
         let state_guard = app_state.read().await;
@@ -546,8 +635,8 @@ pub async fn open_chrome_profile_window(
     };
 
     {
-        let mut manager = state.0.lock().await;
-        if let Some(existing) = manager.sessions.get_mut(&profile_key) {
+        let mut guard = manager.lock().await;
+        if let Some(existing) = guard.sessions.get_mut(&profile_key) {
             match existing.child.try_wait() {
                 Ok(None) => {
                     // reuse 场景：不重复加载扩展
@@ -576,7 +665,7 @@ pub async fn open_chrome_profile_window(
                     });
                 }
                 Ok(Some(_)) | Err(_) => {
-                    manager.sessions.remove(&profile_key);
+                    guard.sessions.remove(&profile_key);
                 }
             }
         }
@@ -602,8 +691,8 @@ pub async fn open_chrome_profile_window(
     );
 
     {
-        let mut manager = state.0.lock().await;
-        manager.sessions.insert(
+        let mut guard = manager.lock().await;
+        guard.sessions.insert(
             profile_key.clone(),
             ChromeProfileProcess {
                 profile_key,
@@ -631,30 +720,193 @@ pub async fn open_chrome_profile_window(
     })
 }
 
+async fn wait_for_managed_cdp_ready(
+    remote_debugging_port: u16,
+    requested_target_id: Option<&str>,
+) -> Result<(), String> {
+    let runtime = shared_browser_runtime();
+    let mut last_error =
+        format!("等待 CDP 端点就绪: http://127.0.0.1:{remote_debugging_port}/json/version");
+
+    for attempt in 0..MANAGED_CDP_READY_MAX_ATTEMPTS {
+        match runtime.list_targets(remote_debugging_port).await {
+            Ok(targets) => {
+                if let Some(target_id) = requested_target_id {
+                    if targets.iter().any(|target| target.id == target_id) {
+                        return Ok(());
+                    }
+                    last_error = if targets.is_empty() {
+                        format!("CDP 已连通，但尚未发现 target_id={target_id}")
+                    } else {
+                        format!("CDP 已连通，但未找到 target_id={target_id}")
+                    };
+                } else {
+                    return Ok(());
+                }
+            }
+            Err(error) => {
+                last_error = error;
+                if runtime.is_cdp_endpoint_alive(remote_debugging_port).await {
+                    last_error = format!("CDP 调试端点已响应，但标签页列表暂不可用: {last_error}");
+                }
+            }
+        }
+
+        if attempt + 1 < MANAGED_CDP_READY_MAX_ATTEMPTS {
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                MANAGED_CDP_READY_RETRY_INTERVAL_MS,
+            ))
+            .await;
+        }
+    }
+
+    Err(format!("等待 CDP 就绪超时: {last_error}"))
+}
+
+#[tauri::command]
+pub async fn open_chrome_profile_window(
+    app: AppHandle,
+    app_state: tauri::State<'_, AppState>,
+    state: tauri::State<'_, ChromeProfileManagerWrapper>,
+    request: OpenChromeProfileRequest,
+) -> Result<OpenChromeProfileResponse, String> {
+    open_chrome_profile_window_with_manager(
+        app,
+        app_state.inner().clone(),
+        state.0.clone(),
+        request,
+    )
+    .await
+}
+
+pub async fn open_chrome_profile_window_global(
+    app: AppHandle,
+    app_state: AppState,
+    request: OpenChromeProfileRequest,
+) -> Result<OpenChromeProfileResponse, String> {
+    open_chrome_profile_window_with_manager(
+        app,
+        app_state,
+        shared_chrome_profile_manager(),
+        request,
+    )
+    .await
+}
+
+async fn ensure_managed_chrome_profile_with_manager(
+    manager: Arc<Mutex<ChromeProfileManagerState>>,
+    profile_key: String,
+    url: Option<String>,
+) -> Result<ChromeProfileSessionInfo, String> {
+    let normalized_profile_key = normalize_profile_key(&profile_key);
+    if let Some(existing) = list_alive_profile_sessions(manager.clone())
+        .await
+        .into_iter()
+        .find(|session| session.profile_key == normalized_profile_key)
+    {
+        wait_for_managed_cdp_ready(existing.remote_debugging_port, None).await?;
+        return Ok(existing);
+    }
+
+    let launch_url = url.unwrap_or_else(|| "https://www.google.com".to_string());
+    let parsed_url = launch_url
+        .parse::<url::Url>()
+        .map_err(|error| format!("无效的 URL: {error}"))?;
+    let url_text = parsed_url.to_string();
+
+    let (browser_path, browser_source) = get_available_chrome_path().ok_or_else(|| {
+        "未找到可用的 Chrome/Chromium。请安装 Google Chrome 或运行: npx playwright install chromium"
+            .to_string()
+    })?;
+
+    let profile_dir = resolve_chrome_profile_data_dir_from_base(
+        &proxycast_core::app_paths::preferred_data_dir()
+            .map_err(|error| format!("获取应用数据目录失败: {error}"))?,
+        &normalized_profile_key,
+    );
+    std::fs::create_dir_all(&profile_dir)
+        .map_err(|error| format!("创建 Chrome profile 目录失败: {error}"))?;
+
+    let remote_port = profile_remote_debugging_port(&normalized_profile_key);
+    if wait_for_managed_cdp_ready(remote_port, None).await.is_ok() {
+        tracing::info!(
+            "[ChromeProfile] 复用未登记的受管会话: profile_key={}, port={}",
+            normalized_profile_key,
+            remote_port
+        );
+        return Ok(ChromeProfileSessionInfo {
+            profile_key: normalized_profile_key,
+            browser_source,
+            browser_path,
+            profile_dir: profile_dir.to_string_lossy().to_string(),
+            remote_debugging_port: remote_port,
+            pid: find_chrome_profile_process_pid(&profile_dir).unwrap_or_default(),
+            started_at: chrono::Utc::now().to_rfc3339(),
+            last_url: url_text,
+        });
+    }
+
+    let _ = cleanup_orphan_chrome_profile_processes(&profile_dir).await?;
+
+    let child = spawn_chrome_with_profile(
+        &browser_path,
+        &profile_dir,
+        remote_port,
+        &url_text,
+        true,
+        None,
+    )?;
+    let pid = child.id();
+
+    let session = ChromeProfileSessionInfo {
+        profile_key: normalized_profile_key.clone(),
+        browser_source: browser_source.clone(),
+        browser_path: browser_path.clone(),
+        profile_dir: profile_dir.to_string_lossy().to_string(),
+        remote_debugging_port: remote_port,
+        pid,
+        started_at: chrono::Utc::now().to_rfc3339(),
+        last_url: url_text,
+    };
+
+    {
+        let mut guard = manager.lock().await;
+        guard.sessions.insert(
+            normalized_profile_key.clone(),
+            ChromeProfileProcess {
+                profile_key: normalized_profile_key,
+                browser_source,
+                browser_path,
+                profile_dir: session.profile_dir.clone(),
+                remote_debugging_port: remote_port,
+                started_at: session.started_at.clone(),
+                last_url: session.last_url.clone(),
+                child,
+            },
+        );
+    }
+
+    wait_for_managed_cdp_ready(remote_port, None).await?;
+    Ok(session)
+}
+
+pub async fn ensure_managed_chrome_profile_global(
+    profile_key: String,
+    url: Option<String>,
+) -> Result<ChromeProfileSessionInfo, String> {
+    ensure_managed_chrome_profile_with_manager(shared_chrome_profile_manager(), profile_key, url)
+        .await
+}
+
 #[tauri::command]
 pub async fn get_chrome_profile_sessions(
     state: tauri::State<'_, ChromeProfileManagerWrapper>,
 ) -> Result<Vec<ChromeProfileSessionInfo>, String> {
-    let mut manager = state.0.lock().await;
-    let mut stale_keys = Vec::new();
-    let mut sessions = Vec::new();
+    Ok(list_alive_profile_sessions(state.0.clone()).await)
+}
 
-    for (key, process) in &mut manager.sessions {
-        match process.child.try_wait() {
-            Ok(None) => sessions.push(process.as_info()),
-            Ok(Some(_status)) => stale_keys.push(key.clone()),
-            Err(e) => {
-                tracing::warn!("[ChromeProfile] 读取进程状态失败: key={}, err={}", key, e);
-                stale_keys.push(key.clone());
-            }
-        }
-    }
-
-    for key in stale_keys {
-        manager.sessions.remove(&key);
-    }
-
-    Ok(sessions)
+pub async fn get_chrome_profile_sessions_global() -> Result<Vec<ChromeProfileSessionInfo>, String> {
+    Ok(list_alive_profile_sessions(shared_chrome_profile_manager()).await)
 }
 
 #[tauri::command]
@@ -662,33 +914,69 @@ pub async fn close_chrome_profile_session(
     state: tauri::State<'_, ChromeProfileManagerWrapper>,
     profile_key: String,
 ) -> Result<bool, String> {
-    let key = normalize_profile_key(&profile_key);
-    let mut manager = state.0.lock().await;
+    close_chrome_profile_session_with_manager(state.0.clone(), profile_key).await
+}
 
-    if let Some(mut process) = manager.sessions.remove(&key) {
+pub async fn close_chrome_profile_session_global(profile_key: String) -> Result<bool, String> {
+    close_chrome_profile_session_with_manager(shared_chrome_profile_manager(), profile_key).await
+}
+
+async fn close_chrome_profile_session_with_manager(
+    manager: Arc<Mutex<ChromeProfileManagerState>>,
+    profile_key: String,
+) -> Result<bool, String> {
+    let key = normalize_profile_key(&profile_key);
+    let mut manager = manager.lock().await;
+
+    let closed = if let Some(mut process) = manager.sessions.remove(&key) {
         match process.child.try_wait() {
-            Ok(Some(_)) => Ok(true),
+            Ok(Some(_)) => true,
             Ok(None) => {
                 if let Err(e) = process.child.kill() {
                     tracing::warn!("[ChromeProfile] 结束进程失败: key={}, err={}", key, e);
                 }
                 let _ = process.child.wait();
-                Ok(true)
+                true
             }
             Err(e) => {
                 tracing::warn!("[ChromeProfile] 读取进程状态失败: key={}, err={}", key, e);
-                Ok(true)
+                true
             }
         }
     } else {
-        Ok(false)
+        false
+    };
+    drop(manager);
+
+    if let Some(cdp_session) = shared_browser_runtime()
+        .find_session_by_profile_key(&key)
+        .await
+    {
+        let _ = shared_browser_runtime()
+            .close_session(&cdp_session.session_id)
+            .await;
+        cleanup_browser_stream_relay(&cdp_session.session_id).await;
     }
+
+    Ok(closed)
 }
 
 /// 获取 ChromeBridge 连接端点信息
 #[tauri::command]
 pub async fn get_chrome_bridge_endpoint_info(
     app_state: tauri::State<'_, AppState>,
+) -> Result<ChromeBridgeEndpointInfo, String> {
+    get_chrome_bridge_endpoint_info_with_state(app_state.inner().clone()).await
+}
+
+pub async fn get_chrome_bridge_endpoint_info_global(
+    app_state: AppState,
+) -> Result<ChromeBridgeEndpointInfo, String> {
+    get_chrome_bridge_endpoint_info_with_state(app_state).await
+}
+
+async fn get_chrome_bridge_endpoint_info_with_state(
+    app_state: AppState,
 ) -> Result<ChromeBridgeEndpointInfo, String> {
     let state = app_state.read().await;
     let status = state.status();
@@ -714,6 +1002,10 @@ pub async fn get_chrome_bridge_status() -> Result<ChromeBridgeStatusSnapshot, St
         .await)
 }
 
+pub async fn get_chrome_bridge_status_global() -> Result<ChromeBridgeStatusSnapshot, String> {
+    get_chrome_bridge_status().await
+}
+
 /// 通过 ChromeBridge 执行命令（用于设置页测试）
 #[tauri::command]
 pub async fn chrome_bridge_execute_command(
@@ -730,6 +1022,10 @@ pub async fn get_browser_backend_policy() -> Result<BrowserBackendPolicy, String
     Ok(BROWSER_BACKEND_POLICY.read().await.clone())
 }
 
+pub async fn get_browser_backend_policy_global() -> Result<BrowserBackendPolicy, String> {
+    get_browser_backend_policy().await
+}
+
 /// 设置浏览器后端策略
 #[tauri::command]
 pub async fn set_browser_backend_policy(
@@ -743,6 +1039,12 @@ pub async fn set_browser_backend_policy(
     Ok(normalized)
 }
 
+pub async fn set_browser_backend_policy_global(
+    policy: BrowserBackendPolicy,
+) -> Result<BrowserBackendPolicy, String> {
+    set_browser_backend_policy(policy).await
+}
+
 /// 获取浏览器后端状态快照
 #[tauri::command]
 pub async fn get_browser_backends_status(
@@ -754,8 +1056,12 @@ pub async fn get_browser_backends_status(
         .await;
     let sessions = list_alive_profile_sessions(state.0.clone()).await;
     let mut cdp_alive = 0usize;
+    let runtime = shared_browser_runtime();
     for session in &sessions {
-        if is_cdp_endpoint_alive(session.remote_debugging_port).await {
+        if runtime
+            .is_cdp_endpoint_alive(session.remote_debugging_port)
+            .await
+        {
             cdp_alive += 1;
         }
     }
@@ -809,9 +1115,257 @@ pub async fn get_browser_backends_status(
     })
 }
 
+pub async fn get_browser_backends_status_global() -> Result<BrowserBackendsStatusSnapshot, String> {
+    let policy = BROWSER_BACKEND_POLICY.read().await.clone();
+    let bridge_status = chrome_bridge::chrome_bridge_hub()
+        .get_status_snapshot()
+        .await;
+    let sessions = list_alive_profile_sessions(shared_chrome_profile_manager()).await;
+    let mut cdp_alive = 0usize;
+    let runtime = shared_browser_runtime();
+    for session in &sessions {
+        if runtime
+            .is_cdp_endpoint_alive(session.remote_debugging_port)
+            .await
+        {
+            cdp_alive += 1;
+        }
+    }
+
+    let extension_available = bridge_status.observer_count > 0;
+    let cdp_available = cdp_alive > 0;
+    let aster_supported = is_chrome_integration_supported();
+    let aster_configured = is_chrome_integration_configured().await;
+    let aster_available = extension_available || cdp_available || aster_configured;
+
+    Ok(BrowserBackendsStatusSnapshot {
+        policy,
+        bridge_observer_count: bridge_status.observer_count,
+        bridge_control_count: bridge_status.control_count,
+        running_profile_count: sessions.len(),
+        cdp_alive_profile_count: cdp_alive,
+        aster_native_host_supported: aster_supported,
+        aster_native_host_configured: aster_configured,
+        backends: vec![
+            BrowserBackendStatusItem {
+                backend: BrowserBackendType::AsterCompat,
+                available: aster_available,
+                reason: if aster_available {
+                    None
+                } else {
+                    Some("aster 兼容层当前无可用下游连接（扩展/CDP/native-host）".to_string())
+                },
+                capabilities: aster_backend_capabilities(),
+            },
+            BrowserBackendStatusItem {
+                backend: BrowserBackendType::ProxycastExtensionBridge,
+                available: extension_available,
+                reason: if extension_available {
+                    None
+                } else {
+                    Some("未检测到扩展 observer 连接".to_string())
+                },
+                capabilities: extension_backend_capabilities(),
+            },
+            BrowserBackendStatusItem {
+                backend: BrowserBackendType::CdpDirect,
+                available: cdp_available,
+                reason: if cdp_available {
+                    None
+                } else {
+                    Some("未检测到可连接的 CDP 调试端口".to_string())
+                },
+                capabilities: cdp_backend_capabilities(),
+            },
+        ],
+    })
+}
+
+#[tauri::command]
+pub async fn list_cdp_targets(
+    state: tauri::State<'_, ChromeProfileManagerWrapper>,
+    request: ListCdpTargetsRequest,
+) -> Result<Vec<CdpTargetInfo>, String> {
+    let session = select_profile_session(state.0.clone(), request.profile_key).await?;
+    shared_browser_runtime()
+        .list_targets(session.remote_debugging_port)
+        .await
+}
+
+pub async fn list_cdp_targets_global(
+    request: ListCdpTargetsRequest,
+) -> Result<Vec<CdpTargetInfo>, String> {
+    let session =
+        select_profile_session(shared_chrome_profile_manager(), request.profile_key).await?;
+    shared_browser_runtime()
+        .list_targets(session.remote_debugging_port)
+        .await
+}
+
+#[tauri::command]
+pub async fn open_cdp_session(
+    state: tauri::State<'_, ChromeProfileManagerWrapper>,
+    request: OpenCdpSessionRequest,
+) -> Result<CdpSessionState, String> {
+    let session =
+        select_profile_session(state.0.clone(), Some(request.profile_key.clone())).await?;
+    shared_browser_runtime()
+        .open_session(OpenSessionRequest {
+            profile_key: session.profile_key,
+            remote_debugging_port: session.remote_debugging_port,
+            target_id: request.target_id,
+        })
+        .await
+}
+
+pub async fn open_cdp_session_global(
+    request: OpenCdpSessionRequest,
+) -> Result<CdpSessionState, String> {
+    let session = select_profile_session(
+        shared_chrome_profile_manager(),
+        Some(request.profile_key.clone()),
+    )
+    .await?;
+    shared_browser_runtime()
+        .open_session(OpenSessionRequest {
+            profile_key: session.profile_key,
+            remote_debugging_port: session.remote_debugging_port,
+            target_id: request.target_id,
+        })
+        .await
+}
+
+#[tauri::command]
+pub async fn close_cdp_session(request: BrowserSessionStateRequest) -> Result<bool, String> {
+    shared_browser_runtime()
+        .close_session(&request.session_id)
+        .await?;
+    cleanup_browser_stream_relay(&request.session_id).await;
+    Ok(true)
+}
+
+pub async fn close_cdp_session_global(request: BrowserSessionStateRequest) -> Result<bool, String> {
+    close_cdp_session(request).await
+}
+
+#[tauri::command]
+pub async fn start_browser_stream(
+    app: AppHandle,
+    request: StartBrowserStreamRequest,
+) -> Result<CdpSessionState, String> {
+    let runtime = shared_browser_runtime();
+    let state = runtime
+        .start_stream(&request.session_id, request.mode)
+        .await?;
+    let receiver = runtime.subscribe(&request.session_id).await?;
+    register_browser_stream_relay(app, request.session_id, request.mode, receiver).await;
+    Ok(state)
+}
+
+pub async fn start_browser_stream_global(
+    app: AppHandle,
+    request: StartBrowserStreamRequest,
+) -> Result<CdpSessionState, String> {
+    start_browser_stream(app, request).await
+}
+
+#[tauri::command]
+pub async fn stop_browser_stream(
+    request: StopBrowserStreamRequest,
+) -> Result<CdpSessionState, String> {
+    let state = shared_browser_runtime()
+        .stop_stream(&request.session_id)
+        .await?;
+    cleanup_browser_stream_relay(&request.session_id).await;
+    Ok(state)
+}
+
+pub async fn stop_browser_stream_global(
+    request: StopBrowserStreamRequest,
+) -> Result<CdpSessionState, String> {
+    stop_browser_stream(request).await
+}
+
+#[tauri::command]
+pub async fn get_browser_session_state(
+    request: BrowserSessionStateRequest,
+) -> Result<CdpSessionState, String> {
+    shared_browser_runtime()
+        .get_session_state(&request.session_id)
+        .await
+}
+
+pub async fn get_browser_session_state_global(
+    request: BrowserSessionStateRequest,
+) -> Result<CdpSessionState, String> {
+    get_browser_session_state(request).await
+}
+
+#[tauri::command]
+pub async fn take_over_browser_session(
+    request: UpdateBrowserSessionControlRequest,
+) -> Result<CdpSessionState, String> {
+    shared_browser_runtime()
+        .take_over_session(&request.session_id, request.human_reason)
+        .await
+}
+
+pub async fn take_over_browser_session_global(
+    request: UpdateBrowserSessionControlRequest,
+) -> Result<CdpSessionState, String> {
+    take_over_browser_session(request).await
+}
+
+#[tauri::command]
+pub async fn release_browser_session(
+    request: UpdateBrowserSessionControlRequest,
+) -> Result<CdpSessionState, String> {
+    shared_browser_runtime()
+        .release_session(&request.session_id, request.human_reason)
+        .await
+}
+
+pub async fn release_browser_session_global(
+    request: UpdateBrowserSessionControlRequest,
+) -> Result<CdpSessionState, String> {
+    release_browser_session(request).await
+}
+
+#[tauri::command]
+pub async fn resume_browser_session(
+    request: UpdateBrowserSessionControlRequest,
+) -> Result<CdpSessionState, String> {
+    shared_browser_runtime()
+        .resume_session(&request.session_id, request.human_reason)
+        .await
+}
+
+pub async fn resume_browser_session_global(
+    request: UpdateBrowserSessionControlRequest,
+) -> Result<CdpSessionState, String> {
+    resume_browser_session(request).await
+}
+
+#[tauri::command]
+pub async fn get_browser_event_buffer(
+    request: BrowserEventBufferRequest,
+) -> Result<EventBufferSnapshotResponse, String> {
+    let snapshot = shared_browser_runtime()
+        .get_event_buffer(&request.session_id, request.cursor)
+        .await?;
+    Ok(EventBufferSnapshotResponse::from(snapshot))
+}
+
+pub async fn get_browser_event_buffer_global(
+    request: BrowserEventBufferRequest,
+) -> Result<EventBufferSnapshotResponse, String> {
+    get_browser_event_buffer(request).await
+}
+
 /// 通过统一编排层执行浏览器动作
 #[tauri::command]
 pub async fn browser_execute_action(
+    _app: AppHandle,
     state: tauri::State<'_, ChromeProfileManagerWrapper>,
     request: BrowserActionRequest,
 ) -> Result<BrowserActionResult, String> {
@@ -831,6 +1385,12 @@ pub async fn get_browser_action_audit_logs(
     result.reverse();
     result.truncate(max_count);
     Ok(result)
+}
+
+pub async fn get_browser_action_audit_logs_global(
+    limit: Option<usize>,
+) -> Result<Vec<BrowserActionAuditRecord>, String> {
+    get_browser_action_audit_logs(limit).await
 }
 
 /// 使用指定 profile manager 执行动作（供非 Tauri 命令入口复用）
@@ -862,6 +1422,10 @@ pub async fn browser_execute_action_with_manager(
         .await
         {
             Ok(data) => {
+                let enriched_data =
+                    enrich_browser_action_value(data, manager.clone(), profile_key.as_deref())
+                        .await;
+                let (session_id, target_id) = extract_browser_session_and_target(&enriched_data);
                 attempts.push(BrowserActionAttempt {
                     backend: backend.clone(),
                     success: true,
@@ -870,9 +1434,11 @@ pub async fn browser_execute_action_with_manager(
                 let result = BrowserActionResult {
                     success: true,
                     backend: Some(backend.clone()),
+                    session_id,
+                    target_id,
                     action,
                     request_id: request_id.clone(),
-                    data: Some(data),
+                    data: Some(enriched_data),
                     error: None,
                     attempts: attempts.clone(),
                 };
@@ -900,6 +1466,8 @@ pub async fn browser_execute_action_with_manager(
                     let result = BrowserActionResult {
                         success: false,
                         backend: None,
+                        session_id: None,
+                        target_id: None,
                         action: action.clone(),
                         request_id: request_id.clone(),
                         data: None,
@@ -927,6 +1495,8 @@ pub async fn browser_execute_action_with_manager(
     let result = BrowserActionResult {
         success: false,
         backend: None,
+        session_id: None,
+        target_id: None,
         action: action.clone(),
         request_id: request_id.clone(),
         data: None,
@@ -1022,6 +1592,173 @@ fn normalize_action_timeout(timeout_ms: Option<u64>) -> u64 {
         .clamp(MIN_BROWSER_ACTION_TIMEOUT_MS, MAX_BROWSER_ACTION_TIMEOUT_MS)
 }
 
+fn extract_browser_session_and_target(data: &Value) -> (Option<String>, Option<String>) {
+    let session_id = read_browser_session_string(data, &["session_id", "sessionId"])
+        .or_else(|| {
+            read_nested_browser_session_string(
+                data,
+                "browser_session",
+                &["session_id", "sessionId"],
+            )
+        })
+        .or_else(|| {
+            read_nested_browser_session_string(data, "session", &["session_id", "sessionId"])
+        });
+    let target_id = read_browser_session_string(data, &["target_id", "targetId"])
+        .or_else(|| {
+            read_nested_browser_session_string(data, "browser_session", &["target_id", "targetId"])
+        })
+        .or_else(|| read_nested_browser_session_string(data, "session", &["target_id", "targetId"]))
+        .or_else(|| {
+            data.get("tab")
+                .and_then(|tab| tab.get("id"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        });
+    (session_id, target_id)
+}
+
+fn read_browser_session_string(data: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        data.get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn read_nested_browser_session_string(data: &Value, parent: &str, keys: &[&str]) -> Option<String> {
+    let nested = data.get(parent)?;
+    read_browser_session_string(nested, keys)
+}
+
+fn browser_session_value_from_state(state: &CdpSessionState) -> Value {
+    json!({
+        "session_id": state.session_id.clone(),
+        "profile_key": state.profile_key.clone(),
+        "target_id": state.target_id.clone(),
+        "target_title": state.target_title.clone(),
+        "target_url": state.target_url.clone(),
+        "remote_debugging_port": state.remote_debugging_port,
+        "ws_debugger_url": state.ws_debugger_url.clone(),
+        "devtools_frontend_url": state.devtools_frontend_url.clone(),
+        "stream_mode": state.stream_mode,
+        "transport_kind": state.transport_kind,
+        "lifecycle_state": state.lifecycle_state,
+        "control_mode": state.control_mode,
+        "human_reason": state.human_reason.clone(),
+    })
+}
+
+async fn enrich_browser_action_value(
+    data: Value,
+    manager: Arc<Mutex<ChromeProfileManagerState>>,
+    fallback_profile_key: Option<&str>,
+) -> Value {
+    let mut object = match data {
+        Value::Object(object) => object,
+        other => {
+            let mut object = serde_json::Map::new();
+            object.insert("result".to_string(), other);
+            object
+        }
+    };
+
+    let snapshot = Value::Object(object.clone());
+    let profile_key = read_browser_session_string(&snapshot, &["profile_key", "profileKey"])
+        .or_else(|| {
+            read_nested_browser_session_string(
+                &snapshot,
+                "browser_session",
+                &["profile_key", "profileKey"],
+            )
+        })
+        .or_else(|| fallback_profile_key.map(ToString::to_string));
+    let session_id =
+        read_browser_session_string(&snapshot, &["session_id", "sessionId"]).or_else(|| {
+            read_nested_browser_session_string(
+                &snapshot,
+                "browser_session",
+                &["session_id", "sessionId"],
+            )
+        });
+    let target_id = read_browser_session_string(&snapshot, &["target_id", "targetId"])
+        .or_else(|| {
+            read_nested_browser_session_string(
+                &snapshot,
+                "browser_session",
+                &["target_id", "targetId"],
+            )
+        })
+        .or_else(|| {
+            snapshot
+                .get("tab")
+                .and_then(|tab| tab.get("id"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        });
+
+    let runtime = shared_browser_runtime();
+    let mut cdp_session = if let Some(existing_session_id) = session_id.as_deref() {
+        runtime.get_session_state(existing_session_id).await.ok()
+    } else {
+        None
+    };
+
+    if cdp_session.is_none() {
+        if let Some(ref resolved_profile_key) = profile_key {
+            if let Ok(profile_session) =
+                select_profile_session(manager, Some(resolved_profile_key.clone())).await
+            {
+                if runtime
+                    .is_cdp_endpoint_alive(profile_session.remote_debugging_port)
+                    .await
+                {
+                    cdp_session = ensure_cdp_runtime_session(
+                        &runtime,
+                        &profile_session,
+                        target_id.as_deref(),
+                    )
+                    .await
+                    .ok();
+                }
+            }
+        }
+    }
+
+    if let Some(state) = cdp_session {
+        object.insert(
+            "session_id".to_string(),
+            Value::String(state.session_id.clone()),
+        );
+        object.insert(
+            "target_id".to_string(),
+            Value::String(state.target_id.clone()),
+        );
+        object.insert(
+            "profile_key".to_string(),
+            Value::String(state.profile_key.clone()),
+        );
+        object.insert(
+            "browser_session".to_string(),
+            browser_session_value_from_state(&state),
+        );
+    } else {
+        if let Some(value) = session_id {
+            object.insert("session_id".to_string(), Value::String(value));
+        }
+        if let Some(value) = target_id {
+            object.insert("target_id".to_string(), Value::String(value));
+        }
+        if let Some(value) = profile_key {
+            object.insert("profile_key".to_string(), Value::String(value));
+        }
+    }
+
+    Value::Object(object)
+}
+
 fn aster_backend_capabilities() -> Vec<String> {
     get_chrome_mcp_tools()
         .into_iter()
@@ -1057,6 +1794,16 @@ fn cdp_backend_capabilities() -> Vec<String> {
         "navigate".to_string(),
         "read_page".to_string(),
         "get_page_text".to_string(),
+        "click".to_string(),
+        "type".to_string(),
+        "scroll".to_string(),
+        "scroll_page".to_string(),
+        "refresh_page".to_string(),
+        "go_back".to_string(),
+        "go_forward".to_string(),
+        "get_page_info".to_string(),
+        "read_console_messages".to_string(),
+        "read_network_requests".to_string(),
     ]
 }
 
@@ -1351,83 +2098,88 @@ async fn execute_cdp_backend_action(
     profile_key: Option<String>,
     manager: Arc<Mutex<ChromeProfileManagerState>>,
 ) -> Result<Value, String> {
-    let session = select_profile_session(manager, profile_key).await?;
-    if !is_cdp_endpoint_alive(session.remote_debugging_port).await {
+    let profile_session = select_profile_session(manager, profile_key).await?;
+    let runtime = shared_browser_runtime();
+    if !runtime
+        .is_cdp_endpoint_alive(profile_session.remote_debugging_port)
+        .await
+    {
         return Err(format!(
             "CDP 调试端口不可用: 127.0.0.1:{}",
-            session.remote_debugging_port
+            profile_session.remote_debugging_port
         ));
     }
+    let requested_target_id = action_arg_string(&args, &["target_id", "tab_id"]);
 
     match action {
         "tabs_context_mcp" => {
-            let tabs = fetch_cdp_targets(session.remote_debugging_port).await?;
+            let tabs = runtime
+                .list_targets(profile_session.remote_debugging_port)
+                .await?;
             Ok(json!({
-                "profile_key": session.profile_key,
-                "remote_debugging_port": session.remote_debugging_port,
+                "profile_key": profile_session.profile_key,
+                "remote_debugging_port": profile_session.remote_debugging_port,
                 "tabs": tabs,
             }))
         }
-        "navigate" => {
-            let nav_action =
-                action_arg_string(&args, &["action"]).unwrap_or_else(|| "goto".to_string());
-            if nav_action != "goto" {
-                return Err(format!(
-                    "CDP 直连初版仅支持 navigate.action=goto，收到: {nav_action}"
-                ));
-            }
-            let url = action_arg_string(&args, &["url"])
-                .ok_or_else(|| "navigate 需要提供 url".to_string())?;
-            let endpoint = format!(
-                "http://127.0.0.1:{}/json/new?{}",
-                session.remote_debugging_port,
-                urlencoding::encode(&url)
-            );
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
-                .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
-            let response = match client.put(&endpoint).send().await {
-                Ok(resp) => resp,
-                Err(_) => client
-                    .get(&endpoint)
-                    .send()
-                    .await
-                    .map_err(|e| format!("CDP navigate 调用失败: {e}"))?,
+        "tabs_create_mcp"
+        | "navigate"
+        | "click"
+        | "type"
+        | "form_input"
+        | "scroll"
+        | "scroll_page"
+        | "refresh_page"
+        | "go_back"
+        | "go_forward"
+        | "get_page_info"
+        | "read_page"
+        | "get_page_text"
+        | "read_console_messages"
+        | "read_network_requests" => {
+            let cdp_session = ensure_cdp_runtime_session(
+                &runtime,
+                &profile_session,
+                requested_target_id.as_deref(),
+            )
+            .await?;
+            let (effective_action, effective_args) = if action == "tabs_create_mcp" {
+                let mut next_args = args;
+                if action_arg_string(&next_args, &["url"]).is_none() {
+                    next_args["url"] = Value::String("about:blank".to_string());
+                }
+                next_args["action"] = Value::String("goto".to_string());
+                ("navigate", next_args)
+            } else {
+                (action, args)
             };
-            if !response.status().is_success() {
-                return Err(format!("CDP navigate 返回失败状态: {}", response.status()));
+            let result = runtime
+                .execute_action(&cdp_session.session_id, effective_action, effective_args)
+                .await?;
+            match result {
+                Value::Object(mut object) => {
+                    object.insert(
+                        "session_id".to_string(),
+                        Value::String(cdp_session.session_id),
+                    );
+                    object.insert(
+                        "target_id".to_string(),
+                        Value::String(cdp_session.target_id),
+                    );
+                    object.insert(
+                        "profile_key".to_string(),
+                        Value::String(cdp_session.profile_key),
+                    );
+                    Ok(Value::Object(object))
+                }
+                other => Ok(json!({
+                    "session_id": cdp_session.session_id,
+                    "target_id": cdp_session.target_id,
+                    "profile_key": cdp_session.profile_key,
+                    "result": other,
+                })),
             }
-            let text = response.text().await.unwrap_or_default();
-            Ok(json!({
-                "profile_key": session.profile_key,
-                "remote_debugging_port": session.remote_debugging_port,
-                "url": url,
-                "response": text,
-            }))
         }
-        "read_page" | "get_page_text" => {
-            let tabs = fetch_cdp_targets(session.remote_debugging_port).await?;
-            let current = tabs
-                .iter()
-                .find(|tab| tab.target_type == "page")
-                .or_else(|| tabs.first())
-                .cloned()
-                .ok_or_else(|| "CDP 未返回可用标签页".to_string())?;
-            let markdown = format!(
-                "# {}\nURL: {}\n\nCDP 直连初版仅返回标签页元信息，完整 DOM/控制能力将后续补齐。",
-                current.title, current.url
-            );
-            Ok(json!({
-                "profile_key": session.profile_key,
-                "tab": current,
-                "markdown": markdown,
-            }))
-        }
-        "read_console_messages" | "read_network_requests" => Err(format!(
-            "CDP 直连初版暂不支持 {}，需要建立 WebSocket DevTools 会话后补齐",
-            action
-        )),
         _ => Err(format!("CDP 直连不支持动作: {action}")),
     }
 }
@@ -1451,6 +2203,115 @@ fn bridge_result_to_value(result: ChromeBridgeCommandResult) -> Value {
     })
 }
 
+async fn register_browser_stream_relay(
+    app: AppHandle,
+    session_id: String,
+    mode: BrowserStreamMode,
+    mut receiver: tokio::sync::broadcast::Receiver<BrowserEvent>,
+) {
+    cleanup_browser_stream_relay(&session_id).await;
+    let relay_key = session_id.clone();
+    let task = tokio::spawn(async move {
+        loop {
+            match receiver.recv().await {
+                Ok(event) => {
+                    if mode == BrowserStreamMode::Frames && !event.is_frame_related() {
+                        continue;
+                    }
+                    if mode == BrowserStreamMode::Events && event.is_frame_related() {
+                        continue;
+                    }
+                    if let Err(error) = app.emit("browser-event", &event) {
+                        tracing::warn!("[BrowserRuntime] 推送浏览器事件失败: {}", error);
+                        break;
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            }
+        }
+    });
+    BROWSER_STREAM_RELAY_TASKS
+        .lock()
+        .await
+        .insert(relay_key, task);
+}
+
+async fn cleanup_browser_stream_relay(session_id: &str) {
+    if let Some(task) = BROWSER_STREAM_RELAY_TASKS.lock().await.remove(session_id) {
+        task.abort();
+    }
+}
+
+async fn discover_unmanaged_profile_session(
+    profile_key: &str,
+) -> Result<Option<ChromeProfileSessionInfo>, String> {
+    let normalized_profile_key = normalize_profile_key(profile_key);
+    let base_dir = proxycast_core::app_paths::preferred_data_dir()
+        .map_err(|error| format!("获取应用数据目录失败: {error}"))?;
+    let profile_dir = resolve_chrome_profile_data_dir_from_base(&base_dir, &normalized_profile_key);
+    if !profile_dir.exists() {
+        return Ok(None);
+    }
+
+    let remote_debugging_port = profile_remote_debugging_port(&normalized_profile_key);
+    let runtime = shared_browser_runtime();
+    let targets = match runtime.list_targets(remote_debugging_port).await {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    let pid = find_chrome_profile_process_pid(&profile_dir).unwrap_or_default();
+
+    let (browser_path, browser_source) =
+        get_available_chrome_path().unwrap_or_else(|| (String::new(), "system".to_string()));
+    let last_url = targets
+        .iter()
+        .find(|target| target.target_type == "page" && !target.url.trim().is_empty())
+        .map(|target| target.url.trim().to_string())
+        .unwrap_or_else(|| "about:blank".to_string());
+
+    Ok(Some(ChromeProfileSessionInfo {
+        profile_key: normalized_profile_key,
+        browser_source,
+        browser_path,
+        profile_dir: profile_dir.to_string_lossy().to_string(),
+        remote_debugging_port,
+        pid,
+        started_at: chrono::Utc::now().to_rfc3339(),
+        last_url,
+    }))
+}
+
+async fn discover_unmanaged_profile_sessions() -> Result<Vec<ChromeProfileSessionInfo>, String> {
+    let base_dir = proxycast_core::app_paths::preferred_data_dir()
+        .map_err(|error| format!("获取应用数据目录失败: {error}"))?;
+    let chrome_profiles_dir = base_dir.join("chrome_profiles");
+    if !chrome_profiles_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut discovered = Vec::new();
+    let entries = std::fs::read_dir(&chrome_profiles_dir)
+        .map_err(|error| format!("读取 Chrome profile 目录失败: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("读取 Chrome profile 条目失败: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("读取 Chrome profile 类型失败: {error}"))?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let profile_key = entry.file_name().to_string_lossy().to_string();
+        if let Some(session) = discover_unmanaged_profile_session(&profile_key).await? {
+            discovered.push(session);
+        }
+    }
+
+    discovered.sort_by(|left, right| left.profile_key.cmp(&right.profile_key));
+    Ok(discovered)
+}
+
 async fn list_alive_profile_sessions(
     manager: Arc<Mutex<ChromeProfileManagerState>>,
 ) -> Vec<ChromeProfileSessionInfo> {
@@ -1470,6 +2331,25 @@ async fn list_alive_profile_sessions(
         guard.sessions.remove(&key);
     }
 
+    let managed_profile_keys = sessions
+        .iter()
+        .map(|session| session.profile_key.clone())
+        .collect::<HashSet<_>>();
+    drop(guard);
+
+    let unmanaged_sessions = match discover_unmanaged_profile_sessions().await {
+        Ok(items) => items,
+        Err(error) => {
+            tracing::warn!("[ChromeProfile] 发现未受管会话失败: {}", error);
+            Vec::new()
+        }
+    };
+
+    sessions.extend(
+        unmanaged_sessions
+            .into_iter()
+            .filter(|session| !managed_profile_keys.contains(&session.profile_key)),
+    );
     sessions
 }
 
@@ -1496,39 +2376,29 @@ async fn select_profile_session(
         .ok_or_else(|| "没有可用的 Chrome profile 会话".to_string())
 }
 
-async fn fetch_cdp_targets(port: u16) -> Result<Vec<CdpTargetInfo>, String> {
-    let endpoint = format!("http://127.0.0.1:{port}/json/list");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|e| format!("创建 HTTP 客户端失败: {e}"))?;
-    let response = client
-        .get(&endpoint)
-        .send()
+async fn ensure_cdp_runtime_session(
+    runtime: &BrowserRuntimeManager,
+    profile_session: &ChromeProfileSessionInfo,
+    target_id: Option<&str>,
+) -> Result<CdpSessionState, String> {
+    if let Some(existing) = runtime
+        .find_session_by_profile_key(&profile_session.profile_key)
         .await
-        .map_err(|e| format!("读取 CDP 标签页失败: {e}"))?;
-    if !response.status().is_success() {
-        return Err(format!("读取 CDP 标签页失败: {}", response.status()));
-    }
-    response
-        .json::<Vec<CdpTargetInfo>>()
-        .await
-        .map_err(|e| format!("解析 CDP 标签页失败: {e}"))
-}
-
-async fn is_cdp_endpoint_alive(port: u16) -> bool {
-    let endpoint = format!("http://127.0.0.1:{port}/json/version");
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
     {
-        Ok(client) => client,
-        Err(_) => return false,
-    };
-    match client.get(endpoint).send().await {
-        Ok(resp) => resp.status().is_success(),
-        Err(_) => false,
+        if target_id.is_none() || Some(existing.target_id.as_str()) == target_id {
+            return Ok(existing);
+        }
+        runtime.close_session(&existing.session_id).await?;
+        cleanup_browser_stream_relay(&existing.session_id).await;
     }
+
+    runtime
+        .open_session(OpenSessionRequest {
+            profile_key: profile_session.profile_key.clone(),
+            remote_debugging_port: profile_session.remote_debugging_port,
+            target_id: target_id.map(ToString::to_string),
+        })
+        .await
 }
 
 fn sanitize_profile_key(input: &str) -> String {
@@ -1692,9 +2562,132 @@ fn spawn_chrome_with_profile(
     cmd.spawn().map_err(|e| format!("启动 Chrome 失败: {e}"))
 }
 
+fn chrome_process_uses_profile_dir(args: &[OsString], profile_dir: &Path) -> bool {
+    let expected = profile_dir.to_string_lossy();
+    let expected_owned = expected.as_ref();
+
+    for (index, arg) in args.iter().enumerate() {
+        let value = arg.to_string_lossy();
+        if value == format!("--user-data-dir={expected_owned}") {
+            return true;
+        }
+        if value == "--user-data-dir" {
+            if let Some(next) = args.get(index + 1) {
+                if next.to_string_lossy() == expected_owned {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+fn collect_chrome_profile_processes(profile_dir: &Path) -> Vec<Pid> {
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    system
+        .processes()
+        .iter()
+        .filter_map(|(pid, process)| {
+            let process_name = process.name().to_string_lossy().to_lowercase();
+            if !process_name.contains("chrome") && !process_name.contains("chromium") {
+                return None;
+            }
+            if chrome_process_uses_profile_dir(process.cmd(), profile_dir) {
+                return Some(*pid);
+            }
+            None
+        })
+        .collect()
+}
+
+fn find_chrome_profile_process_pid(profile_dir: &Path) -> Option<u32> {
+    collect_chrome_profile_processes(profile_dir)
+        .into_iter()
+        .next()
+        .map(|pid| pid.as_u32())
+}
+
+fn cleanup_chrome_profile_singleton_artifacts(profile_dir: &Path) {
+    for name in ["SingletonLock", "SingletonCookie", "SingletonSocket"] {
+        let path = profile_dir.join(name);
+        let result = if path.is_dir() {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        if let Err(error) = result {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(
+                    "[ChromeProfile] 清理 profile 锁文件失败: path={:?}, err={}",
+                    path,
+                    error
+                );
+            }
+        }
+    }
+}
+
+async fn cleanup_orphan_chrome_profile_processes(profile_dir: &Path) -> Result<bool, String> {
+    let mut system = System::new_all();
+    system.refresh_all();
+
+    let target_pids = system
+        .processes()
+        .iter()
+        .filter_map(|(pid, process)| {
+            let process_name = process.name().to_string_lossy().to_lowercase();
+            if !process_name.contains("chrome") && !process_name.contains("chromium") {
+                return None;
+            }
+            if chrome_process_uses_profile_dir(process.cmd(), profile_dir) {
+                return Some(*pid);
+            }
+            None
+        })
+        .collect::<Vec<_>>();
+
+    if target_pids.is_empty() {
+        return Ok(false);
+    }
+
+    tracing::warn!(
+        "[ChromeProfile] 检测到未受管 profile 进程，准备清理: profile_dir={:?}, pids={:?}",
+        profile_dir,
+        target_pids
+            .iter()
+            .map(|pid| pid.as_u32())
+            .collect::<Vec<_>>()
+    );
+
+    for pid in &target_pids {
+        if let Some(process) = system.process(*pid) {
+            let terminated = process.kill_with(Signal::Term).unwrap_or(false);
+            if !terminated {
+                let _ = process.kill();
+            }
+        }
+    }
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(
+        MANAGED_CHROME_RECOVERY_WAIT_MS,
+    ))
+    .await;
+    cleanup_chrome_profile_singleton_artifacts(profile_dir);
+    Ok(true)
+}
+
 fn resolve_profile_data_dir_from_base(base_dir: &Path, profile_key: &str) -> PathBuf {
     let effective_key = normalize_profile_key(profile_key);
     base_dir.join("webview_profiles").join(effective_key)
+}
+
+fn resolve_chrome_profile_data_dir_from_base(base_dir: &Path, profile_key: &str) -> PathBuf {
+    base_dir
+        .join("chrome_profiles")
+        .join(normalize_profile_key(profile_key))
 }
 
 fn resolve_profile_data_dir(app: &AppHandle, profile_key: &str) -> Result<PathBuf, String> {
@@ -1708,9 +2701,10 @@ fn resolve_chrome_profile_data_dir(app: &AppHandle, profile_key: &str) -> Result
     let _ = app;
     let base_dir = proxycast_core::app_paths::preferred_data_dir()
         .map_err(|e| format!("获取应用数据目录失败: {e}"))?;
-    Ok(base_dir
-        .join("chrome_profiles")
-        .join(normalize_profile_key(profile_key)))
+    Ok(resolve_chrome_profile_data_dir_from_base(
+        &base_dir,
+        profile_key,
+    ))
 }
 
 fn get_system_chrome_path() -> Option<String> {

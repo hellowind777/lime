@@ -357,6 +357,213 @@ pub async fn handle_command(
             Ok(serde_json::to_value(diagnostics)?)
         }
 
+        // ========== P0 - 浏览器/CDP ==========
+        "open_chrome_profile_window" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?
+                .clone();
+            let request: crate::commands::webview_cmd::OpenChromeProfileRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::open_chrome_profile_window_global(
+                    app_handle,
+                    state.server.clone(),
+                    request,
+                )
+                .await?,
+            )?)
+        }
+
+        "open_browser_runtime_debugger_window" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?
+                .clone();
+            let request: Option<crate::commands::browser_runtime_cmd::OpenBrowserRuntimeDebuggerWindowRequest> =
+                parse_optional_nested_arg(&args.unwrap_or_default(), "request")?;
+            crate::commands::browser_runtime_cmd::open_browser_runtime_debugger_window(
+                app_handle, request,
+            )?;
+            Ok(serde_json::json!({ "success": true }))
+        }
+
+        "close_browser_runtime_debugger_window" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?
+                .clone();
+            crate::commands::browser_runtime_cmd::close_browser_runtime_debugger_window(app_handle)?;
+            Ok(serde_json::json!({ "success": true }))
+        }
+
+        "launch_browser_runtime_assist" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?
+                .clone();
+            let request: crate::commands::browser_runtime_cmd::LaunchBrowserRuntimeAssistRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::browser_runtime_cmd::launch_browser_runtime_assist_global(
+                    app_handle,
+                    state.server.clone(),
+                    request,
+                )
+                .await?,
+            )?)
+        }
+
+        "get_chrome_profile_sessions" => Ok(serde_json::to_value(
+            crate::commands::webview_cmd::get_chrome_profile_sessions_global().await?,
+        )?),
+
+        "close_chrome_profile_session" => {
+            let args = args.unwrap_or_default();
+            let profile_key = get_string_arg(&args, "profileKey", "profile_key")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::close_chrome_profile_session_global(profile_key)
+                    .await?,
+            )?)
+        }
+
+        "get_chrome_bridge_endpoint_info" => Ok(serde_json::to_value(
+            crate::commands::webview_cmd::get_chrome_bridge_endpoint_info_global(
+                state.server.clone(),
+            )
+            .await?,
+        )?),
+
+        "get_chrome_bridge_status" => Ok(serde_json::to_value(
+            crate::commands::webview_cmd::get_chrome_bridge_status_global().await?,
+        )?),
+
+        "get_browser_backend_policy" => Ok(serde_json::to_value(
+            crate::commands::webview_cmd::get_browser_backend_policy_global().await?,
+        )?),
+
+        "set_browser_backend_policy" => {
+            let args = args.unwrap_or_default();
+            let policy: crate::commands::webview_cmd::BrowserBackendPolicy =
+                parse_nested_arg(&args, "policy")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::set_browser_backend_policy_global(policy).await?,
+            )?)
+        }
+
+        "get_browser_backends_status" => Ok(serde_json::to_value(
+            crate::commands::webview_cmd::get_browser_backends_status_global().await?,
+        )?),
+
+        "list_cdp_targets" => {
+            let request: crate::commands::webview_cmd::ListCdpTargetsRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::list_cdp_targets_global(request).await?,
+            )?)
+        }
+
+        "open_cdp_session" => {
+            let request: crate::commands::webview_cmd::OpenCdpSessionRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::open_cdp_session_global(request).await?,
+            )?)
+        }
+
+        "close_cdp_session" => {
+            let request: crate::commands::webview_cmd::BrowserSessionStateRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::close_cdp_session_global(request).await?,
+            )?)
+        }
+
+        "start_browser_stream" => {
+            let app_handle = state
+                .app_handle
+                .as_ref()
+                .ok_or_else(|| "Dev Bridge 未持有 AppHandle".to_string())?
+                .clone();
+            let request: crate::commands::webview_cmd::StartBrowserStreamRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::start_browser_stream_global(app_handle, request)
+                    .await?,
+            )?)
+        }
+
+        "stop_browser_stream" => {
+            let request: crate::commands::webview_cmd::StopBrowserStreamRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::stop_browser_stream_global(request).await?,
+            )?)
+        }
+
+        "get_browser_session_state" => {
+            let request: crate::commands::webview_cmd::BrowserSessionStateRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::get_browser_session_state_global(request).await?,
+            )?)
+        }
+
+        "take_over_browser_session" => {
+            let request: crate::commands::webview_cmd::UpdateBrowserSessionControlRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::take_over_browser_session_global(request).await?,
+            )?)
+        }
+
+        "release_browser_session" => {
+            let request: crate::commands::webview_cmd::UpdateBrowserSessionControlRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::release_browser_session_global(request).await?,
+            )?)
+        }
+
+        "resume_browser_session" => {
+            let request: crate::commands::webview_cmd::UpdateBrowserSessionControlRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::resume_browser_session_global(request).await?,
+            )?)
+        }
+
+        "get_browser_event_buffer" => {
+            let request: crate::commands::webview_cmd::BrowserEventBufferRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::get_browser_event_buffer_global(request).await?,
+            )?)
+        }
+
+        "browser_execute_action" => {
+            let request: crate::commands::webview_cmd::BrowserActionRequest =
+                parse_nested_arg(&args.unwrap_or_default(), "request")?;
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::browser_execute_action_global(request).await?,
+            )?)
+        }
+
+        "get_browser_action_audit_logs" => {
+            let limit = args
+                .as_ref()
+                .and_then(|value| value.get("limit"))
+                .and_then(|value| value.as_u64())
+                .map(|value| value as usize);
+            Ok(serde_json::to_value(
+                crate::commands::webview_cmd::get_browser_action_audit_logs_global(limit).await?,
+            )?)
+        }
+
         // ========== P1 - 日志相关 ==========
         "get_logs" => {
             let logs = state.logs.read().await;
@@ -603,6 +810,20 @@ pub async fn handle_command(
             )
             .map_err(|e| format!("创建 Skill 脚手架失败: {e}"))?;
             Ok(serde_json::to_value(inspection)?)
+        }
+
+        "import_local_skill_for_app" => {
+            let args = args.unwrap_or_default();
+            let app = args
+                .get("app")
+                .and_then(|value| value.as_str())
+                .unwrap_or("proxycast")
+                .to_string();
+            let source_path = get_string_arg(&args, "source_path", "source_path")
+                .or_else(|_| get_string_arg(&args, "sourcePath", "sourcePath"))?;
+            let result = crate::commands::skill_cmd::import_local_skill_for_app(app, source_path)
+                .map_err(|e| format!("导入本地 Skill 失败: {e}"))?;
+            Ok(serde_json::to_value(result)?)
         }
 
         "inspect_remote_skill" => {

@@ -125,11 +125,19 @@ interface EmptyArtifactSurfaceState {
   skeletonKind: EmptyArtifactSkeletonKind;
 }
 
-function resolveArtifactPath(artifact: Pick<Artifact, "title" | "meta">): string {
-  if (typeof artifact.meta.filePath === "string" && artifact.meta.filePath.trim()) {
+function resolveArtifactPath(
+  artifact: Pick<Artifact, "title" | "meta">,
+): string {
+  if (
+    typeof artifact.meta.filePath === "string" &&
+    artifact.meta.filePath.trim()
+  ) {
     return artifact.meta.filePath.trim();
   }
-  if (typeof artifact.meta.filename === "string" && artifact.meta.filename.trim()) {
+  if (
+    typeof artifact.meta.filename === "string" &&
+    artifact.meta.filename.trim()
+  ) {
     return artifact.meta.filename.trim();
   }
   return artifact.title;
@@ -158,6 +166,10 @@ function resolveEmptyArtifactSkeletonKind(
 function resolveEmptyArtifactSurfaceState(
   artifact: Pick<Artifact, "content" | "error" | "meta" | "status" | "type">,
 ): EmptyArtifactSurfaceState | null {
+  if (artifact.type === "browser_assist") {
+    return null;
+  }
+
   if (artifact.content.trim()) {
     return null;
   }
@@ -165,10 +177,7 @@ function resolveEmptyArtifactSurfaceState(
   const writePhase = resolveArtifactWritePhase(artifact);
   const skeletonKind = resolveEmptyArtifactSkeletonKind(artifact);
 
-  if (
-    artifact.status === "error" ||
-    writePhase === "failed"
-  ) {
+  if (artifact.status === "error" || writePhase === "failed") {
     return {
       mode: "failed",
       title: "写入未完成",
@@ -262,11 +271,7 @@ const CodeSkeleton: React.FC<{ tone?: "dark" | "light" }> = memo(
             tone={tone}
             className={cn(
               "h-3",
-              index % 3 === 0
-                ? "w-3/5"
-                : index % 3 === 1
-                  ? "w-4/5"
-                  : "w-2/3",
+              index % 3 === 0 ? "w-3/5" : index % 3 === 1 ? "w-4/5" : "w-2/3",
             )}
           />
         </div>
@@ -487,44 +492,43 @@ const FallbackRenderer: React.FC<{
   artifact: Artifact;
   tone?: "dark" | "light";
 }> = memo(({ artifact, tone = "dark" }) => (
-    <div
-      className={cn(
-        "flex flex-col h-full",
-        tone === "light" ? "bg-background" : "bg-[#1e2227]",
-      )}
-    >
-      {/* 提示区域 */}
-      <div className="p-4 border-b border-yellow-500/20 bg-yellow-500/10">
-        <div className="flex items-center gap-2 text-yellow-400 font-medium mb-2">
-          <AlertTriangle className="w-5 h-5" />
-          <span>未知类型</span>
-        </div>
-        <div
-          className={cn(
-            "text-sm",
-            tone === "light" ? "text-muted-foreground" : "text-gray-400",
-          )}
-        >
-          类型 "{artifact.type}" 没有对应的渲染器，显示原始内容。
-        </div>
+  <div
+    className={cn(
+      "flex flex-col h-full",
+      tone === "light" ? "bg-background" : "bg-[#1e2227]",
+    )}
+  >
+    {/* 提示区域 */}
+    <div className="p-4 border-b border-yellow-500/20 bg-yellow-500/10">
+      <div className="flex items-center gap-2 text-yellow-400 font-medium mb-2">
+        <AlertTriangle className="w-5 h-5" />
+        <span>未知类型</span>
       </div>
-
-      {/* 内容区域 */}
-      <div className="flex-1 overflow-auto p-4">
-        <pre
-          className={cn(
-            "overflow-auto whitespace-pre-wrap rounded p-3 text-sm",
-            tone === "light"
-              ? "border border-border bg-muted/30 text-foreground"
-              : "bg-black/30 text-gray-300",
-          )}
-        >
-          {artifact.content}
-        </pre>
+      <div
+        className={cn(
+          "text-sm",
+          tone === "light" ? "text-muted-foreground" : "text-gray-400",
+        )}
+      >
+        类型 "{artifact.type}" 没有对应的渲染器，显示原始内容。
       </div>
     </div>
-  ),
-);
+
+    {/* 内容区域 */}
+    <div className="flex-1 overflow-auto p-4">
+      <pre
+        className={cn(
+          "overflow-auto whitespace-pre-wrap rounded p-3 text-sm",
+          tone === "light"
+            ? "border border-border bg-muted/30 text-foreground"
+            : "bg-black/30 text-gray-300",
+        )}
+      >
+        {artifact.content}
+      </pre>
+    </div>
+  </div>
+));
 FallbackRenderer.displayName = "FallbackRenderer";
 
 // ============================================================================

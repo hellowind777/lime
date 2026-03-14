@@ -296,7 +296,9 @@ function splitTextIntoSegments(text: string): TextSegment[] {
   return segments.length > 0 ? segments : [{ type: "text", value: text }];
 }
 
-function findFirstUrl(...values: Array<string | undefined>): string | undefined {
+function findFirstUrl(
+  ...values: Array<string | undefined>
+): string | undefined {
   for (const value of values) {
     if (!value) {
       continue;
@@ -334,7 +336,9 @@ function isLikelyFilePath(value: string): boolean {
   );
 }
 
-function summarizeFileActions(events: HarnessSessionState["recentFileEvents"]): string {
+function summarizeFileActions(
+  events: HarnessSessionState["recentFileEvents"],
+): string {
   const counts = new Map<HarnessFileAction, number>();
 
   for (const event of events) {
@@ -662,7 +666,9 @@ function SearchOutputCard({
   const results = useMemo(
     () =>
       resolveSearchResultPreviewItemsFromText(
-        signal.content?.trim() || signal.preview?.trim() || signal.summary.trim(),
+        signal.content?.trim() ||
+          signal.preview?.trim() ||
+          signal.summary.trim(),
       ),
     [signal.content, signal.preview, signal.summary],
   );
@@ -758,7 +764,8 @@ function SearchOutputBatchCard({
 }) {
   const [expanded, setExpanded] = useState(true);
   const semanticSummaries = useMemo(
-    () => summarizeSearchQuerySemantics(signals.map((signal) => signal.summary)),
+    () =>
+      summarizeSearchQuerySemantics(signals.map((signal) => signal.summary)),
     [signals],
   );
   const preview = signals
@@ -785,9 +792,7 @@ function SearchOutputBatchCard({
             {preview}
             {hiddenCount > 0 ? ` 等 ${hiddenCount} 组` : ""}
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            联网检索批次
-          </div>
+          <div className="mt-1 text-xs text-muted-foreground">联网检索批次</div>
         </div>
         <span
           className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground"
@@ -949,9 +954,9 @@ export function HarnessStatusPanel({
     loading: false,
   });
   const previewRequestIdRef = useRef(0);
-  const sectionRefs = useRef<Partial<Record<HarnessSectionKey, HTMLElement | null>>>(
-    {},
-  );
+  const sectionRefs = useRef<
+    Partial<Record<HarnessSectionKey, HTMLElement | null>>
+  >({});
 
   const registerSectionRef = useCallback(
     (key: HarnessSectionKey, node: HTMLElement | null) => {
@@ -960,16 +965,13 @@ export function HarnessStatusPanel({
     [],
   );
 
-  const scrollToSection = useCallback(
-    (key: HarnessSectionKey) => {
-      const target = sectionRefs.current[key];
-      if (!target) {
-        return;
-      }
-      target.scrollIntoView({ behavior: "smooth", block: "start" });
-    },
-    [],
-  );
+  const scrollToSection = useCallback((key: HarnessSectionKey) => {
+    const target = sectionRefs.current[key];
+    if (!target) {
+      return;
+    }
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   const recentSchedulerEvents = useMemo(
     () => subAgentRuntime.events.slice(-4).reverse(),
@@ -989,7 +991,9 @@ export function HarnessStatusPanel({
       ].filter(
         (option) =>
           option.value === "all" ||
-          harnessState.recentFileEvents.some((event) => event.kind === option.value),
+          harnessState.recentFileEvents.some(
+            (event) => event.kind === option.value,
+          ),
       ),
     [harnessState.recentFileEvents],
   );
@@ -1038,11 +1042,7 @@ export function HarnessStatusPanel({
       const isSearch = isSearchOutputSignal(signal);
       const lastEntry = entries[entries.length - 1];
 
-      if (
-        isSearch &&
-        lastEntry &&
-        lastEntry.type === "search_batch"
-      ) {
+      if (isSearch && lastEntry && lastEntry.type === "search_batch") {
         lastEntry.signals.push(signal);
         continue;
       }
@@ -1112,150 +1112,144 @@ export function HarnessStatusPanel({
       });
   }, [filteredFileEvents]);
 
-  const availableSections = useMemo(
-    () => {
-      const sections: HarnessSectionNavItem[] = [];
+  const availableSections = useMemo(() => {
+    const sections: HarnessSectionNavItem[] = [];
 
-      if (harnessState.runtimeStatus) {
-        sections.push({ key: "runtime", label: "当前阶段" });
-      }
-      if (harnessState.activeFileWrites.length > 0) {
-        sections.push({ key: "writes", label: "文件写入" });
-      }
-      if (harnessState.outputSignals.length > 0) {
-        sections.push({ key: "outputs", label: "工具输出" });
-      }
-      if (harnessState.pendingApprovals.length > 0) {
-        sections.push({ key: "approvals", label: "待审批" });
-      }
-      if (harnessState.recentFileEvents.length > 0) {
-        sections.push({ key: "files", label: "文件活动" });
-      }
-      if (
-        harnessState.plan.phase !== "idle" ||
-        harnessState.plan.items.length > 0
-      ) {
-        sections.push({ key: "plan", label: "规划状态" });
-      }
-      if (
-        subAgentRuntime.isRunning ||
-        harnessState.delegatedTasks.length > 0 ||
-        recentSchedulerEvents.length > 0 ||
-        subAgentRuntime.error ||
-        subAgentRuntime.result
-      ) {
-        sections.push({ key: "delegation", label: "子任务委派" });
-      }
-      if (harnessState.latestContextTrace.length > 0) {
-        sections.push({ key: "context", label: "上下文轨迹" });
-      }
+    if (harnessState.runtimeStatus) {
+      sections.push({ key: "runtime", label: "当前阶段" });
+    }
+    if (harnessState.activeFileWrites.length > 0) {
+      sections.push({ key: "writes", label: "文件写入" });
+    }
+    if (harnessState.outputSignals.length > 0) {
+      sections.push({ key: "outputs", label: "工具输出" });
+    }
+    if (harnessState.pendingApprovals.length > 0) {
+      sections.push({ key: "approvals", label: "待审批" });
+    }
+    if (harnessState.recentFileEvents.length > 0) {
+      sections.push({ key: "files", label: "文件活动" });
+    }
+    if (
+      harnessState.plan.phase !== "idle" ||
+      harnessState.plan.items.length > 0
+    ) {
+      sections.push({ key: "plan", label: "规划状态" });
+    }
+    if (
+      subAgentRuntime.isRunning ||
+      harnessState.delegatedTasks.length > 0 ||
+      recentSchedulerEvents.length > 0 ||
+      subAgentRuntime.error ||
+      subAgentRuntime.result
+    ) {
+      sections.push({ key: "delegation", label: "子任务委派" });
+    }
+    if (harnessState.latestContextTrace.length > 0) {
+      sections.push({ key: "context", label: "上下文轨迹" });
+    }
 
-      sections.push({ key: "capabilities", label: "已装载能力" });
+    if (environment.skillsCount > 0) {
+      sections.push({ key: "capabilities", label: "已激活技能" });
+    }
 
-      return sections;
-    },
-    [
-      harnessState.delegatedTasks.length,
-      harnessState.activeFileWrites.length,
-      harnessState.latestContextTrace.length,
-      harnessState.outputSignals.length,
-      harnessState.pendingApprovals.length,
-      harnessState.plan.items.length,
-      harnessState.plan.phase,
-      harnessState.recentFileEvents.length,
-      harnessState.runtimeStatus,
-      recentSchedulerEvents.length,
-      subAgentRuntime.error,
-      subAgentRuntime.isRunning,
-      subAgentRuntime.result,
-    ],
-  );
+    return sections;
+  }, [
+    environment.skillsCount,
+    harnessState.delegatedTasks.length,
+    harnessState.activeFileWrites.length,
+    harnessState.latestContextTrace.length,
+    harnessState.outputSignals.length,
+    harnessState.pendingApprovals.length,
+    harnessState.plan.items.length,
+    harnessState.plan.phase,
+    harnessState.recentFileEvents.length,
+    harnessState.runtimeStatus,
+    recentSchedulerEvents.length,
+    subAgentRuntime.error,
+    subAgentRuntime.isRunning,
+    subAgentRuntime.result,
+  ]);
 
-  const summaryCards = useMemo(
-    () => {
-      const cards: HarnessSummaryCard[] = [];
+  const summaryCards = useMemo(() => {
+    const cards: HarnessSummaryCard[] = [];
 
-      if (harnessState.runtimeStatus) {
-        cards.push({
-          sectionKey: "runtime",
-          title: "执行阶段",
-          value: formatRuntimePhaseLabel(harnessState.runtimeStatus),
-          hint:
-            harnessState.runtimeStatus.detail ||
-            harnessState.runtimeStatus.title,
-          icon: Loader2,
-        });
-      }
+    if (harnessState.runtimeStatus) {
+      cards.push({
+        sectionKey: "runtime",
+        title: "执行阶段",
+        value: formatRuntimePhaseLabel(harnessState.runtimeStatus),
+        hint:
+          harnessState.runtimeStatus.detail || harnessState.runtimeStatus.title,
+        icon: Loader2,
+      });
+    }
 
-      if (harnessState.activeFileWrites.length > 0) {
-        cards.push({
-          sectionKey: "writes",
-          title: "文件写入",
-          value: `${harnessState.activeFileWrites.length}`,
-          hint:
-            harnessState.activeFileWrites[0]?.displayName ||
-            "暂无正在处理的文件",
-          icon: FileText,
-        });
-      }
+    if (harnessState.activeFileWrites.length > 0) {
+      cards.push({
+        sectionKey: "writes",
+        title: "文件写入",
+        value: `${harnessState.activeFileWrites.length}`,
+        hint:
+          harnessState.activeFileWrites[0]?.displayName || "暂无正在处理的文件",
+        icon: FileText,
+      });
+    }
 
-      cards.push(
-        {
-          sectionKey: "approvals",
-          title: "待审批",
-          value: `${harnessState.pendingApprovals.length}`,
-          hint:
-            harnessState.pendingApprovals.length > 0
-              ? "需要你确认的操作"
-              : "当前无阻塞审批",
-          icon: ShieldAlert,
-        },
-        {
-          sectionKey: "files",
-          title: "文件活动",
-          value: `${harnessState.recentFileEvents.length}`,
-          hint:
-            harnessState.recentFileEvents[0]?.displayName ||
-            "暂无可展示文件活动",
-          icon: FolderOpen,
-        },
-        {
-          sectionKey: "plan",
-          title: "计划状态",
-          value:
-            harnessState.plan.phase === "planning"
-              ? "进行中"
-              : harnessState.plan.phase === "ready"
-                ? "已就绪"
-                : "空闲",
-          hint:
-            harnessState.plan.items[0]?.content || "未检测到显式计划快照",
-          icon: ListChecks,
-        },
-        {
-          sectionKey: "context",
-          title: "上下文",
-          value: `${environment.activeContextCount}/${environment.contextItemsCount}`,
-          hint:
-            environment.contextEnabled ? "上下文工作台已启用" : "普通聊天模式",
-          icon: Sparkles,
-        },
-      );
+    cards.push(
+      {
+        sectionKey: "approvals",
+        title: "待审批",
+        value: `${harnessState.pendingApprovals.length}`,
+        hint:
+          harnessState.pendingApprovals.length > 0
+            ? "需要你确认的操作"
+            : "当前无阻塞审批",
+        icon: ShieldAlert,
+      },
+      {
+        sectionKey: "files",
+        title: "文件活动",
+        value: `${harnessState.recentFileEvents.length}`,
+        hint:
+          harnessState.recentFileEvents[0]?.displayName || "暂无可展示文件活动",
+        icon: FolderOpen,
+      },
+      {
+        sectionKey: "plan",
+        title: "计划状态",
+        value:
+          harnessState.plan.phase === "planning"
+            ? "进行中"
+            : harnessState.plan.phase === "ready"
+              ? "已就绪"
+              : "空闲",
+        hint: harnessState.plan.items[0]?.content || "未检测到显式计划快照",
+        icon: ListChecks,
+      },
+      {
+        sectionKey: "context",
+        title: "上下文",
+        value: `${environment.activeContextCount}/${environment.contextItemsCount}`,
+        hint: environment.contextEnabled
+          ? "上下文工作台已启用"
+          : "普通聊天模式",
+        icon: Sparkles,
+      },
+    );
 
-      return cards;
-    },
-    [
-      environment.activeContextCount,
-      environment.contextEnabled,
-      environment.contextItemsCount,
-      harnessState.activeFileWrites,
-      harnessState.pendingApprovals.length,
-      harnessState.plan.items,
-      harnessState.plan.phase,
-      harnessState.recentFileEvents,
-      harnessState.runtimeStatus,
-    ],
-  );
+    return cards;
+  }, [
+    environment.activeContextCount,
+    environment.contextEnabled,
+    environment.contextItemsCount,
+    harnessState.activeFileWrites,
+    harnessState.pendingApprovals.length,
+    harnessState.plan.items,
+    harnessState.plan.phase,
+    harnessState.recentFileEvents,
+    harnessState.runtimeStatus,
+  ]);
 
   const openPreview = useCallback(
     async ({
@@ -1312,7 +1306,9 @@ export function HarnessStatusPanel({
           ...current,
           path: nextPath,
           displayName: getFileName(nextPath),
-          content: normalizedContent?.trim() ? normalizedContent : current.content,
+          content: normalizedContent?.trim()
+            ? normalizedContent
+            : current.content,
           isBinary: result.isBinary === true,
           size: result.size,
           error:
@@ -1345,7 +1341,12 @@ export function HarnessStatusPanel({
       previewDialog.path || previewDialog.displayName,
       previewDialog.content,
     );
-  }, [onOpenFile, previewDialog.content, previewDialog.displayName, previewDialog.path]);
+  }, [
+    onOpenFile,
+    previewDialog.content,
+    previewDialog.displayName,
+    previewDialog.path,
+  ]);
 
   const handleCopyPath = useCallback(async () => {
     const path = previewDialog.path?.trim();
@@ -1467,9 +1468,7 @@ export function HarnessStatusPanel({
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <Wrench className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold text-foreground">
-                {title}
-              </h2>
+              <h2 className="text-sm font-semibold text-foreground">{title}</h2>
               {subAgentRuntime.isRunning ? (
                 <Badge variant="secondary" className="gap-1">
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -1477,9 +1476,7 @@ export function HarnessStatusPanel({
                 </Badge>
               ) : null}
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {description}
-            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{description}</p>
           </div>
           {!isDialogLayout ? (
             <Button
@@ -1490,9 +1487,7 @@ export function HarnessStatusPanel({
               onClick={() => setExpanded((value) => !value)}
               aria-expanded={isDetailsExpanded}
               aria-label={
-                isDetailsExpanded
-                  ? `折叠${toggleLabel}`
-                  : `展开${toggleLabel}`
+                isDetailsExpanded ? `折叠${toggleLabel}` : `展开${toggleLabel}`
               }
             >
               {isDetailsExpanded ? (
@@ -1684,7 +1679,8 @@ export function HarnessStatusPanel({
                   sectionKey="outputs"
                   title="工具输出"
                   badge={
-                    filteredOutputSignals.length === harnessState.outputSignals.length
+                    filteredOutputSignals.length ===
+                    harnessState.outputSignals.length
                       ? `${harnessState.outputSignals.length} 条`
                       : `${filteredOutputSignals.length} / ${harnessState.outputSignals.length} 条`
                   }
@@ -1745,7 +1741,9 @@ export function HarnessStatusPanel({
 
                           return (
                             <SearchOutputBatchCard
-                              key={entry.signals.map((signal) => signal.id).join("|")}
+                              key={entry.signals
+                                .map((signal) => signal.id)
+                                .join("|")}
                               signals={entry.signals}
                               onOpenUrl={handleOpenExternalLink}
                               onOpenDetail={(signal) =>
@@ -1772,7 +1770,8 @@ export function HarnessStatusPanel({
                         const canOpenPreview = Boolean(
                           signalPath || signal.content || signal.preview,
                         );
-                        const canOpenUrl = !canOpenPreview && Boolean(signalUrl);
+                        const canOpenUrl =
+                          !canOpenPreview && Boolean(signalUrl);
 
                         return (
                           <button
@@ -1780,7 +1779,9 @@ export function HarnessStatusPanel({
                             type="button"
                             className={cn(
                               "w-full rounded-xl border border-border bg-background p-3 text-left transition-colors hover:bg-muted/60",
-                              !canOpenPreview && !canOpenUrl && "cursor-default",
+                              !canOpenPreview &&
+                                !canOpenUrl &&
+                                "cursor-default",
                             )}
                             onClick={() =>
                               canOpenPreview
@@ -1793,7 +1794,7 @@ export function HarnessStatusPanel({
                                   })
                                 : signalUrl
                                   ? void handleOpenExternalLink(signalUrl)
-                                : undefined
+                                  : undefined
                             }
                             aria-label={`查看工具输出：${signal.title}`}
                           >
@@ -1886,7 +1887,8 @@ export function HarnessStatusPanel({
                   badge={
                     fileDisplayMode === "grouped"
                       ? `${groupedFileEvents.length} 个文件 / ${filteredFileEvents.length} 条`
-                      : filteredFileEvents.length === harnessState.recentFileEvents.length
+                      : filteredFileEvents.length ===
+                          harnessState.recentFileEvents.length
                         ? `${harnessState.recentFileEvents.length} 条`
                         : `${filteredFileEvents.length} / ${harnessState.recentFileEvents.length} 条`
                   }
@@ -1986,7 +1988,9 @@ export function HarnessStatusPanel({
                                   />
                                 </div>
                                 <div className="flex shrink-0 items-center gap-2">
-                                  <Badge variant="outline">{group.count} 次活动</Badge>
+                                  <Badge variant="outline">
+                                    {group.count} 次活动
+                                  </Badge>
                                   <Badge variant="secondary">
                                     {describeKind(group.kind)}
                                   </Badge>
@@ -1996,7 +2000,9 @@ export function HarnessStatusPanel({
                                 <Clock3 className="h-3.5 w-3.5" />
                                 <span>{formatTime(latestEvent.timestamp)}</span>
                                 <span>·</span>
-                                <span>最近 {describeAction(latestEvent.action)}</span>
+                                <span>
+                                  最近 {describeAction(latestEvent.action)}
+                                </span>
                                 <span>·</span>
                                 <span>{group.actionSummary}</span>
                               </div>
@@ -2170,7 +2176,10 @@ export function HarnessStatusPanel({
                             style={{
                               width: `${Math.max(
                                 0,
-                                Math.min(100, subAgentRuntime.progress.percentage),
+                                Math.min(
+                                  100,
+                                  subAgentRuntime.progress.percentage,
+                                ),
                               )}%`,
                             }}
                           />
@@ -2179,7 +2188,9 @@ export function HarnessStatusPanel({
                           <div className="mt-2 text-xs text-muted-foreground">
                             当前任务：
                             <InteractiveText
-                              text={subAgentRuntime.progress.currentTasks.join("、")}
+                              text={subAgentRuntime.progress.currentTasks.join(
+                                "、",
+                              )}
                               onOpenUrl={handleOpenExternalLink}
                             />
                           </div>
@@ -2201,11 +2212,15 @@ export function HarnessStatusPanel({
                               </span>
                             </div>
                             <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                              {task.role ? <span>角色：{task.role}</span> : null}
+                              {task.role ? (
+                                <span>角色：{task.role}</span>
+                              ) : null}
                               {task.taskType ? (
                                 <span>类型：{task.taskType}</span>
                               ) : null}
-                              {task.model ? <span>模型：{task.model}</span> : null}
+                              {task.model ? (
+                                <span>模型：{task.model}</span>
+                              ) : null}
                             </div>
                             {task.summary ? (
                               <InteractiveText
@@ -2304,16 +2319,16 @@ export function HarnessStatusPanel({
                 </Section>
               ) : null}
 
-              <Section
-                sectionKey="capabilities"
-                title="已装载能力"
-                badge={`${environment.skillsCount} 个技能`}
-                registerRef={registerSectionRef}
-              >
-                <div className="space-y-3">
-                  <div className="flex flex-wrap gap-2">
-                    {environment.skillNames.length > 0 ? (
-                      environment.skillNames.map((name) => (
+              {environment.skillsCount > 0 ? (
+                <Section
+                  sectionKey="capabilities"
+                  title="已激活技能"
+                  badge={`${environment.skillsCount} 个技能`}
+                  registerRef={registerSectionRef}
+                >
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {environment.skillNames.map((name) => (
                         <ActionableBadge
                           key={name}
                           variant="secondary"
@@ -2321,75 +2336,73 @@ export function HarnessStatusPanel({
                           onOpenUrl={handleOpenExternalLink}
                           onOpenPath={handleOpenPathValue}
                         />
-                      ))
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        当前未检测到已装载技能名称
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {environment.memorySignals.length > 0 ? (
-                      environment.memorySignals.map((signal) => (
-                        <ActionableBadge
-                          key={signal}
-                          variant="outline"
-                          value={signal}
-                          onOpenUrl={handleOpenExternalLink}
-                          onOpenPath={handleOpenPathValue}
-                        />
-                      ))
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        当前未识别到持久记忆信号
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-1 text-xs text-muted-foreground">
-                    <div>
-                      上下文条目：{environment.activeContextCount}/
-                      {environment.contextItemsCount}
+                      ))}
                     </div>
-                    {environment.contextItemNames.length > 0 ? (
-                      <div className="space-y-1">
-                        <div>活跃上下文：</div>
-                        <div className="flex flex-wrap gap-2">
-                          {environment.contextItemNames.map((item) => (
-                            <ActionableBadge
-                              key={item}
-                              variant="outline"
-                              value={item}
-                              onOpenUrl={handleOpenExternalLink}
-                              onOpenPath={handleOpenPathValue}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    <Badge variant="outline">
-                      规划 {harnessState.activity.planning}
-                    </Badge>
-                    <Badge variant="outline">
-                      文件 {harnessState.activity.filesystem}
-                    </Badge>
-                    <Badge variant="outline">
-                      执行 {harnessState.activity.execution}
-                    </Badge>
-                    <Badge variant="outline">网页 {harnessState.activity.web}</Badge>
-                    <Badge variant="outline">
-                      技能 {harnessState.activity.skills}
-                    </Badge>
-                    <Badge variant="outline">
-                      委派 {harnessState.activity.delegation}
-                    </Badge>
+                    <div className="flex flex-wrap gap-2">
+                      {environment.memorySignals.length > 0 ? (
+                        environment.memorySignals.map((signal) => (
+                          <ActionableBadge
+                            key={signal}
+                            variant="outline"
+                            value={signal}
+                            onOpenUrl={handleOpenExternalLink}
+                            onOpenPath={handleOpenPathValue}
+                          />
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          当前未识别到持久记忆信号
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      <div>
+                        上下文条目：{environment.activeContextCount}/
+                        {environment.contextItemsCount}
+                      </div>
+                      {environment.contextItemNames.length > 0 ? (
+                        <div className="space-y-1">
+                          <div>活跃上下文：</div>
+                          <div className="flex flex-wrap gap-2">
+                            {environment.contextItemNames.map((item) => (
+                              <ActionableBadge
+                                key={item}
+                                variant="outline"
+                                value={item}
+                                onOpenUrl={handleOpenExternalLink}
+                                onOpenPath={handleOpenPathValue}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant="outline">
+                        规划 {harnessState.activity.planning}
+                      </Badge>
+                      <Badge variant="outline">
+                        文件 {harnessState.activity.filesystem}
+                      </Badge>
+                      <Badge variant="outline">
+                        执行 {harnessState.activity.execution}
+                      </Badge>
+                      <Badge variant="outline">
+                        网页 {harnessState.activity.web}
+                      </Badge>
+                      <Badge variant="outline">
+                        技能 {harnessState.activity.skills}
+                      </Badge>
+                      <Badge variant="outline">
+                        委派 {harnessState.activity.delegation}
+                      </Badge>
+                    </div>
                   </div>
-                </div>
-              </Section>
+                </Section>
+              ) : null}
             </div>
           </ScrollArea>
         ) : null}
@@ -2430,7 +2443,9 @@ export function HarnessStatusPanel({
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">{previewDialog.displayName}</Badge>
               {formatSize(previewDialog.size) ? (
-                <Badge variant="outline">{formatSize(previewDialog.size)}</Badge>
+                <Badge variant="outline">
+                  {formatSize(previewDialog.size)}
+                </Badge>
               ) : null}
               {previewDialog.loading ? (
                 <Badge variant="outline" className="gap-1">
@@ -2475,7 +2490,11 @@ export function HarnessStatusPanel({
 
           <DialogFooter className="border-t px-6 py-4">
             {previewDialog.path ? (
-              <Button type="button" variant="outline" onClick={() => void handleCopyPath()}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleCopyPath()}
+              >
                 复制路径
               </Button>
             ) : null}

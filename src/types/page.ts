@@ -66,17 +66,14 @@ export const WORKSPACE_PAGE_THEME_MAP: Record<
 };
 
 export type Page =
-  | "provider-pool"
   | "openclaw"
-  | "api-server"
   | "agent"
   | "style"
-  | "workspace"
   | ThemeWorkspacePage
   | "image-gen"
   | "batch"
-  | "mcp"
   | "resources"
+  | "browser-runtime"
   | "tools"
   | "plugins"
   | "settings"
@@ -135,6 +132,8 @@ export interface OpenClawPageParams {
 export interface AgentPageParams {
   projectId?: string;
   contentId?: string;
+  /** Agent 入口模式：新建任务或任务中心 */
+  agentEntry?: "new-task" | "claw";
   /** 进入 Agent 时自动发送的首条用户消息 */
   initialUserPrompt?: string;
   /** 进入 Agent 时优先创建的话题名称 */
@@ -147,6 +146,8 @@ export interface AgentPageParams {
   lockTheme?: boolean;
   /** 从资源管理页进入（用于沉浸式展示） */
   fromResources?: boolean;
+  /** 首页沉浸模式：隐藏左侧应用导航与话题列表，仅保留主工作区 */
+  immersiveHome?: boolean;
   /** 首页点击触发的新会话标记（时间戳） */
   newChatAt?: number;
   /** 主题工作台重置标记（时间戳） */

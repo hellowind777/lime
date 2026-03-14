@@ -1,59 +1,46 @@
-## ProxyCast v0.86.0
+## ProxyCast v0.87.0
 
 ### ✨ 新功能
 
-- **Aster 集成升级**: 升级到 aster-rust v0.17.1，带来更稳定的 Agent 运行时支持
-- **排队机制**: 新增 Agent 运行时排队系统，支持多轮对话请求的有序处理
-- **Artifact 自动预览**: 实现 Artifact 自动预览同步机制，提升内容创作体验
-- **搜索结果预览**: 新增搜索结果预览列表组件，优化 Web 搜索交互
-- **Skill 脚手架**: 新增 Skill 创建脚手架对话框，简化自定义 Skill 开发流程
-- **会话作用域存储**: 实现 Agent 会话级别的状态管理机制
+- **浏览器协助运行时**：新增 `browser-runtime` crate、Tauri 命令与调试页，支持在 Agent 会话内拉起浏览器协助能力
+- **Browser Assist 产物渲染**：新增 Browser Assist Artifact 渲染器，可在 General 会话中直接承接浏览器协助状态与操作
+- **画布工作台布局**：新增 `CanvasWorkbenchLayout`，支持预览 / 文件 / 差异 / 工作台联动，以及分栏与堆叠两种布局模式
+- **技能显式选择器**：新增 `SkillSelector` 与相关 harness skill 聚合逻辑，提升技能发现、点选与触发体验
+- **新任务入口模式**：新增 `new-task` 入口、空状态页与会话恢复控制，梳理 Claw / 新任务两类进入路径
 
 ### 🔧 优化与重构
 
-- **Request Tool Policy 重构**: 大幅重构请求工具策略模块（+1176 行），提升 Web 搜索预调用的可靠性
-- **Skill 服务增强**: 重构 Skill 加载器和匹配器，优化 Skill 发现和执行流程（+1064 行）
-- **API Key Provider 优化**: 增强 API Key 提供商服务，改进凭证池管理（+433 行）
-- **Skill Model 完善**: 新增 Skill 模型定义，规范化 Skill 元数据管理（+345 行）
-- **Aster State 扩展**: 扩展 Agent 状态管理，支持更复杂的运行时场景（+367 行）
-- **数据库 Schema 更新**: 新增 agent_runtime_queue 表，支持排队机制持久化
+- **General Chat 主流程重构**：重写 Agent Chat 页的大量 General 场景逻辑，统一画布、Artifact、Workbench 与浏览器协助状态
+- **Webview / Browser Runtime 协调增强**：扩展 `webview_cmd`、窗口服务与前端 API，补齐浏览器运行时会话、窗口与控制链路
+- **Settings v2 大规模重排**：重构外观、快捷键、频道、Chrome Relay、环境、安全性能、账户统计等设置页
+- **项目与记忆工作区升级**：重构内容列表、内容编辑器、项目选择器及多类 Memory 面板，统一信息架构与交互密度
+- **导航与侧栏收敛**：调整应用侧栏、任务侧栏、资源与工作区导航，移除部分旧页面与冗余入口
 
 ### 🐛 修复
 
-- **Clippy 警告修复**: 修复多个 Rust clippy 警告，提升代码质量
-  - 简化 `let...else` 为 `?` 操作符
-  - 合并连续的字符串替换操作
-  - 优化字符匹配模式
-- **类型安全改进**: 修复前端类型定义，增强 TypeScript 类型检查
-
-### 📦 依赖更新
-
-- 升级 aster-rust 到 v0.17.1
-- 更新相关 Rust 依赖包版本
+- **前端 Hooks 依赖修复**：补齐 `useCallback` 依赖，消除 `npm run lint` 中的 `react-hooks/exhaustive-deps` 警告
+- **Rust Clippy 清理**：移除浏览器运行时客户端中的冗余类型转换，保持 `cargo clippy` 输出干净
+- **日志测试并发污染修复**：将日志诊断测试切到独立临时目录，避免并行测试互相删除 `raw_response` 工件
+- **Workspace 错误态兜底**：补强任务侧栏与相关页面的 workspace 异常显示与恢复路径
 
 ### 🧪 测试
 
-- 新增多个组件单元测试
-  - Modal 组件测试
-  - SearchResultPreviewList 测试
-  - ArtifactRenderer UI 测试
-  - SkillScaffoldDialog 测试
-  - useArtifactAutoPreviewSync 测试
-  - useArtifactDisplayState 测试
-  - searchQueryGrouping 测试
+- 新增 Browser Assist、Canvas Workbench、Skill Selector、General Resource Sync、Harness Skills 等前端测试
+- 补充项目页、设置页、统计页、内存面板等多处 UI / 交互测试
+- 发布前已执行：`cargo fmt --all`、`cargo test`、`cargo clippy`、`npm run lint`
 
 ### 📝 文档
 
-- 新增设计语言文档 (design-language.md)
-- 更新 AGENTS.md，补充跨平台兼容约束和 UI 指导
-- 完善 aiprompts 文档索引
+- 补充 Agent Chat / Components 文档说明
+- 新增 `docs/research/` 研究资料目录
+- 更新发布流程相关说明，覆盖 headless Tauri 配置版本同步
 
 ### 🛠️ 开发体验
 
-- 新增本地 aster-rust 覆盖脚本 (setup-local-aster-override.mjs)
-- 改进 legacy surfaces 报告脚本
-- 优化开发工具链配置
+- **版本一致性检查增强**：`check-app-version-consistency.mjs` 现覆盖 `tauri.conf.headless.json`
+- **Release Workflow 补强**：GitHub Release 工作流现同步标准与 headless 两份 Tauri 配置版本
+- **跨端发布一致性提升**：统一 `package.json`、Cargo workspace、Tauri 配置与 release notes 的版本入口
 
 ---
 
-**完整变更**: v0.85.0...v0.86.0
+**完整变更**: v0.86.0...v0.87.0

@@ -19,6 +19,7 @@ export { HtmlRenderer } from "./HtmlRenderer";
 export { SvgRenderer } from "./SvgRenderer";
 export { MermaidRenderer } from "./MermaidRenderer";
 export { ReactRenderer } from "./ReactRenderer";
+export { BrowserAssistRenderer } from "./BrowserAssistRenderer";
 
 // ============================================================================
 // 懒加载渲染器组件
@@ -50,6 +51,11 @@ const LazyMermaidRenderer = lazy(() => import("./MermaidRenderer"));
  * 懒加载的 React 渲染器
  */
 const LazyReactRenderer = lazy(() => import("./ReactRenderer"));
+
+/**
+ * 懒加载的浏览器协助渲染器
+ */
+const LazyBrowserAssistRenderer = lazy(() => import("./BrowserAssistRenderer"));
 
 // ============================================================================
 // 渲染器注册项定义
@@ -107,6 +113,14 @@ const LIGHTWEIGHT_RENDERER_ENTRIES: RendererEntry[] = [
     component: LazyReactRenderer,
     canEdit: false,
     fileExtension: "jsx",
+  },
+  {
+    type: "browser_assist" as ArtifactType,
+    displayName: "浏览器协助",
+    icon: "globe",
+    component: LazyBrowserAssistRenderer,
+    canEdit: false,
+    fileExtension: "txt",
   },
 ];
 

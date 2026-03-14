@@ -4,9 +4,13 @@
 
 pub mod browser_tool;
 pub mod heartbeat_tool;
+pub mod skill_tool_gate;
 
 pub use browser_tool::{BrowserAction, BrowserTool, BrowserToolError, BrowserToolResult};
 pub use heartbeat_tool::{
     HeartbeatCycleResult, HeartbeatExecutionRecord, HeartbeatService, HeartbeatStatus,
     HeartbeatTaskPreview, HeartbeatTool, HeartbeatToolError,
+};
+pub use skill_tool_gate::{
+    clear_skill_tool_session_access, set_skill_tool_session_access, ProxycastSkillTool,
 };

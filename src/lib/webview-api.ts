@@ -228,6 +228,8 @@ export interface BrowserActionAttempt {
 export interface BrowserActionResult {
   success: boolean;
   backend?: BrowserBackendType;
+  session_id?: string;
+  target_id?: string;
   action: string;
   request_id: string;
   data?: unknown;
@@ -245,6 +247,202 @@ export interface BrowserActionAuditRecord {
   success: boolean;
   error?: string;
   attempts: BrowserActionAttempt[];
+}
+
+export interface CdpTargetInfo {
+  id: string;
+  title: string;
+  url: string;
+  target_type: string;
+  web_socket_debugger_url?: string;
+  devtools_frontend_url?: string;
+}
+
+export interface BrowserPageInfo {
+  title: string;
+  url: string;
+  markdown: string;
+  updated_at: string;
+}
+
+export type BrowserStreamMode = "events" | "frames" | "both";
+export type BrowserSessionLifecycleState =
+  | "launching"
+  | "live"
+  | "waiting_for_human"
+  | "human_controlling"
+  | "agent_resuming"
+  | "closed"
+  | "failed";
+export type BrowserControlMode = "agent" | "human" | "shared";
+export type BrowserTransportKind = "cdp_frames";
+
+export interface CdpSessionState {
+  session_id: string;
+  profile_key: string;
+  target_id: string;
+  target_title: string;
+  target_url: string;
+  remote_debugging_port: number;
+  ws_debugger_url: string;
+  devtools_frontend_url?: string;
+  stream_mode?: BrowserStreamMode;
+  transport_kind: BrowserTransportKind;
+  lifecycle_state: BrowserSessionLifecycleState;
+  control_mode: BrowserControlMode;
+  human_reason?: string;
+  last_page_info?: BrowserPageInfo;
+  last_event_at?: string;
+  last_frame_at?: string;
+  last_error?: string;
+  created_at: string;
+  connected: boolean;
+}
+
+export type BrowserEvent =
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "session_opened";
+      profile_key: string;
+      target_id: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "session_closed";
+      reason: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "session_error";
+      error: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "session_state_changed";
+      lifecycle_state: BrowserSessionLifecycleState;
+      control_mode: BrowserControlMode;
+      human_reason?: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "page_info_changed";
+      title: string;
+      url: string;
+      markdown: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "console_message";
+      level: string;
+      text: string;
+      timestamp: number;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "network_request";
+      request_id: string;
+      url: string;
+      method: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "network_response";
+      request_id: string;
+      url: string;
+      status: number;
+      mime_type: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "network_failed";
+      request_id: string;
+      error_text: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "frame_chunk";
+      data: string;
+      metadata: {
+        width: number;
+        height: number;
+        timestamp: number;
+        sequence: number;
+      };
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "frame_dropped";
+      reason: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "command_started";
+      command_id: number;
+      action: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "command_completed";
+      command_id: number;
+      action: string;
+    }
+  | {
+      session_id: string;
+      sequence: number;
+      occurred_at: string;
+      type: "command_failed";
+      command_id: number;
+      action: string;
+      error: string;
+    };
+
+export interface BrowserEventBufferSnapshot {
+  events: BrowserEvent[];
+  next_cursor: number;
+}
+
+export interface LaunchBrowserRuntimeAssistRequest {
+  profile_key: string;
+  url: string;
+  target_id?: string;
+  open_window?: boolean;
+  stream_mode?: BrowserStreamMode;
+}
+
+export interface BrowserRuntimeAssistLaunchResponse {
+  profile: OpenChromeProfileResponse;
+  session: CdpSessionState;
+}
+
+export interface UpdateBrowserSessionControlRequest {
+  session_id: string;
+  human_reason?: string;
 }
 
 /**
@@ -273,7 +471,9 @@ export async function openChromeProfileWindow(
 /**
  * 获取当前运行中的 Chrome Profile 会话
  */
-export async function getChromeProfileSessions(): Promise<ChromeProfileSessionInfo[]> {
+export async function getChromeProfileSessions(): Promise<
+  ChromeProfileSessionInfo[]
+> {
   return safeInvoke<ChromeProfileSessionInfo[]>("get_chrome_profile_sessions");
 }
 
@@ -292,7 +492,9 @@ export async function closeChromeProfileSession(
  * 获取 ChromeBridge 端点信息（用于扩展配置）
  */
 export async function getChromeBridgeEndpointInfo(): Promise<ChromeBridgeEndpointInfo> {
-  return safeInvoke<ChromeBridgeEndpointInfo>("get_chrome_bridge_endpoint_info");
+  return safeInvoke<ChromeBridgeEndpointInfo>(
+    "get_chrome_bridge_endpoint_info",
+  );
 }
 
 /**
@@ -308,9 +510,12 @@ export async function getChromeBridgeStatus(): Promise<ChromeBridgeStatusSnapsho
 export async function chromeBridgeExecuteCommand(
   request: ChromeBridgeCommandRequest,
 ): Promise<ChromeBridgeCommandResult> {
-  return safeInvoke<ChromeBridgeCommandResult>("chrome_bridge_execute_command", {
-    request,
-  });
+  return safeInvoke<ChromeBridgeCommandResult>(
+    "chrome_bridge_execute_command",
+    {
+      request,
+    },
+  );
 }
 
 export async function getBrowserBackendPolicy(): Promise<BrowserBackendPolicy> {
@@ -326,7 +531,120 @@ export async function setBrowserBackendPolicy(
 }
 
 export async function getBrowserBackendsStatus(): Promise<BrowserBackendsStatusSnapshot> {
-  return safeInvoke<BrowserBackendsStatusSnapshot>("get_browser_backends_status");
+  return safeInvoke<BrowserBackendsStatusSnapshot>(
+    "get_browser_backends_status",
+  );
+}
+
+export async function listCdpTargets(
+  profileKey?: string,
+): Promise<CdpTargetInfo[]> {
+  return safeInvoke<CdpTargetInfo[]>("list_cdp_targets", {
+    request: {
+      profile_key: profileKey,
+    },
+  });
+}
+
+export async function openCdpSession(params: {
+  profile_key: string;
+  target_id?: string;
+}): Promise<CdpSessionState> {
+  return safeInvoke<CdpSessionState>("open_cdp_session", {
+    request: params,
+  });
+}
+
+export async function closeCdpSession(sessionId: string): Promise<boolean> {
+  return safeInvoke<boolean>("close_cdp_session", {
+    request: {
+      session_id: sessionId,
+    },
+  });
+}
+
+export async function startBrowserStream(params: {
+  session_id: string;
+  mode: BrowserStreamMode;
+}): Promise<CdpSessionState> {
+  return safeInvoke<CdpSessionState>("start_browser_stream", {
+    request: params,
+  });
+}
+
+export async function stopBrowserStream(
+  sessionId: string,
+): Promise<CdpSessionState> {
+  return safeInvoke<CdpSessionState>("stop_browser_stream", {
+    request: {
+      session_id: sessionId,
+    },
+  });
+}
+
+export async function getBrowserSessionState(
+  sessionId: string,
+): Promise<CdpSessionState> {
+  return safeInvoke<CdpSessionState>("get_browser_session_state", {
+    request: {
+      session_id: sessionId,
+    },
+  });
+}
+
+export async function takeOverBrowserSession(
+  request: UpdateBrowserSessionControlRequest,
+): Promise<CdpSessionState> {
+  return safeInvoke<CdpSessionState>("take_over_browser_session", {
+    request,
+  });
+}
+
+export async function releaseBrowserSession(
+  request: UpdateBrowserSessionControlRequest,
+): Promise<CdpSessionState> {
+  return safeInvoke<CdpSessionState>("release_browser_session", {
+    request,
+  });
+}
+
+export async function resumeBrowserSession(
+  request: UpdateBrowserSessionControlRequest,
+): Promise<CdpSessionState> {
+  return safeInvoke<CdpSessionState>("resume_browser_session", {
+    request,
+  });
+}
+
+export async function getBrowserEventBuffer(params: {
+  session_id: string;
+  cursor?: number;
+}): Promise<BrowserEventBufferSnapshot> {
+  return safeInvoke<BrowserEventBufferSnapshot>("get_browser_event_buffer", {
+    request: params,
+  });
+}
+
+export async function openBrowserRuntimeDebuggerWindow(request?: {
+  session_id?: string;
+  profile_key?: string;
+}): Promise<void> {
+  return safeInvoke<void>("open_browser_runtime_debugger_window", {
+    request,
+  });
+}
+
+export async function closeBrowserRuntimeDebuggerWindow(): Promise<void> {
+  return safeInvoke<void>("close_browser_runtime_debugger_window");
+}
+
+export async function launchBrowserRuntimeAssist(
+  request: LaunchBrowserRuntimeAssistRequest,
+): Promise<BrowserRuntimeAssistLaunchResponse> {
+  return safeInvoke<BrowserRuntimeAssistLaunchResponse>(
+    "launch_browser_runtime_assist",
+    { request },
+  );
 }
 
 export async function browserExecuteAction(
@@ -338,9 +656,12 @@ export async function browserExecuteAction(
 export async function getBrowserActionAuditLogs(
   limit?: number,
 ): Promise<BrowserActionAuditRecord[]> {
-  return safeInvoke<BrowserActionAuditRecord[]>("get_browser_action_audit_logs", {
-    limit,
-  });
+  return safeInvoke<BrowserActionAuditRecord[]>(
+    "get_browser_action_audit_logs",
+    {
+      limit,
+    },
+  );
 }
 
 /**

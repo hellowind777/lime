@@ -25,6 +25,51 @@ export function getAvailableProjects(
   return [...filtered].sort((a, b) => {
     if (a.isDefault && !b.isDefault) return -1;
     if (!a.isDefault && b.isDefault) return 1;
-    return 0;
+    return b.updatedAt - a.updatedAt;
   });
+}
+
+export function canRenameProject(project: Project | null | undefined): boolean {
+  return Boolean(project && !project.isDefault);
+}
+
+export function canDeleteProject(project: Project | null | undefined): boolean {
+  return Boolean(project && !project.isDefault);
+}
+
+export function resolveProjectDeletionFallback(
+  projects: Project[],
+  defaultProject: Project | null,
+  deletedProjectId?: string | null,
+): string | null {
+  if (defaultProject && defaultProject.id !== deletedProjectId) {
+    return defaultProject.id;
+  }
+
+  const nextProject = projects.find((project) => project.id !== deletedProjectId);
+  return nextProject?.id || null;
+}
+
+export function resolveSelectedProject(
+  projects: Project[],
+  selectedProjectId: string | null | undefined,
+  defaultProject: Project | null,
+): Project | null {
+  if (selectedProjectId) {
+    const matchedProject = projects.find((project) => project.id === selectedProjectId);
+    if (matchedProject) {
+      return matchedProject;
+    }
+  }
+
+  if (defaultProject) {
+    const matchedDefault = projects.find(
+      (project) => project.id === defaultProject.id,
+    );
+    if (matchedDefault) {
+      return matchedDefault;
+    }
+  }
+
+  return projects[0] || null;
 }

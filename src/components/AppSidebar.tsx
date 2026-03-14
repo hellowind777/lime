@@ -7,7 +7,7 @@
 import { useState, useEffect, useMemo } from "react";
 import styled from "styled-components";
 import {
-  Home,
+  Plus,
   Image,
   Compass,
   Settings,
@@ -30,6 +30,7 @@ import {
   Layers,
   Terminal,
   Bot,
+  MessageSquare,
   LucideIcon,
 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
@@ -45,6 +46,7 @@ import {
 } from "@/types/page";
 import { getConfig } from "@/lib/api/appConfig";
 import {
+  buildClawAgentParams,
   buildHomeAgentParams,
   buildWorkspaceResetParams,
 } from "@/lib/workspace/navigation";
@@ -265,11 +267,25 @@ const IconActionButton = styled.button<{ $active?: boolean }>`
 const MAIN_MENU_ITEMS: SidebarNavItem[] = [
   {
     id: "home-general",
-    label: "首页",
-    icon: Home,
+    label: "新建任务",
+    icon: Plus,
     page: "agent",
-    params: { theme: "general", lockTheme: false },
-    isActive: (currentPage) => currentPage === "agent",
+    params: buildHomeAgentParams(),
+    isActive: (currentPage, currentParams) =>
+      currentPage === "agent" &&
+      (currentParams as AgentPageParams | undefined)?.agentEntry ===
+        "new-task",
+  },
+  {
+    id: "claw",
+    label: "Claw",
+    icon: MessageSquare,
+    page: "agent",
+    params: buildClawAgentParams(),
+    isActive: (currentPage, currentParams) =>
+      currentPage === "agent" &&
+      (currentParams as AgentPageParams | undefined)?.agentEntry !==
+        "new-task",
   },
   {
     id: "video",
@@ -373,6 +389,13 @@ const FOOTER_MENU_ITEMS: SidebarNavItem[] = [
     isActive: (currentPage) => currentPage === "resources",
   },
   {
+    id: "browser-runtime",
+    label: "浏览器调试",
+    icon: Activity,
+    page: "browser-runtime",
+    isActive: (currentPage) => currentPage === "browser-runtime",
+  },
+  {
     id: "tools",
     label: "工具箱",
     icon: Wrench,
@@ -396,7 +419,12 @@ const FOOTER_MENU_ITEMS: SidebarNavItem[] = [
   },
 ];
 
-const DEFAULT_ENABLED_NAV_ITEMS = ["home-general", "video", "image-gen"];
+const DEFAULT_ENABLED_NAV_ITEMS = [
+  "home-general",
+  "claw",
+  "video",
+  "image-gen",
+];
 
 const ALL_NAV_ITEM_IDS = [
   ...MAIN_MENU_ITEMS.map((item) => item.id),
@@ -626,6 +654,8 @@ export function AppSidebar({
     const params: PageParams | undefined =
       item.id === "home-general"
         ? buildHomeAgentParams(item.params as AgentPageParams | undefined)
+        : item.id === "claw"
+          ? buildClawAgentParams(item.params as AgentPageParams | undefined)
         : isThemeWorkspacePage(item.page)
           ? buildWorkspaceResetParams(
               item.params as AgentPageParams | undefined,
@@ -652,7 +682,7 @@ export function AppSidebar({
           onClick={() => onNavigate("agent", buildHomeAgentParams())}
         >
           <Search size={14} />
-          <span>搜索</span>
+          <span>搜索任务</span>
         </SearchButton>
       </HeaderArea>
 
