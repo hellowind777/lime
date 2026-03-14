@@ -130,7 +130,7 @@ function extractToolCallPreview(message: Message): string {
   if (latestToolCall.status === "failed") {
     return `执行失败：${toolName}`;
   }
-  if (latestToolCall.status === "streaming") {
+  if (latestToolCall.status === "running") {
     return `正在执行：${toolName}`;
   }
   return `最近执行：${toolName}`;

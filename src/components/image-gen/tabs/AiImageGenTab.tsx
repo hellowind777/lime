@@ -34,14 +34,14 @@ import { useActiveSkill } from "@/components/agent/chat/components/Inputbar/hook
 import { skillsApi, type Skill } from "@/lib/api/skills";
 import { useGlobalMediaGenerationDefaults } from "@/hooks/useGlobalMediaGenerationDefaults";
 import { resolveMediaGenerationPreference } from "@/lib/mediaGeneration";
-import type { Page } from "@/types/page";
+import type { Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
 
 export interface AiImageGenTabProps {
   /** 目标项目 ID（可选） */
   projectId?: string | null;
   /** 导航回调 */
-  onNavigate?: (page: Page) => void;
+  onNavigate?: (page: Page, params?: PageParams) => void;
 }
 
 type ResolutionPreset = "1k" | "2k" | "4k";

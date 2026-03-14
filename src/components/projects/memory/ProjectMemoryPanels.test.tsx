@@ -10,6 +10,13 @@ import { CharacterPanel } from "./CharacterPanel";
 import { WorldBuildingPanel } from "./WorldBuildingPanel";
 import { OutlinePanel } from "./OutlinePanel";
 
+type OutlineTreeNodeMock = {
+  id?: string;
+  parent_id?: string;
+  children: OutlineTreeNodeMock[];
+  [key: string]: unknown;
+};
+
 const {
   mockListCharacters,
   mockCreateCharacter,
@@ -54,10 +61,13 @@ vi.mock("@/lib/api/memory", () => ({
   deleteOutlineNode: mockDeleteOutlineNode,
   buildOutlineTree: vi.fn((nodes: Array<Record<string, unknown>>) => {
     const byId = new Map(
-      nodes.map((node) => [String(node.id), { ...node, children: [] as Array<Record<string, unknown>> }]),
+      nodes.map((node) => [
+        String(node.id),
+        { ...node, children: [] } as OutlineTreeNodeMock,
+      ]),
     );
 
-    const roots: Array<Record<string, unknown>> = [];
+    const roots: OutlineTreeNodeMock[] = [];
     byId.forEach((node) => {
       const parentId =
         typeof node.parent_id === "string" ? node.parent_id : undefined;

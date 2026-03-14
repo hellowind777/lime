@@ -36,7 +36,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useProjects } from "@/hooks/useProjects";
 import type { ProjectType } from "@/lib/api/project";
-import { USER_PROJECT_TYPES, getProjectTypeLabel } from "@/lib/api/project";
+import { USER_PROJECT_TYPES } from "@/lib/api/project";
+import { WorkspaceTypeLabels } from "@/types/workspace";
 import { cn } from "@/lib/utils";
 import { CreateProjectDialog } from "./CreateProjectDialog";
 import {
@@ -328,7 +329,9 @@ export function ProjectSelector({
       : null;
   const projectSummaryBadges = [
     selectedProject?.isDefault ? "默认项目" : "普通项目",
-    selectedProject ? getProjectTypeLabel(selectedProject.workspaceType) : "待选择",
+    selectedProject
+      ? WorkspaceTypeLabels[selectedProject.workspaceType]
+      : "待选择",
   ];
 
   return (
@@ -462,7 +465,7 @@ export function ProjectSelector({
                               variant="outline"
                               className="border-slate-200/80 bg-white/80 text-[10px] text-slate-600"
                             >
-                              {getProjectTypeLabel(project.workspaceType)}
+                              {WorkspaceTypeLabels[project.workspaceType]}
                             </Badge>
                             {project.tags.slice(0, 2).map((tag) => (
                               <Badge
