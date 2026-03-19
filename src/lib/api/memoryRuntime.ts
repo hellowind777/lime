@@ -28,17 +28,17 @@ export type {
   MemoryStatsResponse,
 } from "./memoryRuntimeTypes";
 
-export async function getMemoryOverview(
+export async function getContextMemoryOverview(
   limit?: number,
 ): Promise<MemoryOverviewResponse> {
   return safeInvoke("memory_runtime_get_overview", { limit });
 }
 
-export async function getMemoryStats(): Promise<MemoryStatsResponse> {
+export async function getContextMemoryStats(): Promise<MemoryStatsResponse> {
   return safeInvoke("memory_runtime_get_stats");
 }
 
-export async function requestMemoryAnalysis(
+export async function analyzeContextMemory(
   fromTimestamp?: number,
   toTimestamp?: number,
 ): Promise<MemoryAnalysisResult> {
@@ -48,11 +48,11 @@ export async function requestMemoryAnalysis(
   });
 }
 
-export async function cleanupMemory(): Promise<CleanupMemoryResult> {
+export async function cleanupContextMemory(): Promise<CleanupMemoryResult> {
   return safeInvoke("memory_runtime_cleanup");
 }
 
-export async function getMemoryEffectiveSources(
+export async function getContextMemoryEffectiveSources(
   workingDir?: string,
   activeRelativePath?: string,
 ): Promise<EffectiveMemorySourcesResponse> {
@@ -62,19 +62,19 @@ export async function getMemoryEffectiveSources(
   });
 }
 
-export async function getMemoryAutoIndex(
+export async function getContextMemoryAutoIndex(
   workingDir?: string,
 ): Promise<AutoMemoryIndexResponse> {
   return safeInvoke("memory_get_auto_index", { workingDir });
 }
 
-export async function toggleMemoryAuto(
+export async function toggleContextMemoryAuto(
   enabled: boolean,
 ): Promise<MemoryAutoToggleResponse> {
   return safeInvoke("memory_toggle_auto", { enabled });
 }
 
-export async function updateMemoryAutoNote(
+export async function updateContextMemoryAutoNote(
   note: string,
   topic?: string,
   workingDir?: string,

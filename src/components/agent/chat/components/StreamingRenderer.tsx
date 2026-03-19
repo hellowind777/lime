@@ -37,7 +37,10 @@ import type {
   ConfirmResponse,
   WriteArtifactContext,
 } from "../types";
-import { splitProposedPlanSegments } from "../utils/proposedPlan";
+import {
+  splitProposedPlanSegments,
+  stripProposedPlanBlocks,
+} from "../utils/proposedPlan";
 import { isActionRequestA2UICompatible } from "../utils/actionRequestA2UI";
 
 const STRUCTURED_CONTENT_HINT_RE = /<a2ui|```\s*a2ui|<write_file|<document/i;
@@ -153,8 +156,10 @@ interface PlanAwareMarkdownOptions {
   onA2UISubmit?: (formData: A2UIFormData) => void;
   renderA2UIInline?: boolean;
   collapseCodeBlocks?: boolean;
+  shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
   onCodeBlockClick?: (language: string, code: string) => void;
   isStreaming?: boolean;
+  renderProposedPlanBlocks?: boolean;
 }
 
 function renderPlanAwareMarkdown(
@@ -164,10 +169,31 @@ function renderPlanAwareMarkdown(
     onA2UISubmit,
     renderA2UIInline,
     collapseCodeBlocks,
+    shouldCollapseCodeBlock,
     onCodeBlockClick,
     isStreaming,
+    renderProposedPlanBlocks = true,
   }: PlanAwareMarkdownOptions,
 ) {
+  if (!renderProposedPlanBlocks) {
+    const visibleText = stripProposedPlanBlocks(text);
+    if (!visibleText.trim()) {
+      return null;
+    }
+    return (
+      <MarkdownRenderer
+        key={`${keyPrefix}-text-only`}
+        content={visibleText}
+        onA2UISubmit={onA2UISubmit}
+        renderA2UIInline={renderA2UIInline}
+        collapseCodeBlocks={collapseCodeBlocks}
+        shouldCollapseCodeBlock={shouldCollapseCodeBlock}
+        onCodeBlockClick={onCodeBlockClick}
+        isStreaming={isStreaming}
+      />
+    );
+  }
+
   const segments = splitProposedPlanSegments(text);
   if (segments.length === 0) {
     return null;
@@ -187,6 +213,7 @@ function renderPlanAwareMarkdown(
         onA2UISubmit={onA2UISubmit}
         renderA2UIInline={renderA2UIInline}
         collapseCodeBlocks={collapseCodeBlocks}
+        shouldCollapseCodeBlock={shouldCollapseCodeBlock}
         onCodeBlockClick={onCodeBlockClick}
         isStreaming={isStreaming}
       />
@@ -215,8 +242,12 @@ interface StreamingTextProps {
   onA2UIFormChange?: (formId: string, formData: A2UIFormData) => void;
   /** 是否渲染消息内联 A2UI */
   renderA2UIInline?: boolean;
+  /** 是否内联渲染 proposed plan 块 */
+  renderProposedPlanBlocks?: boolean;
   /** 是否折叠代码块 */
   collapseCodeBlocks?: boolean;
+  /** 按代码块决定是否折叠 */
+  shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
   /** 代码块点击回调 */
   onCodeBlockClick?: (language: string, code: string) => void;
 }
@@ -238,7 +269,9 @@ const StreamingText: React.FC<StreamingTextProps> = memo(
     a2uiInitialFormData,
     onA2UIFormChange,
     renderA2UIInline = true,
+    renderProposedPlanBlocks = true,
     collapseCodeBlocks,
+    shouldCollapseCodeBlock,
     onCodeBlockClick,
   }) => {
     const [displayText, setDisplayText] = useState("");
@@ -361,7 +394,9 @@ const StreamingText: React.FC<StreamingTextProps> = memo(
         return renderPlanAwareMarkdown(displayText, "stream", {
           onA2UISubmit,
           renderA2UIInline,
+          renderProposedPlanBlocks,
           collapseCodeBlocks,
+          shouldCollapseCodeBlock,
           onCodeBlockClick,
           isStreaming,
         });
@@ -414,7 +449,9 @@ const StreamingText: React.FC<StreamingTextProps> = memo(
                 return renderPlanAwareMarkdown(textContent, `text-${index}`, {
                   onA2UISubmit,
                   renderA2UIInline,
+                  renderProposedPlanBlocks,
                   collapseCodeBlocks,
+                  shouldCollapseCodeBlock,
                   onCodeBlockClick,
                   isStreaming,
                 });
@@ -510,11 +547,14 @@ interface StreamingRendererProps {
   onPermissionResponse?: (response: ConfirmResponse) => void;
   /** 是否折叠代码块（当画布打开时） */
   collapseCodeBlocks?: boolean;
+  /** 按代码块决定是否折叠 */
+  shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
   /** 代码块点击回调（用于在画布中显示） */
   onCodeBlockClick?: (language: string, code: string) => void;
   runtimeStatus?: AgentRuntimeStatus;
   showRuntimeStatusInline?: boolean;
   promoteActionRequestsToA2UI?: boolean;
+  renderProposedPlanBlocks?: boolean;
 }
 
 const RUNTIME_PHASE_LABELS: Record<AgentRuntimeStatus["phase"], string> = {
@@ -581,10 +621,12 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
     onFileClick,
     onPermissionResponse,
     collapseCodeBlocks,
+    shouldCollapseCodeBlock,
     onCodeBlockClick,
     runtimeStatus,
     showRuntimeStatusInline = false,
     promoteActionRequestsToA2UI = false,
+    renderProposedPlanBlocks = true,
   }) => {
     const shouldRenderInlineActionRequest = React.useCallback(
       (request: ActionRequired) =>
@@ -854,7 +896,11 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
                             a2uiFormId={a2uiFormId}
                             a2uiInitialFormData={a2uiInitialFormData}
                             onA2UIFormChange={onA2UIFormChange}
+                            renderProposedPlanBlocks={renderProposedPlanBlocks}
                             collapseCodeBlocks={collapseCodeBlocks}
+                            shouldCollapseCodeBlock={
+                              shouldCollapseCodeBlock
+                            }
                             onCodeBlockClick={onCodeBlockClick}
                           />
                         );
@@ -876,7 +922,9 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
                   a2uiFormId={a2uiFormId}
                   a2uiInitialFormData={a2uiInitialFormData}
                   onA2UIFormChange={onA2UIFormChange}
+                  renderProposedPlanBlocks={renderProposedPlanBlocks}
                   collapseCodeBlocks={collapseCodeBlocks}
+                  shouldCollapseCodeBlock={shouldCollapseCodeBlock}
                   onCodeBlockClick={onCodeBlockClick}
                 />
               );
@@ -1048,7 +1096,9 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
                 a2uiInitialFormData={a2uiInitialFormData}
                 onA2UIFormChange={onA2UIFormChange}
                 renderA2UIInline={renderA2UIInline}
+                renderProposedPlanBlocks={renderProposedPlanBlocks}
                 collapseCodeBlocks={collapseCodeBlocks}
+                shouldCollapseCodeBlock={shouldCollapseCodeBlock}
                 onCodeBlockClick={onCodeBlockClick}
               />
             );
@@ -1084,7 +1134,8 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
           <div className="space-y-3">
             {visibleActionRequests.map((request) =>
               isActionRequestA2UICompatible(request) &&
-              (request.status === "submitted" || request.status === "queued") ? (
+              (request.status === "submitted" ||
+                request.status === "queued") ? (
                 <ActionRequestA2UIPreviewCard
                   key={request.requestId}
                   request={request}

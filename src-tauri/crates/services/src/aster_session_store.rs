@@ -18,10 +18,12 @@ use aster::session::{
 };
 use async_trait::async_trait;
 use chrono::Utc;
+use lime_core::app_paths;
 use lime_core::database::DbConnection;
+use lime_core::workspace::WorkspaceManager;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Lime 的 SessionStore 实现
 ///
@@ -34,6 +36,107 @@ impl LimeSessionStore {
     /// 创建新的 SessionStore 实例
     pub fn new(db: DbConnection) -> Self {
         Self { db }
+    }
+
+    pub fn load_extension_data_from_conn(
+        conn: &rusqlite::Connection,
+        session_id: &str,
+    ) -> Result<ExtensionData> {
+        let extension_data_json: String = conn
+            .query_row(
+                "SELECT extension_data_json FROM agent_sessions WHERE id = ?1",
+                rusqlite::params![session_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| anyhow!("读取 extension_data 失败: {e}"))?;
+
+        Ok(serde_json::from_str(&extension_data_json).unwrap_or_default())
+    }
+
+    pub fn load_extension_data_sync(db: &DbConnection, session_id: &str) -> Result<ExtensionData> {
+        let conn = db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
+        Self::load_extension_data_from_conn(&conn, session_id)
+    }
+
+    fn normalize_optional_text(value: Option<String>) -> Option<String> {
+        let value = value?;
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    }
+
+    fn parse_optional_json<T: DeserializeOwned>(raw: Option<String>) -> Option<T> {
+        raw.and_then(|text| serde_json::from_str(&text).ok())
+    }
+
+    fn resolve_session_type(raw: Option<String>, model: &str) -> SessionType {
+        let parsed_model = model.parse::<SessionType>().ok();
+        match raw
+            .as_deref()
+            .and_then(|value| value.parse::<SessionType>().ok())
+        {
+            Some(SessionType::User) if matches!(parsed_model, Some(parsed) if parsed != SessionType::User) => {
+                parsed_model.unwrap_or(SessionType::User)
+            }
+            Some(session_type) => session_type,
+            None => parsed_model.unwrap_or(SessionType::User),
+        }
+    }
+
+    fn default_model_name() -> String {
+        "agent:default".to_string()
+    }
+
+    fn insert_session_row(
+        conn: &rusqlite::Connection,
+        id: &str,
+        title: &str,
+        working_dir: &Path,
+        session_type: SessionType,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO agent_sessions (
+                id, model, system_prompt, title, created_at, updated_at, working_dir,
+                execution_strategy, session_type, user_set_name, extension_data_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            rusqlite::params![
+                id,
+                Self::default_model_name(),
+                None::<String>,
+                title,
+                now,
+                now,
+                working_dir.to_string_lossy().to_string(),
+                "react",
+                session_type.to_string(),
+                false,
+                serde_json::to_string(&ExtensionData::default())
+                    .map_err(|e| anyhow!("序列化 extension_data 失败: {e}"))?,
+            ],
+        )
+        .map_err(|e| anyhow!("创建会话失败: {e}"))?;
+        Ok(())
+    }
+
+    fn ensure_session_row(conn: &rusqlite::Connection, session_id: &str) -> Result<()> {
+        let session_exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM agent_sessions WHERE id = ?",
+                [session_id],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+
+        if session_exists {
+            return Ok(());
+        }
+
+        let working_dir = Self::resolve_session_working_dir(conn);
+        Self::insert_session_row(conn, session_id, "新对话", &working_dir, SessionType::User)
     }
 
     /// 将 Message 的 role 转换为字符串
@@ -50,38 +153,23 @@ impl LimeSessionStore {
 
     /// 解析会话 working_dir（优先默认 workspace，其次应用默认项目目录）
     fn resolve_session_working_dir(conn: &rusqlite::Connection) -> PathBuf {
-        // 1) 优先使用默认 workspace（is_default = 1）
-        let default_workspace_path: Option<String> = conn
-            .query_row(
-                "SELECT root_path FROM workspaces WHERE is_default = 1 LIMIT 1",
-                [],
-                |row| row.get(0),
-            )
-            .ok();
-
-        if let Some(path) = default_workspace_path {
-            if !path.trim().is_empty() {
-                let pb = PathBuf::from(path);
-                return if pb.is_absolute() {
-                    pb
-                } else {
-                    std::env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join(pb)
-                };
+        if let Some(path) = WorkspaceManager::get_default_root_path_from_conn(conn)
+            .ok()
+            .flatten()
+        {
+            let normalized = Self::normalize_working_dir(path);
+            if !normalized.as_os_str().is_empty() {
+                return normalized;
             }
         }
 
-        // 2) 回退到 ~/.lime/projects/default
-        if let Some(home) = dirs::home_dir() {
-            let fallback = home.join(".lime").join("projects").join("default");
-            if !fallback.exists() {
-                let _ = fs::create_dir_all(&fallback);
-            }
-            return fallback;
+        if let Ok(default_project_dir) = app_paths::resolve_default_project_dir() {
+            return default_project_dir;
         }
 
-        // 3) 最终回退到进程当前目录
+        tracing::warn!(
+            "[SessionStore] 解析默认 working_dir 失败，已回退当前目录；建议检查 app_paths 配置"
+        );
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 
@@ -120,26 +208,8 @@ impl SessionStore for LimeSessionStore {
     ) -> Result<Session> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        let now_str = now.to_rfc3339();
-
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
-
-        let type_str = session_type.to_string();
-
-        conn.execute(
-            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![
-                id,
-                type_str,
-                None::<String>,
-                name,
-                now_str,
-                now_str,
-                working_dir.to_string_lossy().to_string()
-            ],
-        )
-        .map_err(|e| anyhow!("创建会话失败: {e}"))?;
+        Self::insert_session_row(&conn, &id, &name, &working_dir, session_type)?;
 
         Ok(Session {
             id,
@@ -174,40 +244,17 @@ impl SessionStore for LimeSessionStore {
         );
 
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
-
-        // 检查 session 是否存在
-        let session_exists: bool = conn
-            .query_row("SELECT 1 FROM agent_sessions WHERE id = ?", [id], |_| {
-                Ok(true)
-            })
-            .unwrap_or(false);
-
-        tracing::info!("[SessionStore] session_exists={}", session_exists);
-
-        // 如果不存在，自动创建
-        if !session_exists {
-            let now = Utc::now().to_rfc3339();
-            let working_dir = Self::resolve_session_working_dir(&conn);
-            conn.execute(
-                "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![
-                    id,
-                    "agent:default",
-                    None::<String>,
-                    "新对话",
-                    now,
-                    now,
-                    working_dir.to_string_lossy().to_string()
-                ],
-            )
-            .map_err(|e| anyhow!("自动创建会话失败: {e}"))?;
-            tracing::info!("[SessionStore] get_session 自动创建会话: {}", id);
-        }
+        Self::ensure_session_row(&conn, id)?;
+        tracing::info!("[SessionStore] get_session 已确保会话存在: {}", id);
 
         let mut stmt = conn
             .prepare(
-                "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
+                "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir,
+                        session_type, user_set_name, extension_data_json,
+                        total_tokens, input_tokens, output_tokens,
+                        accumulated_total_tokens, accumulated_input_tokens, accumulated_output_tokens,
+                        schedule_id, recipe_json, user_recipe_values_json,
+                        provider_name, model_config_json
                  FROM agent_sessions WHERE id = ?",
             )
             .map_err(|e| anyhow!("准备查询失败: {e}"))?;
@@ -222,12 +269,47 @@ impl SessionStore for LimeSessionStore {
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, bool>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, Option<i32>>(10)?,
+                    row.get::<_, Option<i32>>(11)?,
+                    row.get::<_, Option<i32>>(12)?,
+                    row.get::<_, Option<i32>>(13)?,
+                    row.get::<_, Option<i32>>(14)?,
+                    row.get::<_, Option<i32>>(15)?,
+                    row.get::<_, Option<String>>(16)?,
+                    row.get::<_, Option<String>>(17)?,
+                    row.get::<_, Option<String>>(18)?,
+                    row.get::<_, Option<String>>(19)?,
+                    row.get::<_, Option<String>>(20)?,
                 ))
             })
             .map_err(|e| anyhow!("会话不存在: {e}"))?;
 
-        let (id, model, _system_prompt, title, created_at, updated_at, db_working_dir) =
-            session_row;
+        let (
+            id,
+            model,
+            _system_prompt,
+            title,
+            created_at,
+            updated_at,
+            db_working_dir,
+            session_type_raw,
+            user_set_name,
+            extension_data_json,
+            total_tokens,
+            input_tokens,
+            output_tokens,
+            accumulated_total_tokens,
+            accumulated_input_tokens,
+            accumulated_output_tokens,
+            schedule_id,
+            recipe_json,
+            user_recipe_values_json,
+            provider_name,
+            model_config_json,
+        ) = session_row;
 
         let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
             .map(|dt| dt.with_timezone(&Utc))
@@ -236,7 +318,7 @@ impl SessionStore for LimeSessionStore {
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
 
-        let session_type = model.parse().unwrap_or(SessionType::User);
+        let session_type = Self::resolve_session_type(session_type_raw, &model);
         let working_dir = Self::parse_session_working_dir(&conn, db_working_dir);
 
         let conversation = if include_messages {
@@ -251,27 +333,29 @@ impl SessionStore for LimeSessionStore {
             id: id.to_string(),
             working_dir,
             name: title.unwrap_or_else(|| "未命名会话".to_string()),
-            user_set_name: false,
+            user_set_name,
             session_type,
             created_at,
             updated_at,
-            extension_data: ExtensionData::default(),
-            total_tokens: None,
-            input_tokens: None,
-            output_tokens: None,
-            accumulated_total_tokens: None,
-            accumulated_input_tokens: None,
-            accumulated_output_tokens: None,
-            schedule_id: None,
-            recipe: None,
-            user_recipe_values: None,
+            extension_data: serde_json::from_str(&extension_data_json).unwrap_or_default(),
+            total_tokens,
+            input_tokens,
+            output_tokens,
+            accumulated_total_tokens,
+            accumulated_input_tokens,
+            accumulated_output_tokens,
+            schedule_id,
+            recipe: Self::parse_optional_json(recipe_json),
+            user_recipe_values: Self::parse_optional_json(user_recipe_values_json),
             conversation,
             message_count,
-            provider_name: None,
-            model_config: match model.trim() {
-                "" | "agent:default" => None,
-                normalized => ModelConfig::new(normalized).ok(),
-            },
+            provider_name,
+            model_config: Self::parse_optional_json(model_config_json).or_else(|| {
+                match model.trim() {
+                    "" | "agent:default" => None,
+                    normalized => ModelConfig::new(normalized).ok(),
+                }
+            }),
         })
     }
 
@@ -282,35 +366,7 @@ impl SessionStore for LimeSessionStore {
         );
 
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
-
-        // 检查会话是否存在，如果不存在则自动创建
-        let session_exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM agent_sessions WHERE id = ?",
-                [session_id],
-                |_| Ok(true),
-            )
-            .unwrap_or(false);
-
-        if !session_exists {
-            let now = Utc::now().to_rfc3339();
-            let working_dir = Self::resolve_session_working_dir(&conn);
-            conn.execute(
-                "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![
-                    session_id,
-                    "agent:default",
-                    None::<String>,
-                    "新对话",
-                    now,
-                    now,
-                    working_dir.to_string_lossy().to_string()
-                ],
-            )
-            .map_err(|e| anyhow!("自动创建会话失败: {e}"))?;
-            tracing::info!("[SessionStore] 自动创建会话: {}", session_id);
-        }
+        Self::ensure_session_row(&conn, session_id)?;
 
         let role = Self::message_role_to_string(message);
         let content_json = serde_json::to_string(&message.content)
@@ -425,7 +481,12 @@ impl SessionStore for LimeSessionStore {
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir
+            "SELECT id, model, system_prompt, title, created_at, updated_at, working_dir,
+                    session_type, user_set_name, extension_data_json,
+                    total_tokens, input_tokens, output_tokens,
+                    accumulated_total_tokens, accumulated_input_tokens, accumulated_output_tokens,
+                    schedule_id, recipe_json, user_recipe_values_json,
+                    provider_name, model_config_json
              FROM agent_sessions ORDER BY updated_at DESC",
         )?;
 
@@ -437,43 +498,106 @@ impl SessionStore for LimeSessionStore {
                 let created_at: String = row.get(4)?;
                 let updated_at: String = row.get(5)?;
                 let working_dir: Option<String> = row.get(6)?;
+                let session_type: Option<String> = row.get(7)?;
+                let user_set_name: bool = row.get(8)?;
+                let extension_data_json: String = row.get(9)?;
+                let total_tokens: Option<i32> = row.get(10)?;
+                let input_tokens: Option<i32> = row.get(11)?;
+                let output_tokens: Option<i32> = row.get(12)?;
+                let accumulated_total_tokens: Option<i32> = row.get(13)?;
+                let accumulated_input_tokens: Option<i32> = row.get(14)?;
+                let accumulated_output_tokens: Option<i32> = row.get(15)?;
+                let schedule_id: Option<String> = row.get(16)?;
+                let recipe_json: Option<String> = row.get(17)?;
+                let user_recipe_values_json: Option<String> = row.get(18)?;
+                let provider_name: Option<String> = row.get(19)?;
+                let model_config_json: Option<String> = row.get(20)?;
 
-                Ok((id, model, title, created_at, updated_at, working_dir))
+                Ok((
+                    id,
+                    model,
+                    title,
+                    created_at,
+                    updated_at,
+                    working_dir,
+                    session_type,
+                    user_set_name,
+                    extension_data_json,
+                    total_tokens,
+                    input_tokens,
+                    output_tokens,
+                    accumulated_total_tokens,
+                    accumulated_input_tokens,
+                    accumulated_output_tokens,
+                    schedule_id,
+                    recipe_json,
+                    user_recipe_values_json,
+                    provider_name,
+                    model_config_json,
+                ))
             })?
             .filter_map(|r| r.ok())
             .map(
-                |(id, model, title, created_at, updated_at, db_working_dir)| {
+                |(
+                    id,
+                    model,
+                    title,
+                    created_at,
+                    updated_at,
+                    db_working_dir,
+                    session_type_raw,
+                    user_set_name,
+                    extension_data_json,
+                    total_tokens,
+                    input_tokens,
+                    output_tokens,
+                    accumulated_total_tokens,
+                    accumulated_input_tokens,
+                    accumulated_output_tokens,
+                    schedule_id,
+                    recipe_json,
+                    user_recipe_values_json,
+                    provider_name,
+                    model_config_json,
+                )| {
                     let created_at = chrono::DateTime::parse_from_rfc3339(&created_at)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now());
                     let updated_at = chrono::DateTime::parse_from_rfc3339(&updated_at)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now());
-                    let session_type = model.parse().unwrap_or(SessionType::User);
+                    let session_type = Self::resolve_session_type(session_type_raw, &model);
                     let working_dir = Self::parse_session_working_dir(&conn, db_working_dir);
+                    let message_count = self.count_messages(&conn, &id).unwrap_or(0);
 
                     Session {
                         id,
                         working_dir,
                         name: title.unwrap_or_else(|| "未命名会话".to_string()),
-                        user_set_name: false,
+                        user_set_name,
                         session_type,
                         created_at,
                         updated_at,
-                        extension_data: ExtensionData::default(),
-                        total_tokens: None,
-                        input_tokens: None,
-                        output_tokens: None,
-                        accumulated_total_tokens: None,
-                        accumulated_input_tokens: None,
-                        accumulated_output_tokens: None,
-                        schedule_id: None,
-                        recipe: None,
-                        user_recipe_values: None,
+                        extension_data: serde_json::from_str(&extension_data_json)
+                            .unwrap_or_default(),
+                        total_tokens,
+                        input_tokens,
+                        output_tokens,
+                        accumulated_total_tokens,
+                        accumulated_input_tokens,
+                        accumulated_output_tokens,
+                        schedule_id,
+                        recipe: Self::parse_optional_json(recipe_json),
+                        user_recipe_values: Self::parse_optional_json(user_recipe_values_json),
                         conversation: None,
-                        message_count: 0,
-                        provider_name: None,
-                        model_config: None,
+                        message_count,
+                        provider_name,
+                        model_config: Self::parse_optional_json(model_config_json).or_else(|| {
+                            match model.trim() {
+                                "" | "agent:default" => None,
+                                normalized => ModelConfig::new(normalized).ok(),
+                            }
+                        }),
                     }
                 },
             )
@@ -504,10 +628,16 @@ impl SessionStore for LimeSessionStore {
 
         let total_sessions: i64 =
             conn.query_row("SELECT COUNT(*) FROM agent_sessions", [], |row| row.get(0))?;
+        let total_tokens: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(COALESCE(accumulated_total_tokens, total_tokens, 0)), 0)
+             FROM agent_sessions",
+            [],
+            |row| row.get(0),
+        )?;
 
         Ok(SessionInsights {
             total_sessions: total_sessions as usize,
-            total_tokens: 0,
+            total_tokens,
         })
     }
 
@@ -528,6 +658,36 @@ impl SessionStore for LimeSessionStore {
             )
             .await?;
 
+        self.update_session_name(&new_session.id, session.name.clone(), session.user_set_name)
+            .await?;
+        self.update_extension_data(&new_session.id, session.extension_data.clone())
+            .await?;
+        self.update_token_stats(
+            &new_session.id,
+            TokenStatsUpdate {
+                schedule_id: session.schedule_id.clone(),
+                total_tokens: session.total_tokens,
+                input_tokens: session.input_tokens,
+                output_tokens: session.output_tokens,
+                accumulated_total: session.accumulated_total_tokens,
+                accumulated_input: session.accumulated_input_tokens,
+                accumulated_output: session.accumulated_output_tokens,
+            },
+        )
+        .await?;
+        self.update_provider_config(
+            &new_session.id,
+            session.provider_name.clone(),
+            session.model_config.clone(),
+        )
+        .await?;
+        self.update_recipe(
+            &new_session.id,
+            session.recipe.clone(),
+            session.user_recipe_values.clone(),
+        )
+        .await?;
+
         if let Some(conversation) = &session.conversation {
             self.replace_conversation(&new_session.id, conversation)
                 .await?;
@@ -538,14 +698,46 @@ impl SessionStore for LimeSessionStore {
 
     async fn copy_session(&self, session_id: &str, new_name: String) -> Result<Session> {
         let original = self.get_session(session_id, true).await?;
+        let created_session_name = new_name.clone();
+        let persisted_session_name = new_name.clone();
 
         let new_session = self
             .create_session(
                 original.working_dir.clone(),
-                new_name,
+                created_session_name,
                 original.session_type,
             )
             .await?;
+
+        self.update_session_name(&new_session.id, persisted_session_name, true)
+            .await?;
+        self.update_extension_data(&new_session.id, original.extension_data.clone())
+            .await?;
+        self.update_token_stats(
+            &new_session.id,
+            TokenStatsUpdate {
+                schedule_id: original.schedule_id.clone(),
+                total_tokens: original.total_tokens,
+                input_tokens: original.input_tokens,
+                output_tokens: original.output_tokens,
+                accumulated_total: original.accumulated_total_tokens,
+                accumulated_input: original.accumulated_input_tokens,
+                accumulated_output: original.accumulated_output_tokens,
+            },
+        )
+        .await?;
+        self.update_provider_config(
+            &new_session.id,
+            original.provider_name.clone(),
+            original.model_config.clone(),
+        )
+        .await?;
+        self.update_recipe(
+            &new_session.id,
+            original.recipe.clone(),
+            original.user_recipe_values.clone(),
+        )
+        .await?;
 
         if let Some(conversation) = &original.conversation {
             self.replace_conversation(&new_session.id, conversation)
@@ -573,25 +765,59 @@ impl SessionStore for LimeSessionStore {
         &self,
         session_id: &str,
         name: String,
-        _user_set: bool,
+        user_set: bool,
     ) -> Result<()> {
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
+        let now = Utc::now().to_rfc3339();
         conn.execute(
-            "UPDATE agent_sessions SET title = ? WHERE id = ?",
-            rusqlite::params![name, session_id],
+            "UPDATE agent_sessions SET title = ?1, user_set_name = ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![name, user_set, now, session_id],
         )?;
         Ok(())
     }
 
     async fn update_extension_data(
         &self,
-        _session_id: &str,
-        _extension_data: ExtensionData,
+        session_id: &str,
+        extension_data: ExtensionData,
     ) -> Result<()> {
+        let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
+        let now = Utc::now().to_rfc3339();
+        let extension_data_json = serde_json::to_string(&extension_data)
+            .map_err(|e| anyhow!("序列化 extension_data 失败: {e}"))?;
+        conn.execute(
+            "UPDATE agent_sessions SET extension_data_json = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![extension_data_json, now, session_id],
+        )?;
         Ok(())
     }
 
-    async fn update_token_stats(&self, _session_id: &str, _stats: TokenStatsUpdate) -> Result<()> {
+    async fn update_token_stats(&self, session_id: &str, stats: TokenStatsUpdate) -> Result<()> {
+        let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE agent_sessions SET
+                total_tokens = COALESCE(?1, total_tokens),
+                input_tokens = COALESCE(?2, input_tokens),
+                output_tokens = COALESCE(?3, output_tokens),
+                accumulated_total_tokens = COALESCE(?4, accumulated_total_tokens),
+                accumulated_input_tokens = COALESCE(?5, accumulated_input_tokens),
+                accumulated_output_tokens = COALESCE(?6, accumulated_output_tokens),
+                schedule_id = COALESCE(?7, schedule_id),
+                updated_at = ?8
+             WHERE id = ?9",
+            rusqlite::params![
+                stats.total_tokens,
+                stats.input_tokens,
+                stats.output_tokens,
+                stats.accumulated_total,
+                stats.accumulated_input,
+                stats.accumulated_output,
+                Self::normalize_optional_text(stats.schedule_id),
+                now,
+                session_id,
+            ],
+        )?;
         Ok(())
     }
 
@@ -601,27 +827,67 @@ impl SessionStore for LimeSessionStore {
         provider_name: Option<String>,
         model_config: Option<ModelConfig>,
     ) -> Result<()> {
-        if let Some(model_name) = model_config
+        let normalized_provider_name = Self::normalize_optional_text(provider_name);
+        let normalized_model_name = model_config
             .as_ref()
             .map(|config| config.model_name.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .or(provider_name.filter(|value| !value.trim().is_empty()))
-        {
-            let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
-            conn.execute(
-                "UPDATE agent_sessions SET model = ? WHERE id = ?",
-                rusqlite::params![model_name, session_id],
-            )?;
+            .filter(|value| !value.is_empty());
+        let model_config_json = model_config
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| anyhow!("序列化 model_config 失败: {e}"))?;
+
+        if normalized_provider_name.is_none() && normalized_model_name.is_none() {
+            return Ok(());
         }
+
+        let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE agent_sessions SET
+                provider_name = COALESCE(?1, provider_name),
+                model = COALESCE(?2, model),
+                model_config_json = CASE WHEN ?3 IS NULL THEN model_config_json ELSE ?3 END,
+                updated_at = ?4
+             WHERE id = ?5",
+            rusqlite::params![
+                normalized_provider_name,
+                normalized_model_name,
+                model_config_json,
+                now,
+                session_id,
+            ],
+        )?;
         Ok(())
     }
 
     async fn update_recipe(
         &self,
-        _session_id: &str,
-        _recipe: Option<Recipe>,
-        _user_recipe_values: Option<HashMap<String, String>>,
+        session_id: &str,
+        recipe: Option<Recipe>,
+        user_recipe_values: Option<HashMap<String, String>>,
     ) -> Result<()> {
+        let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
+        let now = Utc::now().to_rfc3339();
+        let recipe_json = recipe
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| anyhow!("序列化 recipe 失败: {e}"))?;
+        let user_recipe_values_json = user_recipe_values
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| anyhow!("序列化 user_recipe_values 失败: {e}"))?;
+        conn.execute(
+            "UPDATE agent_sessions SET
+                recipe_json = ?1,
+                user_recipe_values_json = ?2,
+                updated_at = ?3
+             WHERE id = ?4",
+            rusqlite::params![recipe_json, user_recipe_values_json, now, session_id],
+        )?;
         Ok(())
     }
 
@@ -788,7 +1054,41 @@ mod tests {
     use aster::session::{SessionStore, SessionType};
     use lime_core::database::schema::create_tables;
     use rusqlite::Connection;
+    use std::ffi::OsString;
     use std::sync::{Arc, Mutex};
+    use tempfile::tempdir;
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct EnvGuard {
+        values: Vec<(&'static str, Option<OsString>)>,
+    }
+
+    impl EnvGuard {
+        fn set(entries: &[(&'static str, OsString)]) -> Self {
+            let mut values = Vec::new();
+            for (key, value) in entries {
+                values.push((*key, std::env::var_os(key)));
+                std::env::set_var(key, value);
+            }
+            Self { values }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, previous) in self.values.drain(..) {
+                if let Some(value) = previous {
+                    std::env::set_var(key, value);
+                } else {
+                    std::env::remove_var(key);
+                }
+            }
+        }
+    }
 
     fn setup_test_store() -> LimeSessionStore {
         let conn = Connection::open_in_memory().expect("创建内存数据库失败");
@@ -827,5 +1127,176 @@ mod tests {
             .expect("查询 model 失败");
 
         assert_eq!(persisted_model, "gpt-4.1");
+    }
+
+    #[tokio::test]
+    async fn get_session_should_prefer_default_workspace_root_when_missing_row() {
+        let store = setup_test_store();
+        let workspace_root = std::env::temp_dir().join("lime-aster-default-workspace");
+        let conn = store.db.lock().expect("锁数据库");
+        conn.execute(
+            "INSERT INTO workspaces (id, name, workspace_type, root_path, is_default, settings_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, '{}', 0, 0)",
+            rusqlite::params![
+                "workspace-default",
+                "默认工作区",
+                "general",
+                workspace_root.to_string_lossy().to_string(),
+            ],
+        )
+        .expect("插入默认 workspace 失败");
+        drop(conn);
+
+        let session = store
+            .get_session("missing-default-workspace-session", false)
+            .await
+            .expect("读取缺失会话失败");
+
+        assert_eq!(session.working_dir, workspace_root);
+    }
+
+    #[tokio::test]
+    async fn get_session_should_fallback_to_app_paths_default_project_dir() {
+        let _env_guard = env_lock().lock().expect("锁环境变量");
+        let temp = tempdir().expect("创建临时目录失败");
+        let home = temp.path().join("home");
+        let app_data = temp.path().join("appdata");
+        std::fs::create_dir_all(&home).expect("创建 home 目录失败");
+        std::fs::create_dir_all(&app_data).expect("创建 appdata 目录失败");
+        let _guard = EnvGuard::set(&[
+            ("HOME", home.as_os_str().to_os_string()),
+            ("XDG_DATA_HOME", app_data.as_os_str().to_os_string()),
+            ("APPDATA", app_data.as_os_str().to_os_string()),
+            ("LOCALAPPDATA", app_data.as_os_str().to_os_string()),
+        ]);
+
+        let store = setup_test_store();
+        let session = store
+            .get_session("missing-fallback-session", false)
+            .await
+            .expect("读取缺失会话失败");
+        let expected = app_paths::resolve_default_project_dir().expect("解析默认项目目录失败");
+
+        assert_eq!(session.working_dir, expected);
+        assert!(session.working_dir.is_absolute());
+        assert!(session
+            .working_dir
+            .ends_with(PathBuf::from("projects").join("default")));
+        assert!(!session
+            .working_dir
+            .to_string_lossy()
+            .contains(".lime/projects/default"));
+    }
+
+    #[tokio::test]
+    async fn update_session_metadata_should_roundtrip() {
+        let store = setup_test_store();
+        let session = store
+            .create_session(
+                PathBuf::from("."),
+                "元数据测试".to_string(),
+                SessionType::SubAgent,
+            )
+            .await
+            .expect("创建会话失败");
+
+        let mut extension_data = ExtensionData::new();
+        extension_data.set_extension_state("todo", "v0", serde_json::json!({"items":["a"]}));
+
+        store
+            .update_session_name(&session.id, "已命名会话".to_string(), true)
+            .await
+            .expect("更新名称失败");
+        store
+            .update_extension_data(&session.id, extension_data.clone())
+            .await
+            .expect("更新 extension_data 失败");
+        store
+            .update_token_stats(
+                &session.id,
+                TokenStatsUpdate {
+                    schedule_id: Some("job-1".to_string()),
+                    total_tokens: Some(100),
+                    input_tokens: Some(60),
+                    output_tokens: Some(40),
+                    accumulated_total: Some(300),
+                    accumulated_input: Some(180),
+                    accumulated_output: Some(120),
+                },
+            )
+            .await
+            .expect("更新 token 统计失败");
+        store
+            .update_provider_config(
+                &session.id,
+                Some("openai".to_string()),
+                Some(ModelConfig::new("gpt-4.1").expect("model config")),
+            )
+            .await
+            .expect("更新 provider 配置失败");
+        store
+            .update_recipe(
+                &session.id,
+                Some(Recipe {
+                    version: "1.0.0".to_string(),
+                    title: "demo".to_string(),
+                    description: "demo recipe".to_string(),
+                    instructions: None,
+                    prompt: None,
+                    extensions: None,
+                    settings: None,
+                    activities: None,
+                    author: None,
+                    parameters: None,
+                    response: None,
+                    sub_recipes: None,
+                    retry: None,
+                }),
+                Some(HashMap::from([(
+                    "temperature".to_string(),
+                    "0.2".to_string(),
+                )])),
+            )
+            .await
+            .expect("更新 recipe 失败");
+
+        let loaded = store
+            .get_session(&session.id, false)
+            .await
+            .expect("读取会话失败");
+
+        assert_eq!(loaded.name, "已命名会话");
+        assert!(loaded.user_set_name);
+        assert_eq!(loaded.session_type, SessionType::SubAgent);
+        assert_eq!(loaded.total_tokens, Some(100));
+        assert_eq!(loaded.accumulated_total_tokens, Some(300));
+        assert_eq!(loaded.schedule_id.as_deref(), Some("job-1"));
+        assert_eq!(loaded.provider_name.as_deref(), Some("openai"));
+        assert_eq!(
+            loaded
+                .model_config
+                .as_ref()
+                .map(|config| config.model_name.as_str()),
+            Some("gpt-4.1")
+        );
+        assert_eq!(
+            loaded
+                .extension_data
+                .get_extension_state("todo", "v0")
+                .cloned(),
+            extension_data.get_extension_state("todo", "v0").cloned()
+        );
+        assert_eq!(
+            loaded.recipe.as_ref().map(|recipe| recipe.title.as_str()),
+            Some("demo")
+        );
+        assert_eq!(
+            loaded
+                .user_recipe_values
+                .as_ref()
+                .and_then(|values| values.get("temperature"))
+                .map(String::as_str),
+            Some("0.2")
+        );
     }
 }

@@ -8,9 +8,6 @@ import React, { useMemo, useState, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useModelRegistry } from "@/hooks/useModelRegistry";
 import {
-  Eye,
-  Wrench,
-  Brain,
   Sparkles,
   Check,
   Loader2,
@@ -29,6 +26,7 @@ import {
 import type { EnhancedModelMetadata } from "@/lib/types/modelRegistry";
 import { apiKeyProviderApi } from "@/lib/api/apiKeyProvider";
 import { modelRegistryApi } from "@/lib/api/modelRegistry";
+import { ModelCapabilityBadges } from "@/components/model/ModelCapabilityBadges";
 import {
   buildCatalogAliasMap,
   resolveRegistryProviderId,
@@ -138,7 +136,7 @@ const ModelItem: React.FC<ModelItemProps> = ({
   return (
     <div
       className={cn(
-        "flex items-center justify-between rounded-lg border px-3 py-2 transition-colors",
+        "flex items-start justify-between gap-3 rounded-lg border px-3 py-2 transition-colors",
         onSelect ? "cursor-pointer hover:bg-muted/50" : "hover:bg-muted/50",
         isDefault
           ? "border-primary/30 bg-primary/5"
@@ -168,38 +166,14 @@ const ModelItem: React.FC<ModelItemProps> = ({
           {isDefault ? <Badge variant="secondary">默认</Badge> : null}
         </div>
         <div className="text-xs text-muted-foreground truncate">{model.id}</div>
+        <ModelCapabilityBadges
+          capabilities={model.capabilities}
+          className="mt-2"
+        />
       </div>
 
-      {/* 能力标签 */}
-      <div className="flex items-center gap-1.5 ml-2">
-        {isDefault && <Check className="h-3.5 w-3.5 text-primary" />}
-        {model.capabilities.vision && (
-          <span
-            className="text-blue-500"
-            title="支持视觉"
-            data-testid="capability-vision"
-          >
-            <Eye className="h-3.5 w-3.5" />
-          </span>
-        )}
-        {model.capabilities.tools && (
-          <span
-            className="text-orange-500"
-            title="支持工具调用"
-            data-testid="capability-tools"
-          >
-            <Wrench className="h-3.5 w-3.5" />
-          </span>
-        )}
-        {model.capabilities.reasoning && (
-          <span
-            className="text-purple-500"
-            title="支持推理"
-            data-testid="capability-reasoning"
-          >
-            <Brain className="h-3.5 w-3.5" />
-          </span>
-        )}
+      <div className="flex items-center gap-1.5 pt-1">
+        {isDefault ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
       </div>
     </div>
   );

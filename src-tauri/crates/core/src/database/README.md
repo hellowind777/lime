@@ -23,10 +23,9 @@
 - `providers` - Provider 配置
 - `settings` - 应用设置
 
-### Legacy 通用对话表
+### Legacy 通用对话迁移面
 
-- `general_chat_sessions` - 历史通用对话会话（legacy 保留）
-- `general_chat_messages` - 历史通用对话消息（legacy 保留）
+- `general_chat_sessions` / `general_chat_messages` - 只用于启动期识别并迁移历史安装里的旧表，不再作为新库默认 schema 的一部分
 
 ### 功能表
 

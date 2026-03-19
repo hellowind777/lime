@@ -7,6 +7,7 @@ use aster::agents::{AgentIdentity, SessionConfig};
 use aster::session::TurnContextOverride;
 use aster::skills::{global_registry, load_skills_from_directory, SkillSource};
 use aster::tools::ToolRegistrationConfig;
+use lime_core::app_paths;
 use lime_core::database::{lock_db, DbConnection};
 use lime_services::project_context_builder::ProjectContextBuilder;
 
@@ -34,22 +35,16 @@ pub fn create_lime_tool_config() -> ToolRegistrationConfig {
 
 /// 加载 Lime Skills 到 aster-rust 的 global_registry
 fn load_lime_skills() {
-    let home = match dirs::home_dir() {
-        Some(home_dir) => home_dir,
-        None => {
-            tracing::warn!("[AsterAgent] 无法获取 home 目录，跳过 Skills 加载");
+    let skills_dir = match app_paths::resolve_skills_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(
+                "[AsterAgent] 解析 Lime Skills 目录失败，跳过加载: {}",
+                error
+            );
             return;
         }
     };
-
-    let skills_dir = home.join(".lime").join("skills");
-    if !skills_dir.exists() {
-        tracing::info!(
-            "[AsterAgent] Lime Skills 目录不存在: {:?}，跳过加载",
-            skills_dir
-        );
-        return;
-    }
 
     let skills = load_skills_from_directory(&skills_dir, SkillSource::User);
     let skill_count = skills.len();
@@ -80,19 +75,6 @@ pub fn build_project_system_prompt(db: &DbConnection, project_id: &str) -> Resul
     let conn = lock_db(db).map_err(|e| format!("获取数据库连接失败: {e}"))?;
     ProjectContextBuilder::build_system_prompt_for_project(&conn, project_id)
         .map_err(|e| format!("构建项目上下文失败: {e}"))
-}
-
-/// 创建带项目上下文的会话配置
-pub fn create_session_config_with_project(
-    db: &DbConnection,
-    session_id: &str,
-    project_id: Option<&str>,
-) -> SessionConfig {
-    let system_prompt = project_id.and_then(|pid| build_project_system_prompt(db, pid).ok());
-
-    SessionConfigBuilder::new(session_id)
-        .system_prompt(system_prompt.unwrap_or_default())
-        .build()
 }
 
 /// 会话配置构建器

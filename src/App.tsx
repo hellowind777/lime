@@ -8,26 +8,12 @@
  * _需求: 2.2, 3.2, 5.2_
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { Suspense, lazy, useState, useEffect, useCallback } from "react";
 import styled from "styled-components";
 import { getWindowsStartupDiagnostics } from "@/lib/api/serverRuntime";
 import { withI18nPatch } from "./i18n/withI18nPatch";
 import { SplashScreen } from "./components/SplashScreen";
 import { AppSidebar } from "./components/AppSidebar";
-import { SettingsPageV2 } from "./components/settings-v2";
-import { ToolsPage } from "./components/tools/ToolsPage";
-import { ResourcesPage } from "./components/resources";
-import { MemoryPage } from "./components/memory";
-import { StylePage } from "./components/style";
-import { AgentChatPage } from "./components/agent";
-import { PluginsPage } from "./components/plugins/PluginsPage";
-import { ImageGenPage } from "./components/image-gen";
-import { AutomationPage } from "./components/automation";
-import { OpenClawPage } from "./components/openclaw";
-import { RecentImageInsertFloating } from "./components/image-gen/RecentImageInsertFloating";
-import { CreateProjectDialog } from "./components/projects/CreateProjectDialog";
-import { WorkbenchPage } from "./components/workspace";
-import { BrowserRuntimeWorkspace } from "@/features/browser-runtime";
 import {
   ProjectType,
   createProject,
@@ -35,14 +21,7 @@ import {
   isUserProjectType,
   resolveProjectRootPath,
 } from "./lib/api/project";
-import {
-  TerminalWorkspace,
-  SysinfoView,
-  FileBrowserView,
-  WebView,
-} from "./components/terminal";
-import { OnboardingWizard, useOnboardingState } from "./components/onboarding";
-import { ConnectConfirmDialog } from "./components/connect";
+import { useOnboardingState } from "./components/onboarding";
 import { showRegistryLoadError } from "./lib/utils/connectError";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useRelayRegistry } from "./hooks/useRelayRegistry";
@@ -115,6 +94,123 @@ const THEME_WORKSPACE_PAGES: ThemeWorkspacePage[] = [
   "workspace-video",
   "workspace-novel",
 ];
+
+const SettingsPageV2 = lazy(() =>
+  import("./components/settings-v2").then((module) => ({
+    default: module.SettingsPageV2,
+  })),
+);
+const ToolsPage = lazy(() =>
+  import("./components/tools/ToolsPage").then((module) => ({
+    default: module.ToolsPage,
+  })),
+);
+const ResourcesPage = lazy(() =>
+  import("./components/resources").then((module) => ({
+    default: module.ResourcesPage,
+  })),
+);
+const MemoryPage = lazy(() =>
+  import("./components/memory").then((module) => ({
+    default: module.MemoryPage,
+  })),
+);
+const StylePage = lazy(() =>
+  import("./components/style").then((module) => ({
+    default: module.StylePage,
+  })),
+);
+const PluginsPage = lazy(() =>
+  import("./components/plugins/PluginsPage").then((module) => ({
+    default: module.PluginsPage,
+  })),
+);
+const ImageGenPage = lazy(() =>
+  import("./components/image-gen").then((module) => ({
+    default: module.ImageGenPage,
+  })),
+);
+const AutomationPage = lazy(() =>
+  import("./components/automation").then((module) => ({
+    default: module.AutomationPage,
+  })),
+);
+const OpenClawPage = lazy(() =>
+  import("./components/openclaw").then((module) => ({
+    default: module.OpenClawPage,
+  })),
+);
+const RecentImageInsertFloating = lazy(() =>
+  import("./components/image-gen/RecentImageInsertFloating").then((module) => ({
+    default: module.RecentImageInsertFloating,
+  })),
+);
+const CreateProjectDialog = lazy(() =>
+  import("./components/projects/CreateProjectDialog").then((module) => ({
+    default: module.CreateProjectDialog,
+  })),
+);
+const WorkbenchPage = lazy(() =>
+  import("./components/workspace").then((module) => ({
+    default: module.WorkbenchPage,
+  })),
+);
+const BrowserRuntimeWorkspace = lazy(() =>
+  import("@/features/browser-runtime").then((module) => ({
+    default: module.BrowserRuntimeWorkspace,
+  })),
+);
+const TerminalWorkspace = lazy(() =>
+  import("./components/terminal").then((module) => ({
+    default: module.TerminalWorkspace,
+  })),
+);
+const SysinfoView = lazy(() =>
+  import("./components/terminal").then((module) => ({
+    default: module.SysinfoView,
+  })),
+);
+const FileBrowserView = lazy(() =>
+  import("./components/terminal").then((module) => ({
+    default: module.FileBrowserView,
+  })),
+);
+const WebView = lazy(() =>
+  import("./components/terminal").then((module) => ({
+    default: module.WebView,
+  })),
+);
+const OnboardingWizard = lazy(() =>
+  import("./components/onboarding").then((module) => ({
+    default: module.OnboardingWizard,
+  })),
+);
+const ConnectConfirmDialog = lazy(() =>
+  import("./components/connect").then((module) => ({
+    default: module.ConnectConfirmDialog,
+  })),
+);
+const AgentChatPage = lazy(() =>
+  import("./components/agent/chat").then((module) => ({
+    default: module.AgentChatPage,
+  })),
+);
+
+const pageLoadingFallback = (
+  <div
+    style={{
+      flex: 1,
+      minHeight: 0,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      color: "hsl(var(--muted-foreground))",
+      fontSize: "14px",
+    }}
+  >
+    页面加载中...
+  </div>
+);
 
 function isTauriDesktopEnvironment(): boolean {
   return hasTauriInvokeCapability();
@@ -691,7 +787,11 @@ function AppContent() {
   }
 
   if (needsOnboarding) {
-    return <OnboardingWizard onComplete={handleOnboardingComplete} />;
+    return (
+      <Suspense fallback={null}>
+        <OnboardingWizard onComplete={handleOnboardingComplete} />
+      </Suspense>
+    );
   }
 
   const currentAgentParams = pageParams as AgentPageParams;
@@ -726,35 +826,43 @@ function AppContent() {
             />
           )}
           <MainContent $withSidebarGap={shouldAddMainContentGap}>
-            {renderCurrentPage()}
+            <Suspense fallback={pageLoadingFallback}>
+              {renderCurrentPage()}
+            </Suspense>
           </MainContent>
-          <RecentImageInsertFloating onNavigate={handleNavigate} />
+          <Suspense fallback={null}>
+            <RecentImageInsertFloating onNavigate={handleNavigate} />
+          </Suspense>
 
-          <ConnectConfirmDialog
-            open={isDialogOpen}
-            relay={relayInfo}
-            relayId={connectPayload?.relay ?? ""}
-            apiKey={connectPayload?.key ?? ""}
-            keyName={connectPayload?.name}
-            isVerified={isVerified}
-            isSaving={isSaving}
-            error={error}
-            onConfirm={handleConfirm}
-            onCancel={handleCancel}
-          />
+          <Suspense fallback={null}>
+            <ConnectConfirmDialog
+              open={isDialogOpen}
+              relay={relayInfo}
+              relayId={connectPayload?.relay ?? ""}
+              apiKey={connectPayload?.key ?? ""}
+              keyName={connectPayload?.name}
+              isVerified={isVerified}
+              isSaving={isSaving}
+              error={error}
+              onConfirm={handleConfirm}
+              onCancel={handleCancel}
+            />
+          </Suspense>
 
-          <CreateProjectDialog
-            open={projectDialogOpen}
-            onOpenChange={(open) => {
-              setProjectDialogOpen(open);
-              if (!open) {
-                setPendingRecommendation(null);
-              }
-            }}
-            onSubmit={handleCreateProjectFromRecommendation}
-            defaultType={pendingRecommendation?.projectType}
-            defaultName={pendingRecommendation?.projectName}
-          />
+          <Suspense fallback={null}>
+            <CreateProjectDialog
+              open={projectDialogOpen}
+              onOpenChange={(open) => {
+                setProjectDialogOpen(open);
+                if (!open) {
+                  setPendingRecommendation(null);
+                }
+              }}
+              onSubmit={handleCreateProjectFromRecommendation}
+              defaultType={pendingRecommendation?.projectType}
+              defaultName={pendingRecommendation?.projectName}
+            />
+          </Suspense>
 
           <ComponentDebugOverlay />
         </AppContainer>

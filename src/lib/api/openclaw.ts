@@ -47,6 +47,9 @@ export interface OpenClawEnvironmentDiagnostics {
   whereCandidates?: string[];
   supplementalSearchDirs?: string[];
   supplementalCommandCandidates?: string[];
+  gitWhereCandidates?: string[];
+  gitSupplementalSearchDirs?: string[];
+  gitSupplementalCommandCandidates?: string[];
 }
 
 export interface OpenClawActionResult {

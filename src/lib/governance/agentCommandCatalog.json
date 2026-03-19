@@ -63,22 +63,22 @@
   "legacyCommandSurfaceMonitors": [
     {
       "id": "agent-create-session-compat-command",
-      "classification": "compat",
-      "description": "agent_create_session compat 命令前端边界",
+      "classification": "dead-candidate",
+      "description": "已零引用的旧 agent_create_session 命令边界",
       "commands": ["agent_create_session"],
-      "allowedPaths": ["src/lib/api/agentRuntime.ts"]
+      "allowedPaths": []
     },
     {
       "id": "agent-session-message-legacy-command",
-      "classification": "deprecated",
-      "description": "旧 agent session message 命令前端边界",
+      "classification": "dead-candidate",
+      "description": "已零引用的旧 agent session message 命令边界",
       "commands": ["agent_get_session_messages"],
-      "allowedPaths": ["src/lib/api/agentRuntime.ts"]
+      "allowedPaths": []
     },
     {
       "id": "agent-session-compat-commands",
-      "classification": "deprecated",
-      "description": "旧 agent session compat 命令前端边界",
+      "classification": "dead-candidate",
+      "description": "已零引用的旧 agent session compat 命令边界",
       "commands": [
         "agent_list_sessions",
         "agent_get_session",
@@ -91,8 +91,8 @@
   "legacyHelperSurfaceMonitors": [
     {
       "id": "agent-legacy-session-api-helpers",
-      "classification": "deprecated",
-      "description": "旧 Agent session compat helper 直连回流",
+      "classification": "dead-candidate",
+      "description": "已零引用的旧 Agent session compat helper 回流",
       "helpers": [
         "createAgentSession",
         "listAgentSessions",
@@ -102,24 +102,24 @@
         "deleteAgentSession",
         "generateAgentTitle"
       ],
-      "allowedPaths": ["src/lib/api/agentRuntime.ts"]
+      "allowedPaths": []
     },
     {
       "id": "agent-legacy-stream-action-helpers",
-      "classification": "deprecated",
-      "description": "旧 Aster stream/action helper 直连回流",
+      "classification": "dead-candidate",
+      "description": "已零引用的旧 Aster stream/action helper 回流",
       "helpers": [
         "sendAsterMessageStream",
         "confirmAsterAction",
         "submitAsterElicitationResponse",
         "stopAsterSession"
       ],
-      "allowedPaths": ["src/lib/api/agentRuntime.ts"]
+      "allowedPaths": []
     },
     {
       "id": "aster-session-helper-direct-usage",
-      "classification": "deprecated",
-      "description": "前端 direct Aster session helper 回流",
+      "classification": "dead-candidate",
+      "description": "已零引用的前端 direct Aster session helper 回流",
       "helpers": [
         "createAsterSession",
         "listAsterSessions",
@@ -127,7 +127,7 @@
         "deleteAsterSession",
         "renameAsterSession"
       ],
-      "allowedPaths": ["src/lib/api/agentRuntime.ts"]
+      "allowedPaths": []
     }
   ]
 }

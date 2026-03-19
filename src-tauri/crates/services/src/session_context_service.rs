@@ -4,7 +4,6 @@
 
 use crate::ai_summary_service::AISummaryService;
 use lime_core::database::dao::chat::{ChatDao, ChatMessage as UnifiedChatMessage, ChatMode};
-use lime_core::database::load_pending_general_session_messages;
 use lime_core::general_chat::{ChatMessage, MessageRole};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -184,52 +183,27 @@ impl SessionContextService {
         let session =
             ChatDao::get_session(conn, session_id).map_err(|e| format!("获取统一会话失败: {e}"))?;
 
-        if let Some(session) = session {
-            if session.mode != ChatMode::General {
-                debug!(
-                    "会话 {} 不是 general 模式，跳过上下文加载: {:?}",
-                    session_id, session.mode
-                );
-                return Ok(vec![]);
-            }
+        let Some(session) = session else {
+            debug!("会话 {} 未命中 unified chat，跳过上下文加载", session_id);
+            return Ok(vec![]);
+        };
 
-            let unified_messages = ChatDao::get_messages(conn, session_id, None)
-                .map_err(|e| format!("获取统一消息失败: {e}"))?;
-
-            return Ok(unified_messages
-                .into_iter()
-                .map(Self::convert_unified_message)
-                .collect());
+        if session.mode != ChatMode::General {
+            debug!(
+                "会话 {} 不是 general 模式，跳过上下文加载: {:?}",
+                session_id, session.mode
+            );
+            return Ok(vec![]);
         }
 
-        debug!(
-            "会话 {} 未命中 unified chat，回退待迁移 general 历史表",
-            session_id
-        );
-
-        Self::load_pending_general_messages(conn, session_id)
-    }
-
-    fn load_pending_general_messages(
-        conn: &Connection,
-        session_id: &str,
-    ) -> Result<Vec<ChatMessage>, String> {
-        let messages = load_pending_general_session_messages(conn, session_id)
-            .map_err(|e| format!("查询待迁移 general 消息失败: {e}"))?;
-
-        Ok(messages
-            .into_iter()
-            .map(|message| ChatMessage {
-                id: message.id,
-                session_id: message.session_id,
-                role: Self::convert_legacy_role(&message.role),
-                content: message.content,
-                blocks: None,
-                status: "complete".to_string(),
-                created_at: message.created_at,
-                metadata: None,
+        ChatDao::get_messages(conn, session_id, None)
+            .map_err(|e| format!("获取统一消息失败: {e}"))
+            .map(|messages| {
+                messages
+                    .into_iter()
+                    .map(Self::convert_unified_message)
+                    .collect()
             })
-            .collect())
     }
 
     fn convert_unified_message(message: UnifiedChatMessage) -> ChatMessage {
@@ -246,14 +220,6 @@ impl SessionContextService {
     }
 
     fn convert_unified_role(role: &str) -> MessageRole {
-        match role {
-            "assistant" => MessageRole::Assistant,
-            "system" => MessageRole::System,
-            _ => MessageRole::User,
-        }
-    }
-
-    fn convert_legacy_role(role: &str) -> MessageRole {
         match role {
             "assistant" => MessageRole::Assistant,
             "system" => MessageRole::System,
@@ -604,7 +570,6 @@ mod tests {
     use lime_core::database::dao::chat::{
         ChatDao, ChatMessage as UnifiedChatMessage, ChatMode, ChatSession as UnifiedChatSession,
     };
-    use lime_core::general_chat::ChatSession;
     use rusqlite::Connection;
 
     fn setup_test_db() -> Connection {
@@ -644,36 +609,6 @@ mod tests {
             "CREATE TABLE settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
-            )",
-            [],
-        )
-        .unwrap();
-
-        // 创建会话表
-        conn.execute(
-            "CREATE TABLE general_chat_sessions (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                metadata TEXT
-            )",
-            [],
-        )
-        .unwrap();
-
-        // 创建消息表
-        conn.execute(
-            "CREATE TABLE general_chat_messages (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
-                content TEXT NOT NULL,
-                blocks TEXT,
-                status TEXT NOT NULL DEFAULT 'complete',
-                created_at INTEGER NOT NULL,
-                metadata TEXT,
-                FOREIGN KEY (session_id) REFERENCES general_chat_sessions(id) ON DELETE CASCADE
             )",
             [],
         )
@@ -747,45 +682,6 @@ mod tests {
                 }
             })
             .collect()
-    }
-
-    fn insert_legacy_session(conn: &Connection, session: &ChatSession) {
-        conn.execute(
-            "INSERT INTO general_chat_sessions (id, name, created_at, updated_at, metadata)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                session.id,
-                session.name,
-                session.created_at,
-                session.updated_at,
-                Option::<String>::None,
-            ],
-        )
-        .unwrap();
-    }
-
-    fn insert_legacy_message(conn: &Connection, message: &ChatMessage) {
-        let role = match message.role {
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-            MessageRole::System => "system",
-        };
-
-        conn.execute(
-            "INSERT INTO general_chat_messages (id, session_id, role, content, blocks, status, created_at, metadata)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            rusqlite::params![
-                message.id,
-                message.session_id,
-                role,
-                message.content,
-                Option::<String>::None,
-                message.status,
-                message.created_at,
-                Option::<String>::None,
-            ],
-        )
-        .unwrap();
     }
 
     #[tokio::test]
@@ -880,46 +776,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_effective_context_falls_back_to_legacy_messages() {
+    async fn test_get_effective_context_returns_empty_when_unified_session_missing() {
         let conn = Arc::new(Mutex::new(setup_test_db()));
         let service = SessionContextService::new(conn.clone(), ContextWindowConfig::default());
-
-        let legacy_session = ChatSession {
-            id: "legacy-session".to_string(),
-            name: "旧会话".to_string(),
-            created_at: chrono::Utc::now().timestamp_millis(),
-            updated_at: chrono::Utc::now().timestamp_millis(),
-            metadata: None,
-        };
-
-        {
-            let conn_guard = conn.lock().unwrap();
-            insert_legacy_session(&conn_guard, &legacy_session);
-            for message in create_test_messages("legacy-session", 3) {
-                insert_legacy_message(&conn_guard, &message);
-            }
-        }
 
         let context = service
             .get_effective_context("legacy-session")
             .await
             .unwrap();
-        assert_eq!(context.len(), 3);
-        assert_eq!(context[0].content, "这是第 1 条消息，包含一些测试内容");
+        assert!(context.is_empty());
     }
 
     #[tokio::test]
-    async fn test_get_effective_context_skips_legacy_fallback_after_general_migration_completed() {
+    async fn test_get_effective_context_keeps_empty_when_general_migration_completed() {
         let conn = Arc::new(Mutex::new(setup_test_db()));
         let service = SessionContextService::new(conn.clone(), ContextWindowConfig::default());
-
-        let legacy_session = ChatSession {
-            id: "legacy-session".to_string(),
-            name: "旧会话".to_string(),
-            created_at: chrono::Utc::now().timestamp_millis(),
-            updated_at: chrono::Utc::now().timestamp_millis(),
-            metadata: None,
-        };
 
         {
             let conn_guard = conn.lock().unwrap();
@@ -929,10 +800,6 @@ mod tests {
                     rusqlite::params!["migrated_general_chat_to_unified", "true"],
                 )
                 .unwrap();
-            insert_legacy_session(&conn_guard, &legacy_session);
-            for message in create_test_messages("legacy-session", 3) {
-                insert_legacy_message(&conn_guard, &message);
-            }
         }
 
         let context = service

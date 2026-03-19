@@ -43,7 +43,6 @@
 //! - `session_context_service` - 会话上下文服务
 //! - `ai_summary_service` - AI 摘要服务
 //! - `project_context_builder` - 项目上下文构建器
-//! - `tool_hooks_service` - 工具钩子服务
 //! - `kiro_event_service` - Kiro 事件服务
 //! - `api_key_provider_service` - API Key Provider 服务
 //! - `provider_pool_service` - Provider 池服务
@@ -90,7 +89,6 @@ pub mod content_creator;
 pub mod ai_summary_service;
 pub mod project_context_builder;
 pub mod session_context_service;
-pub mod tool_hooks_service;
 
 // 事件服务
 pub mod kiro_event_service;

@@ -23,9 +23,12 @@ Tauri 命令是前端与 Rust 后端通信的边界，但前端业务代码**不
 
 ## 当前事实源
 
-- 聊天主命令：`chat_*`
+- Agent / Codex 主命令：`agent_runtime_*`
+- 运行态摘要主链：Aster `runtime_status` item -> timeline `turn_summary`
+- `chat_*` 已停止注册，且不再纳入 `commands::mod` 编译图；旧 General / Creator / 历史桥接如仍需恢复，必须显式走新的 compat 评审
 - 旧 `general_chat_*` 前端 compat 网关与 Rust 命令已删除
-- 当前剩余治理重点：统计、记忆等旁路仍在读取 `general_chat_*` 历史表
+- `Tauri runtime_status` 事件只保留前端瞬时状态用途，不再作为 timeline 事实源
+- 当前剩余治理重点：统计、记忆等旁路继续按 `runtime context` 与 `durable knowledge` 分层收口
 
 ## 治理案例：记忆系统
 
@@ -45,7 +48,8 @@ Tauri 命令是前端与 Rust 后端通信的边界，但前端业务代码**不
 4. 如果存在旧命令又无任何调用，就直接删掉命令注册、桥接和 mock，不要继续保留空兼容壳
 
 同理，对话系统也不应该重新引回已经删除的 `general_chat_*` 命令；
-后续如需扩展聊天能力，应继续收敛到 `chat_*` 与对应网关。
+后续如需扩展 Agent / Codex 工作流，应继续收敛到 `agent_runtime_*` 与对应网关；
+`chat_*` 只允许作为 dead-candidate 参考，不应重新回到 `commands::mod` 或 `generate_handler!`。
 
 ## 目录结构
 

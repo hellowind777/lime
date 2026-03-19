@@ -35,6 +35,7 @@ interface UseTrayModelShortcutsOptions {
   model: string;
   setModel: (model: string) => void;
   activeTheme?: string;
+  deferInitialSync?: boolean;
 }
 
 interface ConfiguredProvider {
@@ -49,6 +50,8 @@ interface ConfiguredProvider {
 
 const MAX_TRAY_MODELS_PER_PROVIDER = 8;
 const TRAY_PAYLOAD_CACHE_TTL_MS = 3_000;
+const TRAY_SYNC_IDLE_TIMEOUT_MS = 1_500;
+const TRAY_SYNC_FALLBACK_DELAY_MS = 180;
 
 interface TrayPayloadCacheEntry {
   signature: string;
@@ -225,7 +228,9 @@ function buildConfiguredProviders(
   return Array.from(providerMap.values());
 }
 
-function dedupeModels(models: EnhancedModelMetadata[]): EnhancedModelMetadata[] {
+function dedupeModels(
+  models: EnhancedModelMetadata[],
+): EnhancedModelMetadata[] {
   const seen = new Set<string>();
   const result: EnhancedModelMetadata[] = [];
 
@@ -261,6 +266,28 @@ function getTrayPayloadFingerprint(
   payload: SyncTrayModelShortcutsPayload,
 ): string {
   return JSON.stringify(payload);
+}
+
+function scheduleTrayModelSync(task: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => undefined;
+  }
+
+  if (typeof window.requestIdleCallback === "function") {
+    const idleId = window.requestIdleCallback(() => task(), {
+      timeout: TRAY_SYNC_IDLE_TIMEOUT_MS,
+    });
+    return () => {
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }
+
+  const timeoutId = window.setTimeout(task, TRAY_SYNC_FALLBACK_DELAY_MS);
+  return () => {
+    window.clearTimeout(timeoutId);
+  };
 }
 
 function resolveProviderModels(
@@ -339,7 +366,10 @@ function buildQuickModelGroups(
       registryModels,
       aliasConfigs,
     );
-    const filteredModels = filterModelsByTheme(activeTheme, resolvedModels).models;
+    const filteredModels = filterModelsByTheme(
+      activeTheme,
+      resolvedModels,
+    ).models;
 
     const compatibleModels = filteredModels
       .filter(
@@ -470,7 +500,10 @@ export async function buildTrayPayload(
         ),
       ]);
 
-    const providers = buildConfiguredProviders(oauthCredentials, apiKeyProviders);
+    const providers = buildConfiguredProviders(
+      oauthCredentials,
+      apiKeyProviders,
+    );
     const currentProvider =
       providers.find((item) => item.key === providerType) || null;
 
@@ -531,7 +564,10 @@ export async function syncTrayModelShortcutsState(
   );
   const fingerprint = getTrayPayloadFingerprint(payload);
 
-  if (!options?.forceRefresh && fingerprint === lastSyncedTrayPayloadFingerprint) {
+  if (
+    !options?.forceRefresh &&
+    fingerprint === lastSyncedTrayPayloadFingerprint
+  ) {
     return;
   }
 
@@ -545,8 +581,10 @@ export function useTrayModelShortcuts({
   model,
   setModel,
   activeTheme,
+  deferInitialSync = false,
 }: UseTrayModelShortcutsOptions) {
   const lastSyncedSignatureRef = useRef<string>("");
+  const initialSyncHandledRef = useRef(false);
 
   useEffect(() => {
     const normalizedProviderType = providerType.trim();
@@ -568,49 +606,61 @@ export function useTrayModelShortcuts({
     lastSyncedSignatureRef.current = signature;
 
     let cancelled = false;
+    const runSync = () => {
+      void syncTrayModelShortcutsState(
+        normalizedProviderType,
+        normalizedModel,
+        normalizedTheme || undefined,
+      ).catch((error) => {
+        if (!cancelled) {
+          console.warn("[TrayModelShortcuts] 同步托盘模型状态失败:", error);
+        }
+      });
+    };
+    let cleanupScheduledTask: (() => void) | null = null;
 
-    void syncTrayModelShortcutsState(
-      normalizedProviderType,
-      normalizedModel,
-      normalizedTheme || undefined,
-    ).catch((error) => {
-      if (!cancelled) {
-        console.warn("[TrayModelShortcuts] 同步托盘模型状态失败:", error);
-      }
-    });
+    if (!initialSyncHandledRef.current && deferInitialSync) {
+      initialSyncHandledRef.current = true;
+      cleanupScheduledTask = scheduleTrayModelSync(() => {
+        if (!cancelled) {
+          runSync();
+        }
+      });
+    } else {
+      initialSyncHandledRef.current = true;
+      runSync();
+    }
 
     return () => {
       cancelled = true;
+      cleanupScheduledTask?.();
     };
-  }, [activeTheme, model, providerType]);
+  }, [activeTheme, deferInitialSync, model, providerType]);
 
   useEffect(() => {
     let cancelled = false;
     let dispose: (() => void) | null = null;
 
-    safeListen<TrayModelSelectedPayload>(
-      TRAY_MODEL_SELECTED_EVENT,
-      (event) => {
-        if (cancelled) {
-          return;
-        }
+    safeListen<TrayModelSelectedPayload>(TRAY_MODEL_SELECTED_EVENT, (event) => {
+      if (cancelled) {
+        return;
+      }
 
-        const nextProviderType = event.payload?.providerType?.trim() || "";
-        const nextModel = event.payload?.model?.trim() || "";
+      const nextProviderType = event.payload?.providerType?.trim() || "";
+      const nextModel = event.payload?.model?.trim() || "";
 
-        if (!nextModel) {
-          return;
-        }
+      if (!nextModel) {
+        return;
+      }
 
-        if (nextProviderType && nextProviderType !== providerType) {
-          setProviderType(nextProviderType);
-        }
+      if (nextProviderType && nextProviderType !== providerType) {
+        setProviderType(nextProviderType);
+      }
 
-        if (nextModel !== model) {
-          setModel(nextModel);
-        }
-      },
-    )
+      if (nextModel !== model) {
+        setModel(nextModel);
+      }
+    })
       .then((unlisten) => {
         if (cancelled) {
           void unlisten();

@@ -1,11 +1,11 @@
 use super::{
-    args_or_default, create_default_project_if_missing, ensure_update_root_path,
-    ensure_valid_workspace_root, get_optional_bool_arg, get_string_arg, parse_nested_arg,
-    remove_workspace_directory_if_requested, to_workspace_list_item_json, workspace_manager,
-    CreateWorkspaceRequest, DynError, PathBuf, UpdateWorkspaceRequest, WorkspaceType,
-    WorkspaceUpdate,
+    args_or_default, ensure_update_root_path, ensure_valid_workspace_root, get_optional_bool_arg,
+    get_string_arg, parse_nested_arg, remove_workspace_directory_if_requested,
+    to_workspace_list_item_json, workspace_manager, CreateWorkspaceRequest, DynError, PathBuf,
+    UpdateWorkspaceRequest, WorkspaceType, WorkspaceUpdate,
 };
 use crate::dev_bridge::DevBridgeState;
+use crate::workspace_support::get_or_create_default_project;
 use serde_json::Value as JsonValue;
 
 pub(super) fn try_handle(
@@ -75,7 +75,7 @@ pub(super) fn try_handle(
         }
         "get_or_create_default_project" => {
             let manager = workspace_manager(state)?;
-            create_default_project_if_missing(&manager)?
+            to_workspace_list_item_json(get_or_create_default_project(&manager)?)?
         }
         _ => return Ok(None),
     };

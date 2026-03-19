@@ -28,7 +28,7 @@ interface InputbarProps {
     thinking?: boolean,
     textOverride?: string,
     executionStrategy?: "react" | "code_orchestrated" | "auto",
-  ) => void;
+  ) => void | Promise<boolean> | boolean;
   /** 停止生成回调 */
   onStop?: () => void;
   isLoading: boolean;

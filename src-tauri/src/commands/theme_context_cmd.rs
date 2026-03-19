@@ -7,7 +7,7 @@ use crate::agent::{AsterAgentState, AsterAgentWrapper};
 use crate::config::GlobalConfigManagerState;
 use crate::database::DbConnection;
 use crate::services::memory_profile_prompt_service::{
-    merge_system_prompt_with_memory_profile, merge_system_prompt_with_memory_sources,
+    merge_system_prompt_with_memory_context, MemoryPromptContext,
 };
 use crate::services::web_search_prompt_service::merge_system_prompt_with_web_search;
 use crate::services::web_search_runtime_service::apply_web_search_runtime_env;
@@ -386,14 +386,12 @@ pub async fn aster_agent_theme_context_search(
         Some(RequestToolPolicyMode::Required),
         false,
     );
-    let working_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let system_prompt = lime_agent::merge_system_prompt_with_request_tool_policy(
         merge_system_prompt_with_web_search(
-            merge_system_prompt_with_memory_sources(
-                merge_system_prompt_with_memory_profile(project_prompt, &runtime_config),
+            merge_system_prompt_with_memory_context(
+                project_prompt,
                 &runtime_config,
-                &working_dir,
-                None,
+                MemoryPromptContext::with_working_dir(Path::new(&workspace_root)),
             ),
             &runtime_config,
         ),

@@ -1,5 +1,4 @@
 use crate::database::dao::agent::{AgentDao, AgentModelPatternMatch};
-use crate::database::load_pending_general_messages;
 use chrono::{Local, TimeZone};
 use rusqlite::Connection;
 use std::collections::HashSet;
@@ -24,15 +23,6 @@ pub fn load_memory_source_candidates(
     let mut candidates = Vec::new();
     let mut seen = HashSet::new();
 
-    load_pending_general_candidates(
-        conn,
-        from_timestamp,
-        to_timestamp,
-        limit,
-        min_message_length,
-        &mut candidates,
-        &mut seen,
-    )?;
     load_unified_general_candidates(
         conn,
         from_timestamp,
@@ -56,33 +46,6 @@ pub fn load_memory_source_candidates(
     candidates.truncate(limit);
 
     Ok(candidates)
-}
-
-fn load_pending_general_candidates(
-    conn: &Connection,
-    from_timestamp: Option<i64>,
-    to_timestamp: Option<i64>,
-    limit: usize,
-    min_message_length: usize,
-    candidates: &mut Vec<MemorySourceCandidate>,
-    seen: &mut HashSet<String>,
-) -> Result<(), String> {
-    let rows = load_pending_general_messages(conn, from_timestamp, to_timestamp, limit)
-        .map_err(|e| format!("读取待迁移 general 消息失败: {e}"))?;
-
-    for row in rows {
-        push_candidate(
-            candidates,
-            seen,
-            row.session_id,
-            row.role,
-            row.content,
-            normalize_timestamp(row.created_at),
-            min_message_length,
-        );
-    }
-
-    Ok(())
 }
 
 fn load_unified_general_candidates(
@@ -274,7 +237,7 @@ mod tests {
     }
 
     #[test]
-    fn load_memory_source_candidates_merges_unified_and_legacy_without_duplicates() {
+    fn load_memory_source_candidates_only_reads_unified_general_and_agent_messages() {
         let conn = Connection::open_in_memory().expect("open in memory db");
         create_test_schema(&conn);
 
@@ -296,28 +259,6 @@ mod tests {
                 "2026-03-12T10:05:00+08:00",
                 "2026-03-12T10:05:00+08:00"
             ],
-        )
-        .unwrap();
-
-        conn.execute(
-            "INSERT INTO general_chat_sessions (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params!["general-migrated", "旧会话", 1_741_744_000_000i64, 1_741_744_000_000i64],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO general_chat_sessions (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",
-            params!["legacy-only", "旧会话2", 1_741_744_100_000i64, 1_741_744_100_000i64],
-        )
-        .unwrap();
-
-        conn.execute(
-            "INSERT INTO general_chat_messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params!["g1", "general-migrated", "user", "这条消息已经迁移", 1_741_744_000_000i64],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO general_chat_messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params!["g2", "legacy-only", "assistant", "这条消息仍在旧表中", 1_741_744_100_000i64],
         )
         .unwrap();
 
@@ -349,22 +290,15 @@ mod tests {
             .iter()
             .map(|item| item.session_id.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(candidates.len(), 3);
+        assert_eq!(candidates.len(), 2);
         assert!(session_ids.contains(&"general-migrated"));
-        assert!(session_ids.contains(&"legacy-only"));
         assert!(session_ids.contains(&"agent-1"));
     }
 
     #[test]
-    fn load_memory_source_candidates_skips_legacy_general_after_migration_completed() {
+    fn load_memory_source_candidates_ignores_pending_general_tables() {
         let conn = Connection::open_in_memory().expect("open in memory db");
         create_test_schema(&conn);
-
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
-            params!["migrated_general_chat_to_unified", "true"],
-        )
-        .unwrap();
 
         conn.execute(
             "INSERT INTO agent_sessions (id, model, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",

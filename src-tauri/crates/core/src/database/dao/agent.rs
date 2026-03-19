@@ -463,6 +463,12 @@ pub struct AgentModelUsageRow {
     pub content_chars: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentSessionOverviewRow {
+    pub session: AgentSession,
+    pub messages_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentMessageTextRow {
     pub session_id: String,
@@ -494,6 +500,20 @@ fn parse_datetime_or_timestamp_to_millis(value: &str) -> Option<i64> {
                 .single()
                 .map(|dt| dt.timestamp_millis())
         })
+}
+
+fn map_agent_session_row(row: &rusqlite::Row) -> Result<AgentSession, rusqlite::Error> {
+    Ok(AgentSession {
+        id: row.get(0)?,
+        model: row.get(1)?,
+        messages: Vec::new(),
+        system_prompt: row.get(2)?,
+        title: row.get(3)?,
+        created_at: row.get(4)?,
+        updated_at: row.get(5)?,
+        working_dir: row.get(6)?,
+        execution_strategy: row.get(7)?,
+    })
 }
 
 impl AgentDao {
@@ -532,17 +552,7 @@ impl AgentDao {
         let mut rows = stmt.query([session_id])?;
 
         if let Some(row) = rows.next()? {
-            Ok(Some(AgentSession {
-                id: row.get(0)?,
-                model: row.get(1)?,
-                messages: Vec::new(), // 消息需要单独加载
-                system_prompt: row.get(2)?,
-                title: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-                working_dir: row.get(6)?,
-                execution_strategy: row.get(7)?,
-            }))
+            Ok(Some(map_agent_session_row(row)?))
         } else {
             Ok(None)
         }
@@ -569,21 +579,59 @@ impl AgentDao {
              FROM agent_sessions ORDER BY updated_at DESC",
         )?;
 
-        let sessions = stmt.query_map([], |row| {
-            Ok(AgentSession {
-                id: row.get(0)?,
-                model: row.get(1)?,
-                messages: Vec::new(),
-                system_prompt: row.get(2)?,
-                title: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
-                working_dir: row.get(6)?,
-                execution_strategy: row.get(7)?,
+        let sessions = stmt.query_map([], map_agent_session_row)?;
+
+        sessions.collect()
+    }
+
+    pub fn list_session_overviews(
+        conn: &Connection,
+    ) -> Result<Vec<AgentSessionOverviewRow>, rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.model, s.system_prompt, s.title, s.created_at, s.updated_at,
+                    s.working_dir, s.execution_strategy, COUNT(m.id) AS messages_count
+             FROM agent_sessions s
+             LEFT JOIN agent_messages m ON m.session_id = s.id
+             GROUP BY s.id, s.model, s.system_prompt, s.title, s.created_at, s.updated_at,
+                      s.working_dir, s.execution_strategy
+             ORDER BY s.updated_at DESC",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let messages_count: i64 = row.get(8)?;
+            Ok(AgentSessionOverviewRow {
+                session: map_agent_session_row(row)?,
+                messages_count: messages_count.max(0) as usize,
             })
         })?;
 
-        sessions.collect()
+        rows.collect()
+    }
+
+    pub fn get_session_overview(
+        conn: &Connection,
+        session_id: &str,
+    ) -> Result<Option<AgentSessionOverviewRow>, rusqlite::Error> {
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.model, s.system_prompt, s.title, s.created_at, s.updated_at,
+                    s.working_dir, s.execution_strategy, COUNT(m.id) AS messages_count
+             FROM agent_sessions s
+             LEFT JOIN agent_messages m ON m.session_id = s.id
+             WHERE s.id = ?1
+             GROUP BY s.id, s.model, s.system_prompt, s.title, s.created_at, s.updated_at,
+                      s.working_dir, s.execution_strategy",
+        )?;
+        let mut rows = stmt.query([session_id])?;
+
+        if let Some(row) = rows.next()? {
+            let messages_count: i64 = row.get(8)?;
+            Ok(Some(AgentSessionOverviewRow {
+                session: map_agent_session_row(row)?,
+                messages_count: messages_count.max(0) as usize,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// 获取会话的消息数量
@@ -960,6 +1008,19 @@ impl AgentDao {
         Ok(())
     }
 
+    pub fn rename_session(
+        conn: &Connection,
+        session_id: &str,
+        title: &str,
+        updated_at: &str,
+    ) -> Result<(), rusqlite::Error> {
+        conn.execute(
+            "UPDATE agent_sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+            params![title, updated_at, session_id],
+        )?;
+        Ok(())
+    }
+
     /// 更新会话工作目录
     pub fn update_working_dir(
         conn: &Connection,
@@ -1276,5 +1337,74 @@ mod tests {
         assert_eq!(general_rows[0].role, "assistant");
         assert_eq!(general_rows[0].content, "第二条 general 消息");
         assert!(general_rows[0].timestamp_ms > 0);
+    }
+
+    #[test]
+    fn session_overview_queries_and_rename_should_work() {
+        let conn = setup_pattern_test_db();
+
+        conn.execute(
+            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir, execution_strategy)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "session-a",
+                "claude-sonnet-4",
+                "system-a",
+                "标题 A",
+                "2026-03-10T10:00:00+08:00",
+                "2026-03-10T10:00:00+08:00",
+                "/tmp/a",
+                "react"
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir, execution_strategy)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                "session-b",
+                "gpt-4.1",
+                "system-b",
+                "标题 B",
+                "2026-03-11T10:00:00+08:00",
+                "2026-03-11T10:00:00+08:00",
+                "/tmp/b",
+                "auto"
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_messages (session_id, role, content_json, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            params!["session-a", "user", r#"[{"type":"text","text":"消息一"}]"#, "2026-03-10T10:01:00+08:00"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_messages (session_id, role, content_json, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            params!["session-a", "assistant", r#"[{"type":"text","text":"消息二"}]"#, "2026-03-10T10:02:00+08:00"],
+        )
+        .unwrap();
+
+        let overviews = AgentDao::list_session_overviews(&conn).unwrap();
+        assert_eq!(overviews.len(), 2);
+        assert_eq!(overviews[0].session.id, "session-b");
+        assert_eq!(overviews[0].messages_count, 0);
+        assert_eq!(overviews[1].session.id, "session-a");
+        assert_eq!(overviews[1].messages_count, 2);
+
+        let overview = AgentDao::get_session_overview(&conn, "session-a")
+            .unwrap()
+            .expect("session-a overview");
+        assert_eq!(overview.session.title.as_deref(), Some("标题 A"));
+        assert_eq!(overview.messages_count, 2);
+        assert_eq!(overview.session.working_dir.as_deref(), Some("/tmp/a"));
+
+        AgentDao::rename_session(&conn, "session-a", "新的标题", "2026-03-12T09:00:00+08:00")
+            .unwrap();
+
+        let renamed = AgentDao::get_session_overview(&conn, "session-a")
+            .unwrap()
+            .expect("renamed overview");
+        assert_eq!(renamed.session.title.as_deref(), Some("新的标题"));
+        assert_eq!(renamed.session.updated_at, "2026-03-12T09:00:00+08:00");
     }
 }

@@ -209,6 +209,23 @@ describe("HarnessStatusPanel", () => {
     expect(document.body.textContent).toContain("等待首个模型事件");
   });
 
+  it("仅有计划摘要兜底时也应在工作台显示已就绪计划状态", () => {
+    renderPanel({
+      harnessState: createHarnessState({
+        plan: {
+          phase: "ready",
+          items: [],
+          summaryText: "已决定：直接回答优先\n当前请求无需工具介入。",
+        },
+      }),
+    });
+
+    expect(document.body.textContent).toContain("计划状态");
+    expect(document.body.textContent).toContain("已就绪");
+    expect(document.body.textContent).toContain("已决定：直接回答优先");
+    expect(document.body.textContent).toContain("规划状态");
+  });
+
   it("存在 activeFileWrites 时应在工作台中展示当前文件写入", () => {
     renderPanel({
       harnessState: createHarnessState({

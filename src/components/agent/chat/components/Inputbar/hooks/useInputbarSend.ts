@@ -19,7 +19,7 @@ interface UseInputbarSendParams {
     thinking?: boolean,
     textOverride?: string,
     executionStrategy?: "react" | "code_orchestrated" | "auto",
-  ) => void;
+  ) => void | Promise<boolean> | boolean;
   clearPendingImages: () => void;
   clearActiveSkill: () => void;
 }
@@ -37,7 +37,7 @@ export function useInputbarSend({
   clearPendingImages,
   clearActiveSkill,
 }: UseInputbarSendParams) {
-  return useCallback(() => {
+  return useCallback(async () => {
     if (!input.trim() && pendingImages.length === 0) {
       return;
     }
@@ -63,15 +63,22 @@ export function useInputbarSend({
       textOverride = `/${SOCIAL_ARTICLE_SKILL_KEY} ${input}`.trim();
     }
 
-    onSend(
-      pendingImages.length > 0 ? pendingImages : undefined,
-      webSearch,
-      thinking,
-      textOverride,
-      strategy,
-    );
-    clearPendingImages();
-    clearActiveSkill();
+    try {
+      const result = await onSend(
+        pendingImages.length > 0 ? pendingImages : undefined,
+        webSearch,
+        thinking,
+        textOverride,
+        strategy,
+      );
+      if (result === false) {
+        return;
+      }
+      clearPendingImages();
+      clearActiveSkill();
+    } catch {
+      // 发送失败时保留图片与技能，交由上层 toast / 恢复逻辑处理。
+    }
   }, [
     activeSkill,
     activeTheme,

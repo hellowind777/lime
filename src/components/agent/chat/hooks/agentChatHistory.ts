@@ -86,6 +86,50 @@ export const appendTextToParts = (
   return newParts;
 };
 
+export const appendThinkingToHistoryParts = (
+  parts: ContentPart[],
+  text: string,
+): ContentPart[] => {
+  if (!text) {
+    return parts;
+  }
+
+  const nextParts = [...parts];
+  const lastPart = nextParts[nextParts.length - 1];
+
+  if (lastPart?.type === "thinking") {
+    nextParts[nextParts.length - 1] = {
+      type: "thinking",
+      text: lastPart.text + text,
+    };
+    return nextParts;
+  }
+
+  nextParts.push({
+    type: "thinking",
+    text,
+  });
+  return nextParts;
+};
+
+export const extractThinkingContentFromParts = (
+  parts?: ContentPart[],
+): string | undefined => {
+  if (!parts || parts.length === 0) {
+    return undefined;
+  }
+
+  const thinkingText = parts
+    .filter(
+      (part): part is Extract<ContentPart, { type: "thinking" }> =>
+        part.type === "thinking",
+    )
+    .map((part) => part.text)
+    .join("");
+
+  return thinkingText || undefined;
+};
+
 export const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
   const merged: Message[] = [];
 
@@ -182,7 +226,7 @@ export const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] =
       artifacts: artifacts.length > 0 ? artifacts : undefined,
       timestamp: current.timestamp,
       isThinking: false,
-      thinkingContent: undefined,
+      thinkingContent: extractThinkingContentFromParts(contentParts),
     };
   }
 
@@ -191,6 +235,72 @@ export const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] =
 
 const normalizeSignatureText = (text: string): string =>
   text.replace(/\s+/g, " ").trim();
+
+const hasMessageImages = (message: Message): boolean =>
+  Array.isArray(message.images) && message.images.length > 0;
+
+const findMatchingLocalUserMessageIndex = (
+  localUserMessages: Message[],
+  targetMessage: Message,
+  startIndex: number,
+): number => {
+  const targetContent = normalizeSignatureText(targetMessage.content || "");
+
+  for (let index = startIndex; index < localUserMessages.length; index += 1) {
+    const candidate = localUserMessages[index];
+    if (!candidate) {
+      continue;
+    }
+
+    const candidateContent = normalizeSignatureText(candidate.content || "");
+    if (candidateContent === targetContent) {
+      return index;
+    }
+  }
+
+  return -1;
+};
+
+export const mergeHydratedMessagesWithLocalState = (
+  localMessages: Message[],
+  hydratedMessages: Message[],
+): Message[] => {
+  const localUserMessages = localMessages.filter(
+    (message) => message.role === "user",
+  );
+
+  if (localUserMessages.length === 0 || hydratedMessages.length === 0) {
+    return hydratedMessages;
+  }
+
+  let localUserCursor = 0;
+
+  return hydratedMessages.map((message) => {
+    if (message.role !== "user") {
+      return message;
+    }
+
+    const matchedIndex = findMatchingLocalUserMessageIndex(
+      localUserMessages,
+      message,
+      localUserCursor,
+    );
+    if (matchedIndex < 0) {
+      return message;
+    }
+
+    localUserCursor = matchedIndex + 1;
+    const localMessage = localUserMessages[matchedIndex];
+    if (!localMessage || hasMessageImages(message) || !hasMessageImages(localMessage)) {
+      return message;
+    }
+
+    return {
+      ...message,
+      images: localMessage.images,
+    };
+  });
+};
 
 const messageImageSignature = (images?: MessageImage[]): string => {
   if (!images || images.length === 0) return "";
@@ -333,13 +443,24 @@ export const hydrateSessionDetailMessages = (
           continue;
         }
 
-        if (
-          (partType === "thinking" || partType === "reasoning") &&
-          typeof (part.text ?? part.content) === "string"
-        ) {
-          const thinkingText = String(part.text ?? part.content).trim();
-          if (thinkingText) {
-            contentParts.push({ type: "thinking", text: thinkingText });
+        if (partType === "thinking" || partType === "reasoning") {
+          const rawThinking =
+            typeof part.thinking === "string"
+              ? part.thinking
+              : typeof part.reasoning === "string"
+                ? part.reasoning
+                : typeof part.text === "string"
+                  ? part.text
+                  : typeof part.content === "string"
+                    ? part.content
+                    : "";
+
+          if (rawThinking) {
+            const mergedThinkingParts = appendThinkingToHistoryParts(
+              contentParts,
+              rawThinking,
+            );
+            contentParts.splice(0, contentParts.length, ...mergedThinkingParts);
           }
           continue;
         }
@@ -482,6 +603,7 @@ export const hydrateSessionDetailMessages = (
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           timestamp: messageTimestamp,
           isThinking: false,
+          thinkingContent: extractThinkingContentFromParts(contentParts),
         },
       ];
     });

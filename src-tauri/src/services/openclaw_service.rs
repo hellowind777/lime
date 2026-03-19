@@ -125,6 +125,12 @@ pub struct EnvironmentDiagnostics {
     pub supplemental_search_dirs: Vec<String>,
     #[serde(default)]
     pub supplemental_command_candidates: Vec<String>,
+    #[serde(default)]
+    pub git_where_candidates: Vec<String>,
+    #[serde(default)]
+    pub git_supplemental_search_dirs: Vec<String>,
+    #[serde(default)]
+    pub git_supplemental_command_candidates: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4089,23 +4095,30 @@ fn find_command_in_bin_dir(command_name: &str, bin_dir: &Path) -> Option<PathBuf
     ))
 }
 
-async fn collect_preferred_runtime_command_dirs(
-    command_name: &str,
-    preferred_bin_dir: &Path,
-) -> Result<Vec<PathBuf>, String> {
+fn collect_existing_unique_dirs<I>(candidates: I) -> Vec<PathBuf>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
     let mut dirs = Vec::new();
     let mut seen = HashSet::new();
 
-    let mut push_dir = |dir: PathBuf| {
+    for dir in candidates {
         if dir.as_os_str().is_empty() || !dir.exists() {
-            return;
+            continue;
         }
         if seen.insert(dir.clone()) {
             dirs.push(dir);
         }
-    };
+    }
 
-    push_dir(preferred_bin_dir.to_path_buf());
+    dirs
+}
+
+async fn collect_preferred_runtime_command_dirs(
+    command_name: &str,
+    preferred_bin_dir: &Path,
+) -> Result<Vec<PathBuf>, String> {
+    let mut candidate_dirs = vec![preferred_bin_dir.to_path_buf()];
 
     if command_name == "openclaw" {
         if let Some(npm_path) = find_command_in_bin_dir("npm", preferred_bin_dir)
@@ -4113,13 +4126,13 @@ async fn collect_preferred_runtime_command_dirs(
         {
             if let Some(prefix) = detect_npm_global_prefix(&npm_path).await {
                 for dir in npm_global_command_dirs(&prefix) {
-                    push_dir(dir);
+                    candidate_dirs.push(dir);
                 }
             }
         }
     }
 
-    Ok(dirs)
+    Ok(collect_existing_unique_dirs(candidate_dirs))
 }
 
 async fn collect_preferred_runtime_command_candidates(
@@ -4252,7 +4265,15 @@ async fn select_command_candidate(
         return select_node_runtime_candidate(candidates).await;
     }
 
+    if command_name == "git" {
+        return Ok(select_best_git_candidate(candidates));
+    }
+
     Ok(candidates.into_iter().next())
+}
+
+fn select_best_git_candidate(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    select_preferred_path_candidate(candidates.clone()).or_else(|| candidates.into_iter().next())
 }
 
 async fn select_preferred_runtime_candidate(
@@ -4287,68 +4308,61 @@ async fn select_preferred_runtime_candidate(
 }
 
 fn find_all_commands_in_known_locations(command_name: &str) -> Vec<PathBuf> {
-    let search_dirs = collect_known_command_search_dirs();
+    let search_dirs = collect_known_command_search_dirs(command_name);
     find_all_commands_in_paths(command_name, &search_dirs)
 }
 
-fn collect_known_command_search_dirs() -> Vec<PathBuf> {
+fn collect_known_command_search_dirs(_command_name: &str) -> Vec<PathBuf> {
     let mut search_dirs = Vec::new();
-    let mut seen = HashSet::new();
-
-    let mut push_dir = |dir: PathBuf| {
-        if dir.as_os_str().is_empty() || !dir.exists() {
-            return;
-        }
-        if seen.insert(dir.clone()) {
-            search_dirs.push(dir);
-        }
-    };
 
     if let Some(path_var) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            push_dir(dir);
-        }
+        search_dirs.extend(std::env::split_paths(&path_var));
     }
 
     if let Some(home) = home_dir() {
-        push_dir(home.join(".npm-global/bin"));
-        push_dir(home.join(".local/bin"));
-        push_dir(home.join(".bun/bin"));
-        push_dir(home.join(".volta/bin"));
-        push_dir(home.join(".asdf/shims"));
-        push_dir(home.join(".local/share/mise/shims"));
-        push_dir(home.join("Library/PhpWebStudy/env/node/bin"));
+        search_dirs.extend([
+            home.join(".npm-global/bin"),
+            home.join(".local/bin"),
+            home.join(".bun/bin"),
+            home.join(".volta/bin"),
+            home.join(".asdf/shims"),
+            home.join(".local/share/mise/shims"),
+            home.join("Library/PhpWebStudy/env/node/bin"),
+        ]);
 
         let nvm_versions = home.join(".nvm/versions/node");
         if let Ok(entries) = std::fs::read_dir(nvm_versions) {
             for entry in entries.flatten() {
-                push_dir(entry.path().join("bin"));
+                search_dirs.push(entry.path().join("bin"));
             }
         }
 
         let fnm_versions = home.join(".fnm/node-versions");
         if let Ok(entries) = std::fs::read_dir(fnm_versions) {
             for entry in entries.flatten() {
-                push_dir(entry.path().join("installation/bin"));
+                search_dirs.push(entry.path().join("installation/bin"));
             }
         }
     }
 
     #[cfg(target_os = "windows")]
     {
-        for dir in windows_known_command_dirs_from_env() {
-            push_dir(dir);
+        search_dirs.extend(windows_known_command_dirs_from_env());
+        if _command_name == "git" {
+            search_dirs.extend(windows_known_git_command_dirs_from_env());
         }
     }
 
     if cfg!(target_os = "macos") {
-        push_dir(PathBuf::from("/opt/homebrew/bin"));
-        push_dir(PathBuf::from("/usr/local/bin"));
-        push_dir(PathBuf::from("/usr/bin"));
-        push_dir(PathBuf::from("/bin"));
+        search_dirs.extend([
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/usr/bin"),
+            PathBuf::from("/bin"),
+        ]);
     }
 
-    search_dirs
+    collect_existing_unique_dirs(search_dirs)
 }
 
 #[cfg(target_os = "windows")]
@@ -4386,17 +4400,64 @@ fn windows_known_command_dirs_from_env() -> Vec<PathBuf> {
     dirs
 }
 
-fn find_all_commands_in_paths(command_name: &str, search_dirs: &[PathBuf]) -> Vec<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let candidates = [
-        format!("{command_name}.exe"),
-        format!("{command_name}.cmd"),
-        format!("{command_name}.bat"),
-        command_name.to_string(),
-    ];
+#[cfg(any(target_os = "windows", test))]
+fn windows_git_install_dir_variants(root: PathBuf) -> Vec<PathBuf> {
+    vec![
+        root.join("cmd"),
+        root.join("bin"),
+        root.join("mingw64").join("bin"),
+    ]
+}
 
-    #[cfg(not(target_os = "windows"))]
-    let candidates = [command_name.to_string()];
+#[cfg(target_os = "windows")]
+fn windows_known_git_command_dirs_from_env() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        dirs.extend(windows_git_install_dir_variants(
+            PathBuf::from(program_files).join("Git"),
+        ));
+    }
+
+    if let Some(program_files_x86) = std::env::var_os("ProgramFiles(x86)") {
+        dirs.extend(windows_git_install_dir_variants(
+            PathBuf::from(program_files_x86).join("Git"),
+        ));
+    }
+
+    if let Some(localappdata) = std::env::var_os("LOCALAPPDATA") {
+        dirs.extend(windows_git_install_dir_variants(
+            PathBuf::from(localappdata).join("Programs").join("Git"),
+        ));
+    }
+
+    if let Some(home) = home_dir() {
+        dirs.extend(windows_git_install_dir_variants(
+            home.join("scoop").join("apps").join("git").join("current"),
+        ));
+    }
+
+    dirs
+}
+
+fn find_all_commands_in_paths(command_name: &str, search_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    find_all_commands_in_paths_for(current_shell_platform(), command_name, search_dirs)
+}
+
+fn find_all_commands_in_paths_for(
+    platform: ShellPlatform,
+    command_name: &str,
+    search_dirs: &[PathBuf],
+) -> Vec<PathBuf> {
+    let candidates = match platform {
+        ShellPlatform::Windows => vec![
+            format!("{command_name}.exe"),
+            format!("{command_name}.cmd"),
+            format!("{command_name}.bat"),
+            command_name.to_string(),
+        ],
+        ShellPlatform::Unix => vec![command_name.to_string()],
+    };
 
     let mut matches = Vec::new();
     let mut seen = HashSet::new();
@@ -4844,6 +4905,24 @@ async fn collect_environment_diagnostics() -> EnvironmentDiagnostics {
         .and_then(find_installed_openclaw_package_details)
         .map(|package| package.path.display().to_string());
 
+    #[cfg(target_os = "windows")]
+    let git_where_candidates = find_commands_via_where("git")
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|path| path.display().to_string())
+        .collect();
+
+    #[cfg(not(target_os = "windows"))]
+    let git_where_candidates = Vec::new();
+
+    let git_supplemental_search_dirs = collect_supplemental_git_search_dirs();
+    let git_supplemental_command_candidates =
+        find_all_commands_in_paths("git", &git_supplemental_search_dirs)
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect();
+
     EnvironmentDiagnostics {
         npm_path,
         npm_global_prefix,
@@ -4854,36 +4933,40 @@ async fn collect_environment_diagnostics() -> EnvironmentDiagnostics {
             .map(|path| path.display().to_string())
             .collect(),
         supplemental_command_candidates,
+        git_where_candidates,
+        git_supplemental_search_dirs: git_supplemental_search_dirs
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect(),
+        git_supplemental_command_candidates,
     }
 }
 
 fn collect_supplemental_openclaw_search_dirs(npm_global_prefix: Option<&str>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    let mut seen = HashSet::new();
-
-    let mut push_dir = |dir: PathBuf| {
-        if dir.as_os_str().is_empty() || !dir.exists() {
-            return;
-        }
-        if seen.insert(dir.clone()) {
-            dirs.push(dir);
-        }
-    };
 
     #[cfg(target_os = "windows")]
     {
-        for dir in windows_known_command_dirs_from_env() {
-            push_dir(dir);
-        }
+        dirs.extend(windows_known_command_dirs_from_env());
     }
 
     if let Some(prefix) = npm_global_prefix {
-        for dir in npm_global_command_dirs(prefix) {
-            push_dir(dir);
-        }
+        dirs.extend(npm_global_command_dirs(prefix));
     }
 
-    dirs
+    collect_existing_unique_dirs(dirs)
+}
+
+fn collect_supplemental_git_search_dirs() -> Vec<PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        return collect_existing_unique_dirs(windows_known_git_command_dirs_from_env());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
 }
 
 async fn select_best_node_candidate(candidates: Vec<PathBuf>) -> Result<Option<PathBuf>, String> {
@@ -5263,15 +5346,15 @@ mod tests {
         npm_global_node_modules_dirs_for, package_registry_for_package_spec,
         parse_semver_from_text, resolve_openclaw_cli_entry_from_package_manifest,
         resolve_openclaw_command_from_runtime_candidate, resolve_windows_dependency_install_plan,
-        runtime_candidate_matches_install_root, sanitize_runtime_config,
+        runtime_candidate_matches_install_root, sanitize_runtime_config, select_best_git_candidate,
         select_best_semver_candidate, select_gateway_start_failure_detail,
         select_openclaw_update_failure_detail, select_preferred_path_candidate,
         shell_command_escape_for, shell_npm_prefix_assignment_for, shell_path_assignment_for,
         trim_trailing_slash, windows_dependency_action_result, windows_dependency_setup_message,
-        windows_install_block_result, windows_manual_install_message, DependencyKind,
-        DependencyStatus, EnvironmentDiagnostics, OpenClawRuntimeCandidate,
-        ResolvedOpenClawCommand, ShellPlatform, WindowsDependencyInstallPlan, NPM_MIRROR_CN,
-        OPENCLAW_CN_PACKAGE, OPENCLAW_DEFAULT_PACKAGE,
+        windows_git_install_dir_variants, windows_install_block_result,
+        windows_manual_install_message, DependencyKind, DependencyStatus, EnvironmentDiagnostics,
+        OpenClawRuntimeCandidate, ResolvedOpenClawCommand, ShellPlatform,
+        WindowsDependencyInstallPlan, NPM_MIRROR_CN, OPENCLAW_CN_PACKAGE, OPENCLAW_DEFAULT_PACKAGE,
     };
     use crate::database::dao::api_key_provider::{ApiKeyProvider, ApiProviderType, ProviderGroup};
     use chrono::Utc;
@@ -5921,6 +6004,43 @@ mod tests {
         assert_eq!(
             preferred,
             Some(PathBuf::from(r"C:\nvm4w\nodejs\openclaw.exe"))
+        );
+    }
+
+    #[test]
+    fn git_candidate_selection_prefers_executable_extension() {
+        let preferred = select_best_git_candidate(vec![
+            PathBuf::from(r"C:\Program Files\Git\cmd\git.cmd"),
+            PathBuf::from(r"C:\Program Files\Git\cmd\git.exe"),
+        ]);
+
+        assert_eq!(
+            preferred,
+            Some(PathBuf::from(r"C:\Program Files\Git\cmd\git.exe"))
+        );
+    }
+
+    #[test]
+    fn windows_git_install_dir_variants_cover_common_layouts() {
+        let git_root = build_unique_temp_dir("git-layout-root");
+        let cmd_dir = git_root.join("cmd");
+        let bin_dir = git_root.join("bin");
+        fs::create_dir_all(&cmd_dir).unwrap();
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::write(cmd_dir.join("git.exe"), "").unwrap();
+        fs::write(bin_dir.join("git.cmd"), "").unwrap();
+
+        let matches = super::find_all_commands_in_paths_for(
+            ShellPlatform::Windows,
+            "git",
+            &windows_git_install_dir_variants(git_root.clone()),
+        );
+
+        let _ = fs::remove_dir_all(&git_root);
+
+        assert_eq!(
+            matches,
+            vec![cmd_dir.join("git.exe"), bin_dir.join("git.cmd")]
         );
     }
 

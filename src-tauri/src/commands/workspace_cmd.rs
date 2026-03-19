@@ -19,7 +19,10 @@ use crate::services::workspace_health_service::{
 use crate::workspace::{
     Workspace, WorkspaceManager, WorkspaceSettings, WorkspaceType, WorkspaceUpdate,
 };
-use lime_core::app_paths;
+use crate::workspace_support::{
+    get_or_create_default_project as load_or_create_default_project,
+    get_workspace_projects_root_dir, sanitize_project_dir_name,
+};
 use lime_core::database::lock_db;
 use lime_services::project_context_builder::ProjectContextBuilder;
 use serde::{Deserialize, Serialize};
@@ -27,31 +30,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 use tokio::sync::RwLock;
-
-/// 获取统一的项目根目录
-fn get_workspace_projects_root_dir() -> Result<PathBuf, String> {
-    app_paths::resolve_projects_dir()
-}
-
-/// 规范化项目目录名，避免非法路径字符
-fn sanitize_project_dir_name(name: &str) -> String {
-    let sanitized: String = name
-        .trim()
-        .chars()
-        .map(|ch| match ch {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ if ch.is_control() => '_',
-            _ => ch,
-        })
-        .collect();
-
-    let trimmed = sanitized.trim().trim_matches('.').to_string();
-    if trimmed.is_empty() {
-        "未命名项目".to_string()
-    } else {
-        trimmed
-    }
-}
 
 /// Workspace 管理器状态
 #[allow(dead_code)]
@@ -386,30 +364,7 @@ pub async fn get_or_create_default_project(
     db: State<'_, DbConnection>,
 ) -> Result<WorkspaceListItem, String> {
     let manager = WorkspaceManager::new(db.inner().clone());
-
-    // 先尝试获取默认项目
-    if let Some(workspace) = manager.get_default()? {
-        return Ok(workspace.into());
-    }
-
-    // 不存在则创建默认项目
-    let default_project_path = get_workspace_projects_root_dir()?.join("default");
-
-    std::fs::create_dir_all(&default_project_path)
-        .map_err(|e| format!("创建默认项目目录失败: {e}"))?;
-
-    let workspace = manager.create_with_type(
-        "默认项目".to_string(),
-        default_project_path,
-        WorkspaceType::Persistent,
-    )?;
-
-    // 设置为默认
-    manager.set_default(&workspace.id)?;
-
-    // 重新获取以确保 is_default 标志正确
-    let workspace = manager.get(&workspace.id)?.ok_or("创建默认项目失败")?;
-    Ok(workspace.into())
+    Ok(load_or_create_default_project(&manager)?.into())
 }
 
 /// 获取项目上下文

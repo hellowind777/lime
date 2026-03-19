@@ -14,7 +14,6 @@ use crate::commands::plugin_install_cmd::PluginInstallerState;
 use crate::commands::provider_pool_cmd::{CredentialSyncServiceState, ProviderPoolServiceState};
 use crate::commands::resilience_cmd::ResilienceConfigState;
 use crate::commands::skill_cmd::SkillServiceState;
-use crate::commands::tool_hooks::ToolHooksServiceState;
 use crate::config::{GlobalConfigManager, GlobalConfigManagerState};
 use crate::database;
 use crate::plugin;
@@ -26,7 +25,6 @@ use lime_services::context_memory_service::{ContextMemoryConfig, ContextMemorySe
 use lime_services::provider_pool_service::ProviderPoolService;
 use lime_services::skill_service::SkillService;
 use lime_services::token_cache_service::TokenCacheService;
-use lime_services::tool_hooks_service::ToolHooksService;
 
 use super::types::{AppState, LogState, TokenCacheServiceState};
 use crate::logger;
@@ -61,7 +59,6 @@ pub struct ServiceStates {
     pub plugin_installer: PluginInstallerState,
     pub orchestrator: OrchestratorState,
     pub context_memory_service: ContextMemoryServiceState,
-    pub tool_hooks_service: ToolHooksServiceState,
     pub workflow_service: Arc<RwLock<WorkflowService>>,
     pub progress_store: Arc<RwLock<ProgressStore>>,
 }
@@ -113,10 +110,6 @@ pub fn init_service_states() -> ServiceStates {
         .expect("Failed to initialize ContextMemoryService");
     let context_memory_service_state = ContextMemoryServiceState(Arc::new(context_memory_service));
 
-    // Initialize ToolHooksService
-    let tool_hooks_service = ToolHooksService::new(context_memory_service_state.0.clone());
-    let tool_hooks_service_state = ToolHooksServiceState(Arc::new(tool_hooks_service));
-
     // Initialize WorkflowService
     let workflow_service = WorkflowService::new();
     let workflow_service_state = Arc::new(RwLock::new(workflow_service));
@@ -138,7 +131,6 @@ pub fn init_service_states() -> ServiceStates {
         plugin_installer: plugin_installer_state,
         orchestrator: orchestrator_state,
         context_memory_service: context_memory_service_state,
-        tool_hooks_service: tool_hooks_service_state,
         workflow_service: workflow_service_state,
         progress_store: progress_store_state,
     }

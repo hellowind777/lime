@@ -179,4 +179,30 @@ describe("InputbarCore", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
     expect(onStop).toHaveBeenCalledTimes(1);
   });
+
+  it("点击图片删除按钮应触发 onRemoveImage", () => {
+    const onRemoveImage = vi.fn();
+    const container = renderInputbarCore({
+      pendingImages: [
+        {
+          data: "aGVsbG8=",
+          mediaType: "image/png",
+        },
+      ],
+      onRemoveImage,
+    });
+
+    const removeButton = container.querySelector(
+      'button[aria-label="移除图片 1"]',
+    ) as HTMLButtonElement | null;
+
+    expect(removeButton).toBeTruthy();
+
+    act(() => {
+      removeButton?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      removeButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onRemoveImage).toHaveBeenCalledWith(0);
+  });
 });

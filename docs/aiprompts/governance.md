@@ -177,7 +177,7 @@ npm run governance:legacy-report
 
 例如：
 
-> 聊天能力后续统一收敛到 `useUnifiedChat + chat_* + ChatDao`。
+> 聊天能力后续统一收敛到 `useAgentChatUnified -> useAsterAgentChat -> agent_runtime_* + lime_core::database::agent_session_repository`。
 
 ### 第三步：优先做减法
 
@@ -207,8 +207,8 @@ npm run governance:legacy-report
 
 以聊天系统为例，遇到新旧并存时，必须同时问这几个问题：
 
-- 前端唯一入口是不是 `useAgentChatUnified` / `useAsterAgentChat`，还是 `useChat` / `useAgentChat` 还在继续长逻辑？
-- Rust 唯一入口是不是 `chat_*`，还是 `general_chat_*` / `agent_*` / `aster_agent_*` 还在平行演进？
+- 前端唯一入口是不是 `useAgentChatUnified -> useAsterAgentChat`，还是 `useChat` / `useAgentChat` / `useUnifiedChat` 还在继续长逻辑？
+- Rust 唯一入口是不是 `agent_runtime_*`，还是 `chat_*` / `general_chat_*` / `agent_*` / `aster_agent_*` 还在平行演进？
 - 数据事实源是不是同一组表 / 同一套 Repository，还是还在同时写 `agent_*` 与 `general_chat_*`？
 - 统计、记忆等旁路是不是已经切到新路径，还是还在读旧表？
 

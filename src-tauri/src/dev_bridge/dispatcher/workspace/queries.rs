@@ -1,8 +1,8 @@
 use super::{
-    args_or_default, get_string_arg, get_workspace_projects_root_dir, sanitize_project_dir_name,
-    workspace_manager, DynError, PathBuf, WorkspaceListItem,
+    args_or_default, get_string_arg, workspace_manager, DynError, PathBuf, WorkspaceListItem,
 };
 use crate::dev_bridge::DevBridgeState;
+use crate::workspace_support::{get_workspace_projects_root_dir, sanitize_project_dir_name};
 use serde_json::Value as JsonValue;
 
 pub(super) fn try_handle(

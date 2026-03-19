@@ -243,7 +243,10 @@ export function OpenClawInstallPage({
       diagnostics?.openclawPackagePath ||
       diagnostics?.whereCandidates?.length ||
       diagnostics?.supplementalSearchDirs?.length ||
-      diagnostics?.supplementalCommandCandidates?.length,
+      diagnostics?.supplementalCommandCandidates?.length ||
+      diagnostics?.gitWhereCandidates?.length ||
+      diagnostics?.gitSupplementalSearchDirs?.length ||
+      diagnostics?.gitSupplementalCommandCandidates?.length,
   );
 
   const nodeStatusLabel = environmentStatus
@@ -292,6 +295,24 @@ export function OpenClawInstallPage({
       key: "supplemental-command-candidates",
       title: "补充目录中的 OpenClaw 命中",
       values: diagnostics?.supplementalCommandCandidates || [],
+      emptyText: "未命中",
+    },
+    {
+      key: "git-where-candidates",
+      title: "`where git` 命中",
+      values: diagnostics?.gitWhereCandidates || [],
+      emptyText: "未命中",
+    },
+    {
+      key: "git-supplemental-search-dirs",
+      title: "Git 补充搜索目录",
+      values: diagnostics?.gitSupplementalSearchDirs || [],
+      emptyText: "无",
+    },
+    {
+      key: "git-supplemental-command-candidates",
+      title: "补充目录中的 Git 命中",
+      values: diagnostics?.gitSupplementalCommandCandidates || [],
       emptyText: "未命中",
     },
   ];
@@ -556,6 +577,7 @@ export function OpenClawInstallPage({
                       className={cn(
                         "rounded-[22px] border border-slate-200/80 bg-slate-50/80 px-4 py-3",
                         item.key === "supplemental-command-candidates"
+                          || item.key === "git-supplemental-command-candidates"
                           ? "md:col-span-2"
                           : "",
                       )}

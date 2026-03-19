@@ -3,6 +3,8 @@ use rusqlite::{params, Connection};
 use super::{is_true_setting, mark_true_setting};
 
 pub const GENERAL_CHAT_MIGRATION_COMPLETED_KEY: &str = "migrated_general_chat_to_unified";
+const LEGACY_GENERAL_CHAT_SESSIONS_TABLE: &str = "general_chat_sessions";
+const LEGACY_GENERAL_CHAT_MESSAGES_TABLE: &str = "general_chat_messages";
 
 pub fn is_general_chat_migration_completed(conn: &Connection) -> bool {
     is_true_setting(conn, GENERAL_CHAT_MIGRATION_COMPLETED_KEY)
@@ -19,33 +21,71 @@ pub fn migrate_general_chat_to_unified(conn: &Connection) -> Result<usize, Strin
         return Ok(0);
     }
 
-    let general_count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM general_chat_sessions", [], |row| {
-            row.get(0)
-        })
-        .unwrap_or(0);
+    let general_session_count =
+        legacy_general_chat_row_count(conn, LEGACY_GENERAL_CHAT_SESSIONS_TABLE)?.unwrap_or(0);
+    let general_message_count =
+        legacy_general_chat_row_count(conn, LEGACY_GENERAL_CHAT_MESSAGES_TABLE)?.unwrap_or(0);
 
-    if general_count == 0 {
-        tracing::info!("[迁移] general_chat_sessions 表为空，无需迁移");
+    if general_session_count == 0 && general_message_count == 0 {
+        tracing::info!("[迁移] 未检测到 legacy general_chat 数据，无需迁移");
         mark_true_setting(conn, GENERAL_CHAT_MIGRATION_COMPLETED_KEY)?;
         return Ok(0);
     }
 
     tracing::info!(
-        "[迁移] 开始迁移 {} 个 general_chat 会话到统一表",
-        general_count
+        "[迁移] 检测到 legacy general_chat 数据待迁移: sessions={}, messages={}",
+        general_session_count,
+        general_message_count
     );
 
-    let migrated_sessions = migrate_general_sessions(conn)?;
-    tracing::info!("[迁移] 迁移了 {} 个会话", migrated_sessions);
+    let migrated_sessions = if general_session_count > 0 {
+        let migrated_sessions = migrate_general_sessions(conn)?;
+        tracing::info!("[迁移] 迁移了 {} 个会话", migrated_sessions);
+        migrated_sessions
+    } else {
+        0
+    };
 
-    let migrated_messages = migrate_general_messages(conn)?;
-    tracing::info!("[迁移] 迁移了 {} 条消息", migrated_messages);
+    let migrated_messages = if general_message_count > 0 {
+        let migrated_messages = migrate_general_messages(conn)?;
+        tracing::info!("[迁移] 迁移了 {} 条消息", migrated_messages);
+        migrated_messages
+    } else {
+        0
+    };
 
     mark_true_setting(conn, GENERAL_CHAT_MIGRATION_COMPLETED_KEY)?;
 
     tracing::info!("[迁移] General Chat 数据迁移完成！");
     Ok(migrated_sessions + migrated_messages)
+}
+
+fn legacy_general_chat_row_count(
+    conn: &Connection,
+    table_name: &str,
+) -> Result<Option<i64>, String> {
+    if !legacy_table_exists(conn, table_name)? {
+        return Ok(None);
+    }
+
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table_name}"), [], |row| {
+        row.get(0)
+    })
+    .map(Some)
+    .map_err(|error| format!("查询 legacy 表 {table_name} 行数失败: {error}"))
+}
+
+fn legacy_table_exists(conn: &Connection, table_name: &str) -> Result<bool, String> {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1",
+        [table_name],
+        |_| Ok(()),
+    )
+    .map(|_| true)
+    .or_else(|error| match error {
+        rusqlite::Error::QueryReturnedNoRows => Ok(false),
+        _ => Err(format!("检测 legacy 表 {table_name} 是否存在失败: {error}")),
+    })
 }
 
 fn migrate_general_sessions(conn: &Connection) -> Result<usize, String> {
@@ -274,16 +314,14 @@ fn convert_general_content_to_json(content: &str, blocks: &Option<String>) -> St
 pub fn check_general_chat_migration_status(conn: &Connection) -> GeneralChatMigrationStatus {
     let migrated = is_general_chat_migration_completed(conn);
 
-    let general_sessions: i64 = conn
-        .query_row("SELECT COUNT(*) FROM general_chat_sessions", [], |row| {
-            row.get(0)
-        })
+    let general_sessions = legacy_general_chat_row_count(conn, LEGACY_GENERAL_CHAT_SESSIONS_TABLE)
+        .ok()
+        .flatten()
         .unwrap_or(0);
 
-    let general_messages: i64 = conn
-        .query_row("SELECT COUNT(*) FROM general_chat_messages", [], |row| {
-            row.get(0)
-        })
+    let general_messages = legacy_general_chat_row_count(conn, LEGACY_GENERAL_CHAT_MESSAGES_TABLE)
+        .ok()
+        .flatten()
         .unwrap_or(0);
 
     let unified_general_sessions: i64 = conn
@@ -339,6 +377,39 @@ mod tests {
                 status TEXT NOT NULL DEFAULT 'complete',
                 created_at INTEGER NOT NULL,
                 metadata TEXT
+            );
+            CREATE TABLE agent_sessions (
+                id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                system_prompt TEXT,
+                title TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                working_dir TEXT,
+                execution_strategy TEXT NOT NULL DEFAULT 'react'
+            );
+            CREATE TABLE agent_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                tool_calls_json TEXT,
+                tool_call_id TEXT
+            );
+            ",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn setup_unified_only_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
             );
             CREATE TABLE agent_sessions (
                 id TEXT PRIMARY KEY,
@@ -433,5 +504,20 @@ mod tests {
 
         let completed = check_general_chat_migration_status(&conn);
         assert!(!completed.needs_migration);
+    }
+
+    #[test]
+    fn migrate_general_chat_without_legacy_tables_marks_completed() {
+        let conn = setup_unified_only_db();
+
+        let migrated = migrate_general_chat_to_unified(&conn).unwrap();
+        assert_eq!(migrated, 0);
+        assert!(is_general_chat_migration_completed(&conn));
+
+        let status = check_general_chat_migration_status(&conn);
+        assert_eq!(status.general_sessions_count, 0);
+        assert_eq!(status.general_messages_count, 0);
+        assert_eq!(status.migrated_sessions_count, 0);
+        assert!(!status.needs_migration);
     }
 }

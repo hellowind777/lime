@@ -90,4 +90,33 @@ describe("SearchResultPreviewList", () => {
     expect(container.textContent).not.toContain("结果 6");
     expect(container.textContent).toContain("展开其余 2 条结果");
   });
+
+  it("悬浮预览在鼠标移出整体区域后应自动关闭", () => {
+    vi.useFakeTimers();
+    const { container } = renderList();
+    const trigger = container.querySelector(
+      'button[aria-label="预览搜索结果：结果 1"]',
+    ) as HTMLButtonElement | null;
+
+    act(() => {
+      trigger?.dispatchEvent(
+        new MouseEvent("mouseover", {
+          bubbles: true,
+        }),
+      );
+    });
+
+    expect(document.body.textContent).toContain("摘要 1");
+
+    act(() => {
+      document.body.dispatchEvent(
+        new MouseEvent("mousemove", {
+          bubbles: true,
+        }),
+      );
+      vi.advanceTimersByTime(140);
+    });
+
+    expect(document.body.textContent).not.toContain("摘要 1");
+  });
 });

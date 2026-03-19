@@ -36,6 +36,7 @@ const {
   mockExecutionRunGet,
   mockSkillExecutionGetDetail,
   mockSkillsGetAll,
+  mockSkillsGetLocal,
   mockCanvasWorkbenchLayoutState,
   mockCanvasWorkbenchLayout,
   mockLaunchBrowserSession,
@@ -85,6 +86,7 @@ const {
   mockExecutionRunGet: vi.fn(),
   mockSkillExecutionGetDetail: vi.fn(),
   mockSkillsGetAll: vi.fn(),
+  mockSkillsGetLocal: vi.fn(),
   mockCanvasWorkbenchLayoutState: {
     renderPreview: false,
   },
@@ -542,6 +544,7 @@ vi.mock("@/lib/api/skill-execution", () => ({
 vi.mock("@/lib/api/skills", () => ({
   skillsApi: {
     getAll: mockSkillsGetAll,
+    getLocal: mockSkillsGetLocal,
   },
 }));
 
@@ -550,6 +553,8 @@ vi.mock("@/lib/webview-api", () => ({
   browserExecuteAction: mockBrowserExecuteAction,
 }));
 
+import * as configuredProvidersModule from "@/hooks/useConfiguredProviders";
+import * as providerModelsModule from "@/hooks/useProviderModels";
 import { AgentChatPage } from "./index";
 
 interface MountedHarness {
@@ -563,6 +568,43 @@ const observedWorkspaceIds: string[] = [];
 let sharedSwitchTopicMock: ReturnType<typeof vi.fn>;
 let sharedSendMessageMock: ReturnType<typeof vi.fn>;
 let sharedTriggerAIGuideMock: ReturnType<typeof vi.fn>;
+
+function buildMockProviderModel(
+  overrides: Partial<Awaited<ReturnType<typeof providerModelsModule.loadProviderModels>>[number]> = {},
+) {
+  return {
+    id: "mock-model",
+    display_name: "Mock Model",
+    provider_id: "kiro",
+    provider_name: "Kiro",
+    family: "mock-model",
+    tier: "pro" as const,
+    capabilities: {
+      vision: true,
+      tools: true,
+      streaming: true,
+      json_mode: true,
+      function_calling: true,
+      reasoning: false,
+      ...(overrides.capabilities || {}),
+    },
+    pricing: null,
+    limits: {
+      context_length: null,
+      max_output_tokens: null,
+      requests_per_minute: null,
+      tokens_per_minute: null,
+    },
+    status: "active" as const,
+    release_date: "2026-03-19",
+    is_latest: true,
+    description: null,
+    source: "local" as const,
+    created_at: 0,
+    updated_at: 0,
+    ...overrides,
+  };
+}
 
 function createProject(id: string, archived = false) {
   return {
@@ -829,6 +871,7 @@ beforeEach(() => {
     workflow_steps: [],
   });
   mockSkillsGetAll.mockResolvedValue([]);
+  mockSkillsGetLocal.mockResolvedValue([]);
   mockLaunchBrowserSession.mockResolvedValue({
     profile: {
       success: true,
@@ -878,6 +921,17 @@ beforeEach(() => {
     error: undefined,
     attempts: [],
   });
+  vi.spyOn(configuredProvidersModule, "loadConfiguredProviders").mockResolvedValue([
+    {
+      key: "kiro",
+      label: "Kiro",
+      registryId: "kiro",
+      type: "kiro",
+    },
+  ]);
+  vi.spyOn(providerModelsModule, "loadProviderModels").mockResolvedValue([
+    buildMockProviderModel(),
+  ]);
   mockGenerateContentCreationPrompt.mockReturnValue("mock-system-prompt");
   mockIsContentCreationTheme.mockReturnValue(false);
   mockEmptyState.mockImplementation((props?: { input?: string }) => (
@@ -1254,7 +1308,7 @@ describe("AgentChatPage 侧栏显示控制", () => {
     expect(container.querySelector('[data-testid="empty-state"]')).toBeNull();
   });
 
-  it("新建任务模式发送首条消息后应切换到 Claw", async () => {
+  it("新建任务模式发送首条消息后不应自动切换页面", async () => {
     const onNavigate = vi.fn();
 
     renderPage({
@@ -1266,13 +1320,7 @@ describe("AgentChatPage 侧栏显示控制", () => {
     await flushEffects();
 
     expect(sharedSendMessageMock).toHaveBeenCalled();
-    expect(onNavigate).toHaveBeenCalledWith(
-      "agent",
-      expect.objectContaining({
-        agentEntry: "claw",
-        projectId: "project-entry",
-      }),
-    );
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 });
 
@@ -2442,6 +2490,64 @@ describe("AgentChatPage 自动引导", () => {
       | { input?: string }
       | undefined;
     expect(latestInputbarProps?.input || "").toBe("");
+  });
+
+  it("附图发送时若当前模型不支持多模态应提示并阻止发送", async () => {
+    vi.spyOn(providerModelsModule, "loadProviderModels").mockResolvedValueOnce([
+      buildMockProviderModel({
+        capabilities: {
+          vision: false,
+          tools: true,
+          streaming: true,
+          json_mode: true,
+          function_calling: true,
+          reasoning: false,
+        },
+      }),
+      buildMockProviderModel({
+        id: "mock-model-vision",
+        display_name: "Mock Model Vision",
+        capabilities: {
+          vision: true,
+          tools: true,
+          streaming: true,
+          json_mode: true,
+          function_calling: true,
+          reasoning: false,
+        },
+        release_date: "2026-03-20",
+      }),
+    ]);
+
+    renderPage({
+      projectId: "project-image-vision-block",
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    const latestEmptyStateProps = mockEmptyState.mock.calls.at(-1)?.[0] as
+      | {
+          onSend?: (
+            value: string,
+            executionStrategy?: "react" | "code_orchestrated" | "auto",
+            images?: unknown[],
+          ) => Promise<boolean | void> | boolean | void;
+        }
+      | undefined;
+
+    await act(async () => {
+      await latestEmptyStateProps?.onSend?.(
+        "请看图",
+        "auto",
+        [{ data: "aGVsbG8=", mediaType: "image/png" }],
+      );
+    });
+
+    expect(sharedSendMessageMock).not.toHaveBeenCalled();
+    expect(mockToast.error).toHaveBeenCalledWith(
+      "当前模型 mock-model 不支持多模态图片理解，请切换到 mock-model-vision 或其他支持多模态的模型后再发送图片",
+    );
   });
 
   it("主题工作台空闲时应把 success 终态版本标记为 merged", async () => {

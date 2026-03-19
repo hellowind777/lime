@@ -151,6 +151,31 @@ describe("deriveHarnessSessionState", () => {
     expect(state.outputSignals[0]?.content).toContain("https://example.com/xinhua");
   });
 
+  it("仅有 turn_summary 时也应为 harness 提供计划摘要兜底", () => {
+    const messages = [createMessage()];
+    const items: AgentThreadItem[] = [
+      {
+        id: "summary-1",
+        thread_id: "thread-1",
+        turn_id: "turn-1",
+        sequence: 1,
+        status: "completed",
+        started_at: "2026-03-13T12:00:00.000Z",
+        completed_at: "2026-03-13T12:00:01.000Z",
+        updated_at: "2026-03-13T12:00:01.000Z",
+        type: "turn_summary",
+        text: "已决定：直接回答优先\n当前请求无需工具介入。",
+      },
+    ];
+
+    const state = deriveHarnessSessionState(messages, [], items);
+
+    expect(state.plan.phase).toBe("ready");
+    expect(state.plan.items).toHaveLength(0);
+    expect(state.plan.summaryText).toContain("已决定：直接回答优先");
+    expect(state.outputSignals[0]?.toolName).toBe("turn_summary");
+  });
+
   it("应保留最近 8 条输出信号以承载多组 WebSearch 扩搜", () => {
     const toolCalls = Array.from({ length: 9 }, (_, index) => ({
       id: `tool-search-${index + 1}`,
@@ -171,5 +196,35 @@ describe("deriveHarnessSessionState", () => {
     expect(state.outputSignals).toHaveLength(8);
     expect(state.outputSignals[0]?.summary).toBe("query-9");
     expect(state.outputSignals[7]?.summary).toBe("query-2");
+  });
+
+  it("没有历史 TodoWrite 时应回退到持久化 todo 快照", () => {
+    const messages = [createMessage({ content: "已恢复会话" })];
+
+    const state = deriveHarnessSessionState(messages, [], undefined, [
+      {
+        content: "整理运行时边界",
+        status: "in_progress",
+      },
+      {
+        content: "补治理验证",
+        status: "pending",
+      },
+    ]);
+
+    expect(state.plan.phase).toBe("planning");
+    expect(state.plan.items).toEqual([
+      {
+        id: "todo-1",
+        content: "整理运行时边界",
+        status: "in_progress",
+      },
+      {
+        id: "todo-2",
+        content: "补治理验证",
+        status: "pending",
+      },
+    ]);
+    expect(state.plan.summaryText).toBeUndefined();
   });
 });

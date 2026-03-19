@@ -9,6 +9,7 @@ import {
 import { toast } from "sonner";
 import type {
   AsterExecutionStrategy,
+  AsterTodoItem,
   QueuedTurnSnapshot,
 } from "@/lib/api/agentRuntime";
 import { logAgentDebug } from "@/lib/agentDebug";
@@ -26,6 +27,7 @@ import {
 } from "./agentChatShared";
 import {
   hydrateSessionDetailMessages,
+  mergeHydratedMessagesWithLocalState,
   normalizeHistoryMessages,
 } from "./agentChatHistory";
 import { getAgentSessionScopedKeys } from "./agentSessionScopedStorage";
@@ -38,6 +40,10 @@ import {
 } from "./agentChatStorage";
 import { normalizeExecutionStrategy } from "./agentChatCoreUtils";
 import type { AgentRuntimeAdapter } from "./agentRuntimeAdapter";
+import {
+  mergeThreadItems,
+  mergeThreadTurns,
+} from "../utils/threadTimelineView";
 
 interface UseAgentSessionOptions {
   runtime: AgentRuntimeAdapter;
@@ -141,12 +147,16 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         ),
   );
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurnSnapshot[]>([]);
+  const [todoItems, setTodoItems] = useState<AsterTodoItem[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [topicsReady, setTopicsReady] = useState(false);
 
   const restoredWorkspaceRef = useRef<string | null>(null);
   const hydratedSessionRef = useRef<string | null>(null);
   const skipAutoRestoreRef = useRef(false);
+  const messagesRef = useRef<Message[]>(messages);
+  const threadTurnsRef = useRef<AgentThreadTurn[]>(threadTurns);
+  const threadItemsRef = useRef<AgentThreadItem[]>(threadItems);
 
   sessionIdRef.current = sessionId;
 
@@ -154,6 +164,10 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     currentAssistantMsgIdRef.current = null;
     currentStreamingSessionIdRef.current = null;
   }, [currentAssistantMsgIdRef, currentStreamingSessionIdRef]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     setMessages((prev) => {
@@ -209,11 +223,19 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   }, [scopedKeys, threadTurns, workspaceId]);
 
   useEffect(() => {
+    threadTurnsRef.current = threadTurns;
+  }, [threadTurns]);
+
+  useEffect(() => {
     if (!workspaceId?.trim()) {
       return;
     }
     saveTransient(scopedKeys.itemsKey, threadItems);
   }, [scopedKeys, threadItems, workspaceId]);
+
+  useEffect(() => {
+    threadItemsRef.current = threadItems;
+  }, [threadItems]);
 
   useEffect(() => {
     if (!workspaceId?.trim()) {
@@ -230,6 +252,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setThreadItems([]);
       setCurrentTurnId(null);
       setQueuedTurns([]);
+      setTodoItems([]);
       resetPendingActions();
       resetStreamingRefs();
       restoredWorkspaceRef.current = null;
@@ -262,6 +285,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     setThreadItems(scopedItems);
     setCurrentTurnId(scopedCurrentTurnId);
     setQueuedTurns([]);
+    setTodoItems([]);
     resetPendingActions();
     resetStreamingRefs();
     restoredWorkspaceRef.current = null;
@@ -398,6 +422,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setThreadItems([]);
         setCurrentTurnId(null);
         setQueuedTurns([]);
+        setTodoItems([]);
         setTopics((prev) => [
           {
             id: newSessionId,
@@ -488,6 +513,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setThreadItems([]);
       setCurrentTurnId(null);
       setQueuedTurns([]);
+      setTodoItems([]);
       setSessionId(null);
       resetPendingActions();
       restoredWorkspaceRef.current = null;
@@ -527,13 +553,31 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       detail: Awaited<ReturnType<AgentRuntimeAdapter["getSession"]>>,
       options?: { syncSessionId?: boolean },
     ) => {
-      setMessages(hydrateSessionDetailMessages(detail, topicId));
-      setThreadTurns(detail.turns || []);
-      setThreadItems(detail.items || []);
+      const hydratedMessages = hydrateSessionDetailMessages(detail, topicId);
+      const incomingTurns = detail.turns || [];
+      const incomingItems = detail.items || [];
+      const shouldPreserveExistingTimeline = sessionIdRef.current === topicId;
+      const nextMessages = shouldPreserveExistingTimeline
+        ? mergeHydratedMessagesWithLocalState(
+            messagesRef.current,
+            hydratedMessages,
+          )
+        : hydratedMessages;
+      const nextTurns = shouldPreserveExistingTimeline
+        ? mergeThreadTurns(threadTurnsRef.current, incomingTurns)
+        : incomingTurns;
+      const nextItems = shouldPreserveExistingTimeline
+        ? mergeThreadItems(threadItemsRef.current, incomingItems)
+        : incomingItems;
+
+      setMessages(nextMessages);
+      setThreadTurns(nextTurns);
+      setThreadItems(nextItems);
       setQueuedTurns(normalizeQueuedTurnSnapshots(detail.queued_turns));
+      setTodoItems(detail.todo_items ?? []);
       setCurrentTurnId(
-        detail.turns && detail.turns.length > 0
-          ? detail.turns[detail.turns.length - 1]?.id || null
+        nextTurns.length > 0
+          ? nextTurns[nextTurns.length - 1]?.id || null
           : null,
       );
 
@@ -548,7 +592,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setSessionId(topicId);
       }
     },
-    [setExecutionStrategyState, topics],
+    [sessionIdRef, setExecutionStrategyState, topics],
   );
 
   const switchTopic = useCallback(
@@ -609,6 +653,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           setThreadItems([]);
           setCurrentTurnId(null);
           setQueuedTurns([]);
+          setTodoItems([]);
           setSessionId(null);
           saveTransient(scopedKeys.currentSessionKey, null);
           savePersisted(scopedKeys.persistedSessionKey, null);
@@ -620,6 +665,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setThreadItems([]);
         setCurrentTurnId(null);
         setQueuedTurns([]);
+        setTodoItems([]);
         setSessionId(null);
         saveTransient(scopedKeys.currentSessionKey, null);
         savePersisted(scopedKeys.persistedSessionKey, null);
@@ -761,6 +807,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setThreadItems([]);
       setCurrentTurnId(null);
       setQueuedTurns([]);
+      setTodoItems([]);
       saveTransient(scopedKeys.currentSessionKey, null);
       savePersisted(scopedKeys.persistedSessionKey, null);
       hydratedSessionRef.current = null;
@@ -875,6 +922,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           setThreadItems([]);
           setCurrentTurnId(null);
           setQueuedTurns([]);
+          setTodoItems([]);
           resetPendingActions();
           resetStreamingRefs();
           hydratedSessionRef.current = null;
@@ -999,6 +1047,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     setThreadItems,
     currentTurnId,
     setCurrentTurnId,
+    todoItems,
     queuedTurns,
     setQueuedTurns,
     topics,

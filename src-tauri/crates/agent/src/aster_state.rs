@@ -7,7 +7,7 @@
 //! ## 重要：SessionStore 注入
 //!
 //! 为了让 Aster Agent 的消息存储到 Lime 数据库，必须在创建 Agent 时
-//! 注入 `LimeSessionStore`。使用 `init_agent_with_db()` 方法而不是 `init_agent()`。
+//! 注入 `LimeSessionStore`，并统一通过 `init_agent_with_db()` 初始化。
 //!
 //! ## Agent 身份配置
 //!
@@ -17,29 +17,26 @@
 //!
 //! ## Skills 集成
 //!
-//! Agent 初始化时会自动加载 `~/.lime/skills/` 目录下的 Skills 到
+//! Agent 初始化时会自动加载 Lime 当前应用数据目录中的 Skills 到
 //! aster-rust 的 global_registry，使 AI 能够自动发现和调用这些 Skills。
 //!
 //! 参考文档：`docs/prd/chat-architecture-redesign.md`
 
-use aster::agents::{Agent, SessionConfig};
+use aster::agents::Agent;
 use aster::model::ModelConfig;
 #[cfg(test)]
 use aster::skills::{global_registry, load_skills_from_directory, SkillSource};
 use aster::tools::{create_shared_history, EditTool, WriteTool};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::credential_bridge::{create_aster_provider, AsterProviderConfig, CredentialBridge};
+#[cfg(test)]
 use crate::queued_turn::QueuedTurnSnapshot;
 use lime_core::database::DbConnection;
 use lime_services::aster_session_store::LimeSessionStore;
-
-use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
 
 async fn configure_lime_native_file_tools(agent: &Agent) {
     let shared_history = create_shared_history();
@@ -68,34 +65,8 @@ pub struct QueuedTurnTask<T> {
     pub payload: T,
 }
 
-#[derive(Debug, Clone)]
-struct ActiveTurnMeta {
-    #[cfg_attr(not(test), allow(dead_code))]
-    queued_turn_id: String,
-}
-
-#[derive(Debug)]
-struct SessionTurnQueueState<T> {
-    active: Option<ActiveTurnMeta>,
-    pending: VecDeque<QueuedTurnTask<T>>,
-}
-
-impl<T> Default for SessionTurnQueueState<T> {
-    fn default() -> Self {
-        Self {
-            active: None,
-            pending: VecDeque::new(),
-        }
-    }
-}
-
 impl<T> QueuedTurnTask<T> {
-    fn active_meta(&self) -> ActiveTurnMeta {
-        ActiveTurnMeta {
-            queued_turn_id: self.queued_turn_id.clone(),
-        }
-    }
-
+    #[cfg(test)]
     fn snapshot(&self, position: usize) -> QueuedTurnSnapshot {
         QueuedTurnSnapshot {
             queued_turn_id: self.queued_turn_id.clone(),
@@ -105,178 +76,6 @@ impl<T> QueuedTurnTask<T> {
             image_count: self.image_count,
             position,
         }
-    }
-}
-
-#[derive(Debug)]
-pub enum QueueInsertResult<T> {
-    StartNow(QueuedTurnTask<T>),
-    Enqueued {
-        event_name: String,
-        snapshot: QueuedTurnSnapshot,
-    },
-}
-
-/// 会话级 turn 队列
-#[derive(Debug, Clone)]
-pub struct SessionTurnQueueManager<T> {
-    inner: Arc<Mutex<HashMap<String, SessionTurnQueueState<T>>>>,
-}
-
-impl<T> Default for SessionTurnQueueManager<T> {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-}
-
-impl<T> SessionTurnQueueManager<T> {
-    pub fn has_session_state(&self, session_id: &str) -> bool {
-        let sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        sessions.contains_key(session_id)
-    }
-
-    pub fn restore_pending(&self, session_id: &str, tasks: Vec<QueuedTurnTask<T>>) {
-        if tasks.is_empty() {
-            return;
-        }
-
-        let mut sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        let state = sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionTurnQueueState::default);
-
-        if state.active.is_some() || !state.pending.is_empty() {
-            return;
-        }
-
-        state.pending = tasks.into_iter().collect();
-    }
-
-    pub fn start_or_enqueue(&self, task: QueuedTurnTask<T>) -> QueueInsertResult<T> {
-        let mut sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        let state = sessions
-            .entry(task.session_id.clone())
-            .or_insert_with(SessionTurnQueueState::default);
-
-        if state.active.is_none() {
-            state.active = Some(task.active_meta());
-            return QueueInsertResult::StartNow(task);
-        }
-
-        let position = state.pending.len() + 1;
-        let event_name = task.event_name.clone();
-        let snapshot = task.snapshot(position);
-        state.pending.push_back(task);
-
-        QueueInsertResult::Enqueued {
-            event_name,
-            snapshot,
-        }
-    }
-
-    pub fn finish_and_take_next(&self, session_id: &str) -> Option<QueuedTurnTask<T>> {
-        let mut sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        let state = sessions.get_mut(session_id)?;
-        state.active = None;
-        let next = state.pending.pop_front();
-        if let Some(task) = next.as_ref() {
-            state.active = Some(task.active_meta());
-        }
-        if state.active.is_none() && state.pending.is_empty() {
-            sessions.remove(session_id);
-        }
-        next
-    }
-
-    pub fn remove_queued(
-        &self,
-        session_id: &str,
-        queued_turn_id: &str,
-    ) -> Option<QueuedTurnTask<T>> {
-        let mut sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        let state = sessions.get_mut(session_id)?;
-        let index = state
-            .pending
-            .iter()
-            .position(|task| task.queued_turn_id == queued_turn_id)?;
-        let removed = state.pending.remove(index);
-        if state.active.is_none() && state.pending.is_empty() {
-            sessions.remove(session_id);
-        }
-        removed
-    }
-
-    pub fn clear_pending(&self, session_id: &str) -> Vec<QueuedTurnTask<T>> {
-        let mut sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        let Some(state) = sessions.get_mut(session_id) else {
-            return Vec::new();
-        };
-        let cleared = state.pending.drain(..).collect::<Vec<_>>();
-        if state.active.is_none() && state.pending.is_empty() {
-            sessions.remove(session_id);
-        }
-        cleared
-    }
-
-    pub fn snapshot(&self, session_id: &str) -> Vec<QueuedTurnSnapshot> {
-        let sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        sessions
-            .get(session_id)
-            .map(|state| {
-                state
-                    .pending
-                    .iter()
-                    .enumerate()
-                    .map(|(index, task)| task.snapshot(index + 1))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    }
-
-    pub fn has_active(&self, session_id: &str) -> bool {
-        let sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        sessions
-            .get(session_id)
-            .and_then(|state| state.active.as_ref())
-            .is_some()
-    }
-
-    #[cfg(test)]
-    fn active_queued_turn_id(&self, session_id: &str) -> Option<String> {
-        let sessions = match self.inner.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        sessions
-            .get(session_id)
-            .and_then(|state| state.active.as_ref())
-            .map(|meta| meta.queued_turn_id.clone())
     }
 }
 
@@ -311,8 +110,6 @@ pub struct AsterAgentState {
     initialized_cache: Arc<AtomicBool>,
     /// Provider 配置状态缓存（避免每次都获取锁）
     provider_configured_cache: Arc<AtomicBool>,
-    /// 会话级 turn 队列
-    turn_queue: SessionTurnQueueManager<serde_json::Value>,
 }
 
 impl Clone for AsterAgentState {
@@ -324,7 +121,6 @@ impl Clone for AsterAgentState {
             credential_bridge: CredentialBridge::new(),
             initialized_cache: self.initialized_cache.clone(),
             provider_configured_cache: self.provider_configured_cache.clone(),
-            turn_queue: self.turn_queue.clone(),
         }
     }
 }
@@ -345,66 +141,21 @@ impl AsterAgentState {
             credential_bridge: CredentialBridge::new(),
             initialized_cache: Arc::new(AtomicBool::new(false)),
             provider_configured_cache: Arc::new(AtomicBool::new(false)),
-            turn_queue: SessionTurnQueueManager::default(),
         }
-    }
-
-    fn resolve_aster_path_root() -> Result<PathBuf, String> {
-        if let Ok(raw) = std::env::var("ASTER_PATH_ROOT") {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                return Ok(PathBuf::from(trimmed));
-            }
-        }
-
-        let home_dir = dirs::home_dir().ok_or_else(|| "无法获取用户目录".to_string())?;
-        Ok(home_dir.join(".lime").join("aster"))
-    }
-
-    fn ensure_aster_runtime_dirs() -> Result<PathBuf, String> {
-        let root = Self::resolve_aster_path_root()?;
-        let root_string = root.to_string_lossy().to_string();
-
-        if std::env::var("ASTER_PATH_ROOT")
-            .ok()
-            .map(|value| value.trim().is_empty())
-            .unwrap_or(true)
-        {
-            std::env::set_var("ASTER_PATH_ROOT", &root_string);
-        }
-
-        let dirs = [
-            root.join("config"),
-            root.join("data"),
-            root.join("state"),
-            root.join("state").join("logs"),
-        ];
-
-        for dir in dirs {
-            std::fs::create_dir_all(&dir).map_err(|e| {
-                format!(
-                    "初始化 Aster 运行目录失败: {} ({})",
-                    dir.to_string_lossy(),
-                    e
-                )
-            })?;
-        }
-
-        Ok(root)
     }
 
     /// 初始化 Agent（带数据库连接）
     ///
     /// 创建 Agent 并注入 LimeSessionStore，确保消息存储到 Lime 数据库。
     /// 同时设置 Lime 专属的 Agent 身份（名称、语言、描述）。
-    /// 自动加载 `~/.lime/skills/` 目录下的 Skills 到 aster-rust 的 global_registry。
+    /// 自动加载 Lime 当前应用数据目录中的 Skills 到 aster-rust 的 global_registry。
     ///
-    /// **推荐使用此方法**而不是 `init_agent()`。
+    /// 这是 Lime 当前唯一支持的 Agent 初始化入口。
     ///
     /// # 参数
     /// - `db`: 数据库连接，用于创建 SessionStore
     pub async fn init_agent_with_db(&self, db: &DbConnection) -> Result<(), String> {
-        let runtime_root = Self::ensure_aster_runtime_dirs()?;
+        let runtime_root = crate::aster_runtime_support::require_aster_runtime_dirs()?;
         tracing::info!(
             "[AsterAgent] Aster 运行目录已准备: {}",
             runtime_root.to_string_lossy()
@@ -423,9 +174,10 @@ impl AsterAgentState {
 
             // 创建 Agent（启用 Ask/LSP 回调）并注入 SessionStore
             let tool_config = crate::create_lime_tool_config();
+            let runtime_store = crate::aster_runtime_support::require_aster_runtime_store()?;
             let agent = Agent::with_tool_config(tool_config)
                 .with_session_store(session_store)
-                .with_thread_runtime_store(aster::session::shared_thread_runtime_store());
+                .with_thread_runtime_store(runtime_store);
 
             // 验证 session_store 是否被正确设置
             let has_store = agent.session_store().is_some();
@@ -463,29 +215,6 @@ impl AsterAgentState {
     /// 当用户安装或卸载 Skills 后调用此方法刷新 registry。
     pub fn reload_lime_skills() {
         crate::reload_lime_skills();
-    }
-
-    /// 初始化 Agent（无数据库版本）
-    ///
-    /// **警告**：此方法创建的 Agent 不会将消息存储到 Lime 数据库，
-    /// 消息会存储到 Aster 默认的 `~/.aster/sessions.db`。
-    ///
-    /// 建议使用 `init_agent_with_db()` 代替。
-    #[deprecated(
-        since = "0.1.0",
-        note = "请使用 init_agent_with_db() 以确保消息存储到 Lime 数据库"
-    )]
-    pub async fn init_agent(&self) -> Result<(), String> {
-        let mut agent_guard = self.agent.write().await;
-        if agent_guard.is_none() {
-            let agent = Agent::new()
-                .with_thread_runtime_store(aster::session::shared_thread_runtime_store());
-            *agent_guard = Some(agent);
-            tracing::warn!(
-                "[AsterAgent] Agent 初始化（无 SessionStore），消息将存储到 Aster 默认数据库"
-            );
-        }
-        Ok(())
     }
 
     /// 配置 Provider
@@ -757,11 +486,6 @@ impl AsterAgentState {
         self.agent.clone()
     }
 
-    /// 获取会话级 turn 队列管理器
-    pub fn turn_queue(&self) -> SessionTurnQueueManager<serde_json::Value> {
-        self.turn_queue.clone()
-    }
-
     /// 创建新的取消令牌
     pub async fn create_cancel_token(&self, session_id: &str) -> CancellationToken {
         let token = CancellationToken::new();
@@ -807,25 +531,6 @@ impl AsterAgentState {
         project_id: &str,
     ) -> Result<String, String> {
         crate::build_project_system_prompt(db, project_id)
-    }
-
-    /// 创建带项目上下文的会话配置
-    ///
-    /// 自动加载项目配置并构建 SessionConfig。
-    ///
-    /// # 参数
-    /// - `db`: 数据库连接
-    /// - `session_id`: 会话 ID
-    /// - `project_id`: 项目 ID（可选，如果为 None 则不注入项目上下文）
-    ///
-    /// # 返回
-    /// - 构建好的 SessionConfig
-    pub fn create_session_config_with_project(
-        db: &DbConnection,
-        session_id: &str,
-        project_id: Option<&str>,
-    ) -> SessionConfig {
-        crate::create_session_config_with_project(db, session_id, project_id)
     }
 
     /// 注册 MCP 桥接客户端
@@ -893,6 +598,7 @@ pub use crate::aster_state_support::{message_helpers, SessionConfigBuilder};
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -900,8 +606,20 @@ mod tests {
         let state = AsterAgentState::new();
         assert!(!state.is_initialized().await);
 
-        #[allow(deprecated)]
-        state.init_agent().await.unwrap();
+        let runtime_dir = TempDir::new().unwrap();
+        crate::aster_runtime_support::ensure_aster_runtime_dirs_with_root(
+            runtime_dir.path().to_path_buf(),
+        )
+        .unwrap();
+
+        let db: DbConnection =
+            Arc::new(Mutex::new(rusqlite::Connection::open_in_memory().unwrap()));
+        {
+            let conn = db.lock().unwrap();
+            lime_core::database::schema::create_tables(&conn).unwrap();
+        }
+
+        state.init_agent_with_db(&db).await.unwrap();
         assert!(state.is_initialized().await);
     }
 
@@ -921,105 +639,33 @@ mod tests {
     }
 
     #[test]
-    fn test_session_turn_queue_manager() {
-        let manager = SessionTurnQueueManager::default();
+    fn test_session_turn_queue_manager_execution_gate() {
+        let gate = SessionTurnExecutionGate::default();
 
-        let first = QueuedTurnTask {
-            queued_turn_id: "turn-1".to_string(),
-            session_id: "session-queue".to_string(),
-            event_name: "event-1".to_string(),
-            message_preview: "first".to_string(),
-            message_text: "first body".to_string(),
-            created_at: 1_700_000_000_000,
-            image_count: 0,
-            payload: serde_json::json!({ "message": "first" }),
-        };
-        let second = QueuedTurnTask {
-            queued_turn_id: "turn-2".to_string(),
-            session_id: "session-queue".to_string(),
-            event_name: "event-2".to_string(),
-            message_preview: "second".to_string(),
-            message_text: "second body".to_string(),
-            created_at: 1_700_000_000_001,
-            image_count: 1,
-            payload: serde_json::json!({ "message": "second" }),
-        };
-
-        match manager.start_or_enqueue(first) {
-            QueueInsertResult::StartNow(task) => {
-                assert_eq!(task.queued_turn_id, "turn-1");
-            }
-            QueueInsertResult::Enqueued { .. } => panic!("首条 turn 不应进入队列"),
-        }
-
-        match manager.start_or_enqueue(second) {
-            QueueInsertResult::Enqueued { snapshot, .. } => {
-                assert_eq!(snapshot.queued_turn_id, "turn-2");
-                assert_eq!(snapshot.message_text, "second body");
-                assert_eq!(snapshot.position, 1);
-            }
-            QueueInsertResult::StartNow(_) => panic!("第二条 turn 应进入队列"),
-        }
-
-        assert_eq!(
-            manager.active_queued_turn_id("session-queue").as_deref(),
-            Some("turn-1")
-        );
-        assert_eq!(manager.snapshot("session-queue").len(), 1);
-
-        let promoted = manager
-            .finish_and_take_next("session-queue")
-            .expect("应提升下一条 turn");
-        assert_eq!(promoted.queued_turn_id, "turn-2");
-        assert_eq!(
-            manager.active_queued_turn_id("session-queue").as_deref(),
-            Some("turn-2")
-        );
+        assert!(gate.try_start("session-queue"));
+        assert!(gate.is_active("session-queue"));
+        assert!(!gate.try_start("session-queue"));
+        assert!(gate.finish("session-queue"));
+        assert!(!gate.is_active("session-queue"));
     }
 
     #[test]
-    fn test_session_turn_queue_manager_restore_pending() {
-        let manager = SessionTurnQueueManager::default();
+    fn test_session_turn_queue_manager_snapshot() {
+        let task = QueuedTurnTask {
+            queued_turn_id: "turn-restore-1".to_string(),
+            session_id: "session-restore".to_string(),
+            event_name: "event-restore-1".to_string(),
+            message_preview: "restore-1".to_string(),
+            message_text: "restore body 1".to_string(),
+            created_at: 1_700_000_000_000,
+            image_count: 0,
+            payload: serde_json::json!({ "message": "restore-1" }),
+        };
 
-        manager.restore_pending(
-            "session-restore",
-            vec![
-                QueuedTurnTask {
-                    queued_turn_id: "turn-restore-1".to_string(),
-                    session_id: "session-restore".to_string(),
-                    event_name: "event-restore-1".to_string(),
-                    message_preview: "restore-1".to_string(),
-                    message_text: "restore body 1".to_string(),
-                    created_at: 1_700_000_000_000,
-                    image_count: 0,
-                    payload: serde_json::json!({ "message": "restore-1" }),
-                },
-                QueuedTurnTask {
-                    queued_turn_id: "turn-restore-2".to_string(),
-                    session_id: "session-restore".to_string(),
-                    event_name: "event-restore-2".to_string(),
-                    message_preview: "restore-2".to_string(),
-                    message_text: "restore body 2".to_string(),
-                    created_at: 1_700_000_000_001,
-                    image_count: 0,
-                    payload: serde_json::json!({ "message": "restore-2" }),
-                },
-            ],
-        );
-
-        assert!(manager.has_session_state("session-restore"));
-        let snapshot = manager.snapshot("session-restore");
-        assert_eq!(snapshot.len(), 2);
-        assert_eq!(snapshot[0].queued_turn_id, "turn-restore-1");
-
-        let promoted = manager
-            .finish_and_take_next("session-restore")
-            .expect("应从恢复队列中取出首条任务");
-        assert_eq!(promoted.queued_turn_id, "turn-restore-1");
-        assert_eq!(
-            manager.active_queued_turn_id("session-restore").as_deref(),
-            Some("turn-restore-1")
-        );
+        let snapshot = task.snapshot(2);
+        assert_eq!(snapshot.queued_turn_id, "turn-restore-1");
+        assert_eq!(snapshot.position, 2);
+        assert_eq!(snapshot.message_text, "restore body 1");
     }
 
     // =========================================================================
@@ -1112,7 +758,7 @@ description: {}
     #[test]
     fn test_reload_lime_skills_no_panic() {
         // 这个测试确保 reload_lime_skills 在各种情况下都不会 panic
-        // 即使 ~/.lime/skills/ 目录不存在
+        // 即使当前 Skills 目录不存在
         AsterAgentState::reload_lime_skills();
         // 如果没有 panic，测试通过
     }

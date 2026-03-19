@@ -473,7 +473,21 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             working_dir TEXT,
-            execution_strategy TEXT NOT NULL DEFAULT 'react'
+            execution_strategy TEXT NOT NULL DEFAULT 'react',
+            session_type TEXT NOT NULL DEFAULT 'user',
+            user_set_name INTEGER NOT NULL DEFAULT 0,
+            extension_data_json TEXT NOT NULL DEFAULT '{}',
+            total_tokens INTEGER,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            accumulated_total_tokens INTEGER,
+            accumulated_input_tokens INTEGER,
+            accumulated_output_tokens INTEGER,
+            schedule_id TEXT,
+            recipe_json TEXT,
+            user_recipe_values_json TEXT,
+            provider_name TEXT,
+            model_config_json TEXT
         )",
         [],
     )?;
@@ -487,6 +501,56 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     // Migration: 添加 execution_strategy 列（如果不存在）
     let _ = conn.execute(
         "ALTER TABLE agent_sessions ADD COLUMN execution_strategy TEXT NOT NULL DEFAULT 'react'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'user'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN user_set_name INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN extension_data_json TEXT NOT NULL DEFAULT '{}'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN total_tokens INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN input_tokens INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN output_tokens INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN accumulated_total_tokens INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN accumulated_input_tokens INTEGER",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN accumulated_output_tokens INTEGER",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE agent_sessions ADD COLUMN schedule_id TEXT", []);
+    let _ = conn.execute("ALTER TABLE agent_sessions ADD COLUMN recipe_json TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN user_recipe_values_json TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN provider_name TEXT",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE agent_sessions ADD COLUMN model_config_json TEXT",
         [],
     );
 
@@ -559,82 +623,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_agent_thread_items_thread
          ON agent_thread_items(session_id, turn_id, sequence)",
-        [],
-    )?;
-
-    // 统一运行时排队 turn 表
-    // 持久化 pending 队列，用于应用重启后恢复会话级排队请求
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS agent_runtime_queued_turns (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            queued_turn_id TEXT NOT NULL UNIQUE,
-            session_id TEXT NOT NULL,
-            event_name TEXT NOT NULL,
-            message_preview TEXT NOT NULL,
-            message_text TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            image_count INTEGER NOT NULL DEFAULT 0,
-            created_at INTEGER NOT NULL,
-            FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
-        )",
-        [],
-    )?;
-
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_agent_runtime_queued_turns_session
-         ON agent_runtime_queued_turns(session_id, id)",
-        [],
-    )?;
-
-    // ============================================================================
-    // General Chat 相关表
-    // ============================================================================
-
-    // 通用对话会话表
-    // 存储通用对话的会话元数据
-    // _Requirements: 1.6, 1.7_
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS general_chat_sessions (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            metadata TEXT
-        )",
-        [],
-    )?;
-
-    // 通用对话消息表
-    // 存储每个会话的消息历史
-    // _Requirements: 1.6, 1.7_
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS general_chat_messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
-            content TEXT NOT NULL,
-            blocks TEXT,
-            status TEXT NOT NULL DEFAULT 'complete',
-            created_at INTEGER NOT NULL,
-            metadata TEXT,
-            FOREIGN KEY (session_id) REFERENCES general_chat_sessions(id) ON DELETE CASCADE
-        )",
-        [],
-    )?;
-
-    // 创建 general_chat_messages 索引
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_session_id ON general_chat_messages(session_id)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_messages_created_at ON general_chat_messages(created_at)",
-        [],
-    )?;
-
-    // 创建 general_chat_sessions 索引
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON general_chat_sessions(updated_at)",
         [],
     )?;
 

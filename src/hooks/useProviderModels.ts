@@ -13,6 +13,7 @@ import {
   getAliasConfigKey,
   isAliasProvider,
 } from "@/lib/constants/providerMappings";
+import { inferModelCapabilities } from "@/lib/model/inferModelCapabilities";
 import type { ConfiguredProvider } from "./useConfiguredProviders";
 import type {
   EnhancedModelMetadata,
@@ -105,14 +106,10 @@ function convertCustomModelsToMetadata(
       provider_name: providerName,
       family: null,
       tier: "pro" as const,
-      capabilities: {
-        vision: false,
-        tools: true,
-        streaming: true,
-        json_mode: true,
-        function_calling: true,
-        reasoning: modelName.includes("thinking"),
-      },
+      capabilities: inferModelCapabilities({
+        modelId: modelName,
+        providerId,
+      }),
       pricing: null,
       limits: {
         context_length: null,
@@ -149,14 +146,12 @@ function convertAliasModelsToMetadata(
       provider_name: providerName,
       family: aliasInfo?.provider || null,
       tier: "pro" as const,
-      capabilities: {
-        vision: false,
-        tools: true,
-        streaming: true,
-        json_mode: true,
-        function_calling: true,
-        reasoning: modelName.includes("thinking"),
-      },
+      capabilities: inferModelCapabilities({
+        modelId: modelName,
+        providerId: aliasInfo?.provider || providerId,
+        family: aliasInfo?.provider || null,
+        description: aliasInfo?.description || null,
+      }),
       pricing: null,
       limits: {
         context_length: null,

@@ -67,5 +67,5 @@ npm run bridge:e2e -- --server ws://127.0.0.1:8787 --key proxy_cast --profile de
 ## 兼容说明
 
 - 扩展只负责浏览器侧采集与动作执行。
-- Agent 侧通过 `aster_agent_cmd` 与 `unified_chat_cmd` 注册的浏览器 MCP 兼容工具访问。
+- Agent 侧通过 `aster_agent_cmd` 暴露的现役浏览器 MCP 工具访问。
 - 若你同时使用独立 Chrome Profile（Tauri `open_chrome_profile_window`），请在对应 Profile 内安装该扩展，并使用不同 `profileKey` 做隔离。

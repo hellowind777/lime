@@ -1014,6 +1014,41 @@ fn duplicate_session_config(config: &aster::agents::SessionConfig) -> aster::age
     }
 }
 
+async fn emit_runtime_status_with_projection<F>(
+    agent: &Agent,
+    session_config: &aster::agents::SessionConfig,
+    status: TauriRuntimeStatus,
+    on_event: &mut F,
+) where
+    F: FnMut(&TauriAgentEvent),
+{
+    match agent
+        .upsert_runtime_status_item(
+            session_config,
+            status.phase.clone(),
+            status.title.clone(),
+            status.detail.clone(),
+            status.checkpoints.clone(),
+        )
+        .await
+    {
+        Ok(agent_event) => {
+            for event in convert_agent_event(agent_event) {
+                on_event(&event);
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[AsterAgent][RuntimeStatus] 写入 runtime item 失败，降级仅发 transient 事件: {}",
+                error
+            );
+        }
+    }
+
+    let event = TauriAgentEvent::RuntimeStatus { status };
+    on_event(&event);
+}
+
 fn should_retry_after_empty_reply(
     preflight_execution: &PreflightToolExecution,
     current_text_output: &str,
@@ -1320,6 +1355,30 @@ pub async fn stream_reply_with_policy<F>(
     agent: &Agent,
     message_text: &str,
     working_directory: Option<&Path>,
+    session_config: aster::agents::SessionConfig,
+    cancel_token: Option<CancellationToken>,
+    request_tool_policy: &RequestToolPolicy,
+    on_event: F,
+) -> Result<StreamReplyExecution, ReplyAttemptError>
+where
+    F: FnMut(&TauriAgentEvent),
+{
+    stream_message_reply_with_policy(
+        agent,
+        Message::user().with_text(message_text),
+        working_directory,
+        session_config,
+        cancel_token,
+        request_tool_policy,
+        on_event,
+    )
+    .await
+}
+
+pub async fn stream_message_reply_with_policy<F>(
+    agent: &Agent,
+    user_message: Message,
+    working_directory: Option<&Path>,
     mut session_config: aster::agents::SessionConfig,
     cancel_token: Option<CancellationToken>,
     request_tool_policy: &RequestToolPolicy,
@@ -1328,11 +1387,12 @@ pub async fn stream_reply_with_policy<F>(
 where
     F: FnMut(&TauriAgentEvent),
 {
+    let message_text = user_message.as_concat_text();
     let mut web_search_tracker = WebSearchExecutionTracker::default();
     let preflight = execute_web_search_preflight_if_needed(
         agent,
         &session_config.id,
-        message_text,
+        &message_text,
         working_directory,
         cancel_token.clone(),
         request_tool_policy,
@@ -1368,7 +1428,7 @@ where
     let mut diagnostics = StreamEventDiagnostics::default();
     stream_agent_reply_once(
         agent,
-        Message::user().with_text(message_text),
+        user_message,
         duplicate_session_config(&session_config),
         cancel_token.clone(),
         request_tool_policy,
@@ -1393,12 +1453,15 @@ where
             session_config.id,
             web_search_tracker.format_attempts()
         );
-        let status = TauriAgentEvent::RuntimeStatus {
-            status: build_web_search_synthesis_runtime_status(
+        emit_runtime_status_with_projection(
+            agent,
+            &session_config,
+            build_web_search_synthesis_runtime_status(
                 preflight_execution.coverage_summary.as_deref(),
             ),
-        };
-        on_event(&status);
+            &mut on_event,
+        )
+        .await;
         session_config.system_prompt = merge_system_prompt_with_web_search_synthesis_instruction(
             session_config.system_prompt.take(),
         );

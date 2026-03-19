@@ -45,6 +45,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
   const currentAssistantMsgIdRef = useRef<string | null>(null);
   const currentStreamingSessionIdRef = useRef<string | null>(null);
   const lastTopicSnapshotKeyRef = useRef<string | null>(null);
+  const lastIsSendingRef = useRef(false);
   const sendMessageRef = useRef<SendMessageFn | null>(null);
   const resetPendingActionsRef = useRef<(() => void) | null>(null);
   const topicsUpdaterRef = useRef<
@@ -124,6 +125,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     session.sessionId &&
     session.topics.some((topic) => topic.id === session.sessionId),
   );
+  const currentSessionId = session.sessionId;
+  const refreshActiveSessionDetail = session.refreshSessionDetail;
 
   useEffect(() => {
     logAgentDebug(
@@ -173,6 +176,22 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
   useEffect(() => {
     tools.warnedKeysRef.current.clear();
   }, [tools.warnedKeysRef, workspaceId]);
+
+  useEffect(() => {
+    const wasSending = lastIsSendingRef.current;
+    lastIsSendingRef.current = stream.isSending;
+
+    if (!wasSending || stream.isSending) {
+      return;
+    }
+
+    const activeSessionId = currentSessionId;
+    if (!activeSessionId) {
+      return;
+    }
+
+    void refreshActiveSessionDetail(activeSessionId);
+  }, [currentSessionId, refreshActiveSessionDetail, stream.isSending]);
 
   useEffect(() => {
     const refreshSessionDetail = session.refreshSessionDetail;
@@ -319,6 +338,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     currentTurnId: session.currentTurnId,
     turns: session.threadTurns,
     threadItems: session.threadItems,
+    todoItems: session.todoItems,
     queuedTurns: session.queuedTurns,
     isSending: stream.isSending,
     sendMessage: stream.sendMessage,

@@ -47,7 +47,7 @@ const generalChatRestrictedPaths = [
     name: "@/components/general-chat",
     importNames: ["useChat"],
     message:
-      "general-chat 的 useChat 属于旧路径，请优先使用 @/hooks/useUnifiedChat 或当前现役聊天入口。",
+      "general-chat 的 useChat 属于旧路径，请优先使用 useAgentChatUnified / useAsterAgentChat 或当前现役聊天入口。",
   },
   {
     name: "@/components/general-chat",
@@ -65,18 +65,18 @@ const generalChatRestrictedPaths = [
     name: "@/components/general-chat/hooks",
     importNames: ["useChat"],
     message:
-      "general-chat/hooks/useChat 属于旧路径，请优先使用 @/hooks/useUnifiedChat 或当前现役聊天入口。",
+      "general-chat/hooks/useChat 属于旧路径，请优先使用 useAgentChatUnified / useAsterAgentChat 或当前现役聊天入口。",
   },
   {
     name: "@/components/general-chat/hooks",
     importNames: ["useSession", "useStreaming"],
     message:
-      "general-chat/hooks 下的 useSession/useStreaming 属于兼容实现，请优先接入统一对话链路。",
+      "general-chat/hooks 下的 useSession/useStreaming 属于兼容实现，请优先接入 useAgentChatUnified / useAsterAgentChat / agent_runtime_*。",
   },
   {
     name: "@/components/general-chat/hooks/useChat",
     message:
-      "general-chat/hooks/useChat 属于旧路径，请优先使用 @/hooks/useUnifiedChat 或当前现役聊天入口。",
+      "general-chat/hooks/useChat 属于旧路径，请优先使用 useAgentChatUnified / useAsterAgentChat 或当前现役聊天入口。",
   },
   {
     name: "@/components/general-chat/GeneralChatPage",
@@ -399,6 +399,11 @@ const generalChatRestrictedPaths = [
     importNames: deprecatedAgentRuntimeHelperNames,
     message:
       "agentRuntime 中这些旧命名 helper 只允许留在兼容层或兼容测试；业务层请改用 agent_runtime_* 对应 API 或 useAsterAgentChat。",
+  },
+  {
+    name: "@/hooks/useUnifiedChat",
+    message:
+      "useUnifiedChat 已删除；Agent 工作台请改用 useAgentChatUnified / useAsterAgentChat，旧 General/Creator 路径如需恢复，必须基于 agent_runtime_* 重新设计。",
   },
   {
     name: "@/lib/api/agent",
@@ -895,7 +900,7 @@ const unifiedChatCommandSelectors = [
 ].map((command) => ({
   selector: `CallExpression[callee.name='safeInvoke'][arguments.0.value='${command}'], CallExpression[callee.name='invoke'][arguments.0.value='${command}']`,
   message:
-    "统一对话命令请统一通过 `src/lib/api/unified-chat.ts` 暴露的网关函数调用，避免继续在其他模块中直接拼接命令名。",
+    "`chat_*` 兼容命令已停用；不要继续直接拼接旧命令名，现役链路请统一收敛到 agent_runtime_*。",
 }));
 
 const unifiedMemoryCommandSelectors = [
@@ -1179,7 +1184,6 @@ export default [
       "src/lib/api/memoryFeedback.ts",
       "src/lib/api/toolHooks.ts",
       "src/lib/api/terminal.ts",
-      "src/lib/api/unified-chat.ts",
       "src/lib/api/unifiedMemory.ts",
       "src/lib/api/serverRuntime.ts",
       "src/lib/api/logs.ts",

@@ -5,137 +5,14 @@ use lime_core::database::dao::agent_timeline::{
     AgentThreadTurnStatus, AgentTimelineDao,
 };
 use lime_core::database::{lock_db, DbConnection};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
-
-const PROPOSED_PLAN_OPEN: &str = "<proposed_plan>";
-const PROPOSED_PLAN_CLOSE: &str = "</proposed_plan>";
-
-fn format_runtime_status_text(title: &str, detail: &str, checkpoints: &[String]) -> String {
-    let mut lines = Vec::new();
-    let trimmed_title = title.trim();
-    if !trimmed_title.is_empty() {
-        lines.push(trimmed_title.to_string());
-    }
-    let trimmed_detail = detail.trim();
-    if !trimmed_detail.is_empty() {
-        lines.push(trimmed_detail.to_string());
-    }
-    for checkpoint in checkpoints {
-        let trimmed = checkpoint.trim();
-        if !trimmed.is_empty() {
-            lines.push(format!("• {trimmed}"));
-        }
-    }
-    lines.join("\n")
-}
 
 fn emit_event(app: &AppHandle, event_name: &str, event: &TauriAgentEvent) {
     if let Err(error) = app.emit(event_name, event) {
         tracing::error!("[AgentTimeline] 发送事件失败: {}", error);
     }
-}
-
-fn as_object(value: &Value) -> Option<&serde_json::Map<String, Value>> {
-    value.as_object()
-}
-
-#[derive(Debug, Clone)]
-struct ExtractedFileArtifact {
-    path: String,
-    artifact_id: Option<String>,
-}
-
-fn push_unique_file_path(target: &mut Vec<String>, raw: &str) {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() || target.iter().any(|item| item == trimmed) {
-        return;
-    }
-    target.push(trimmed.to_string());
-}
-
-fn collect_string_values(value: &Value) -> Vec<String> {
-    match value {
-        Value::String(text) => {
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                Vec::new()
-            } else {
-                vec![trimmed.to_string()]
-            }
-        }
-        Value::Array(items) => items
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn extract_file_artifacts(
-    arguments: Option<&Value>,
-    metadata: Option<&Value>,
-) -> Vec<ExtractedFileArtifact> {
-    let mut paths = Vec::new();
-    for source in [arguments, metadata] {
-        let Some(object) = source.and_then(as_object) else {
-            continue;
-        };
-        for key in [
-            "path",
-            "file_path",
-            "filePath",
-            "output_file",
-            "output_path",
-            "outputPath",
-            "artifact_path",
-            "artifact_paths",
-            "absolute_path",
-            "absolutePath",
-        ] {
-            let Some(value) = object.get(key) else {
-                continue;
-            };
-            for path in collect_string_values(value) {
-                push_unique_file_path(&mut paths, path.as_str());
-            }
-        }
-    }
-
-    let metadata_object = metadata.and_then(as_object);
-    let artifact_ids = metadata_object
-        .and_then(|object| object.get("artifact_ids"))
-        .map(collect_string_values)
-        .unwrap_or_default();
-    let single_artifact_id = metadata_object
-        .and_then(|object| {
-            object
-                .get("artifact_id")
-                .or_else(|| object.get("artifactId"))
-        })
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-
-    paths
-        .into_iter()
-        .enumerate()
-        .map(|(index, path)| ExtractedFileArtifact {
-            path,
-            artifact_id: artifact_ids.get(index).cloned().or_else(|| {
-                if index == 0 {
-                    single_artifact_id.clone()
-                } else {
-                    None
-                }
-            }),
-        })
-        .collect()
 }
 
 fn resolve_artifact_item_status(metadata: Option<&Value>) -> AgentThreadItemStatus {
@@ -165,18 +42,6 @@ fn resolve_artifact_item_source(metadata: Option<&Value>) -> String {
         .unwrap_or_else(|| "artifact_snapshot".to_string())
 }
 
-fn extract_proposed_plan_block(text: &str) -> Option<String> {
-    let start = text.find(PROPOSED_PLAN_OPEN)?;
-    let remainder = &text[start + PROPOSED_PLAN_OPEN.len()..];
-    let end = remainder.find(PROPOSED_PLAN_CLOSE)?;
-    let content = remainder[..end].trim();
-    if content.is_empty() {
-        None
-    } else {
-        Some(content.to_string())
-    }
-}
-
 #[derive(Debug)]
 pub struct AgentTimelineRecorder {
     db: DbConnection,
@@ -187,7 +52,6 @@ pub struct AgentTimelineRecorder {
     item_sequences: HashMap<String, i64>,
     item_statuses: HashMap<String, AgentThreadItemStatus>,
     plan_text: Option<String>,
-    turn_summary_text: Option<String>,
 }
 
 impl AgentTimelineRecorder {
@@ -228,7 +92,6 @@ impl AgentTimelineRecorder {
             item_sequences: HashMap::new(),
             item_statuses: HashMap::new(),
             plan_text: None,
-            turn_summary_text: None,
         })
     }
 
@@ -265,7 +128,6 @@ impl AgentTimelineRecorder {
                     item.clone(),
                     TauriAgentEvent::ItemStarted { item: item.clone() },
                 )?;
-                self.maybe_project_plan_item(app, event_name, item)?;
             }
             TauriAgentEvent::ItemUpdated { item } => {
                 self.persist_runtime_item(
@@ -274,7 +136,6 @@ impl AgentTimelineRecorder {
                     item.clone(),
                     TauriAgentEvent::ItemUpdated { item: item.clone() },
                 )?;
-                self.maybe_project_plan_item(app, event_name, item)?;
             }
             TauriAgentEvent::ItemCompleted { item } => {
                 self.persist_runtime_item(
@@ -283,52 +144,9 @@ impl AgentTimelineRecorder {
                     item.clone(),
                     TauriAgentEvent::ItemCompleted { item: item.clone() },
                 )?;
-                self.maybe_project_plan_item(app, event_name, item)?;
             }
-            TauriAgentEvent::RuntimeStatus { status } => {
-                let text =
-                    format_runtime_status_text(&status.title, &status.detail, &status.checkpoints);
-                if !text.is_empty() {
-                    self.turn_summary_text = Some(text.clone());
-                    let item = self.build_item(
-                        format!("turn_summary:{}", self.turn_id),
-                        AgentThreadItemStatus::InProgress,
-                        None,
-                        AgentThreadItemPayload::TurnSummary { text },
-                    );
-                    self.persist_and_emit_item(app, event_name, item)?;
-                }
-            }
-            TauriAgentEvent::ToolEnd { tool_id, result } => {
-                let metadata_value = result
-                    .metadata
-                    .as_ref()
-                    .and_then(|metadata| serde_json::to_value(metadata).ok());
-
-                for artifact in extract_file_artifacts(None, metadata_value.as_ref()) {
-                    let artifact_path = artifact.path.clone();
-                    let status = resolve_artifact_item_status(metadata_value.as_ref());
-                    let file_item = self.build_item(
-                        artifact
-                            .artifact_id
-                            .clone()
-                            .unwrap_or_else(|| format!("artifact:{}:{}", tool_id, artifact_path)),
-                        status.clone(),
-                        if matches!(status, AgentThreadItemStatus::InProgress) {
-                            None
-                        } else {
-                            Some(Utc::now().to_rfc3339())
-                        },
-                        AgentThreadItemPayload::FileArtifact {
-                            path: artifact_path,
-                            source: "tool_result".to_string(),
-                            content: None,
-                            metadata: metadata_value.clone(),
-                        },
-                    );
-                    self.persist_and_emit_item(app, event_name, file_item)?;
-                }
-            }
+            TauriAgentEvent::RuntimeStatus { .. } => {}
+            TauriAgentEvent::ToolEnd { .. } => {}
             TauriAgentEvent::ArtifactSnapshot { artifact } => {
                 let metadata_value = artifact
                     .metadata
@@ -480,18 +298,6 @@ impl AgentTimelineRecorder {
             self.persist_and_emit_item(app, event_name, item)?;
         }
 
-        if let Some(turn_summary_text) = self.turn_summary_text.clone() {
-            let item = self.build_item(
-                format!("turn_summary:{}", self.turn_id),
-                status,
-                Some(Utc::now().to_rfc3339()),
-                AgentThreadItemPayload::TurnSummary {
-                    text: turn_summary_text,
-                },
-            );
-            self.persist_and_emit_item(app, event_name, item)?;
-        }
-
         Ok(())
     }
 
@@ -592,98 +398,8 @@ impl AgentTimelineRecorder {
         self.item_statuses
             .insert(item.id.clone(), item.status.clone());
 
-        if let AgentThreadItemPayload::AgentMessage { text, .. } = &item.payload {
-            self.plan_text = extract_proposed_plan_block(text);
+        if let AgentThreadItemPayload::Plan { text } = &item.payload {
+            self.plan_text = Some(text.clone());
         }
     }
-
-    fn maybe_project_plan_item(
-        &mut self,
-        app: &AppHandle,
-        event_name: &str,
-        item: &AgentThreadItem,
-    ) -> Result<(), String> {
-        let AgentThreadItemPayload::AgentMessage { text, .. } = &item.payload else {
-            return Ok(());
-        };
-        let Some(plan_text) = extract_proposed_plan_block(text) else {
-            return Ok(());
-        };
-        self.plan_text = Some(plan_text.clone());
-        let plan_item = self.build_item(
-            format!("plan:{}", self.turn_id),
-            item.status.clone(),
-            item.completed_at.clone(),
-            AgentThreadItemPayload::Plan { text: plan_text },
-        );
-        self.persist_and_emit_item(app, event_name, plan_item)?;
-        Ok(())
-    }
-}
-
-pub fn complete_action_item(
-    db: &DbConnection,
-    request_id: &str,
-    response: Option<Value>,
-) -> Result<(), String> {
-    let conn = lock_db(db)?;
-    let Some(mut item) = AgentTimelineDao::get_item(&conn, request_id)
-        .map_err(|e| format!("读取 action item 失败: {e}"))?
-    else {
-        return Ok(());
-    };
-
-    let payload = match item.payload {
-        AgentThreadItemPayload::ApprovalRequest {
-            request_id,
-            action_type,
-            prompt,
-            tool_name,
-            arguments,
-            ..
-        } => AgentThreadItemPayload::ApprovalRequest {
-            request_id,
-            action_type,
-            prompt,
-            tool_name,
-            arguments,
-            response,
-        },
-        AgentThreadItemPayload::RequestUserInput {
-            request_id,
-            action_type,
-            prompt,
-            questions,
-            ..
-        } => AgentThreadItemPayload::RequestUserInput {
-            request_id,
-            action_type,
-            prompt,
-            questions,
-            response,
-        },
-        other => other,
-    };
-
-    let now = Utc::now().to_rfc3339();
-    item.status = AgentThreadItemStatus::Completed;
-    item.completed_at = Some(now.clone());
-    item.updated_at = now;
-    item.payload = payload;
-
-    AgentTimelineDao::upsert_item(&conn, &item).map_err(|e| format!("更新 action item 失败: {e}"))
-}
-
-pub fn build_action_response_value(
-    confirmed: bool,
-    response: Option<&str>,
-    user_data: Option<&Value>,
-) -> Option<Value> {
-    if let Some(value) = user_data {
-        return Some(value.clone());
-    }
-    if !confirmed {
-        return Some(json!({ "confirmed": false }));
-    }
-    response.map(|value| Value::String(value.to_string()))
 }

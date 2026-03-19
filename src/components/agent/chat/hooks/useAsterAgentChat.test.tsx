@@ -862,6 +862,117 @@ describe("useAsterAgentChat runtime routing", () => {
     }
   });
 
+  it("final_done 后应主动刷新会话详情以恢复持久化执行轨迹", async () => {
+    const workspaceId = "ws-final-done-refresh";
+    const sessionId = "session-final-done-refresh";
+    seedSession(workspaceId, sessionId);
+    const harness = mountHook(workspaceId);
+
+    let streamHandler: ((event: { payload: unknown }) => void) | null = null;
+    mockSafeListen.mockImplementationOnce(async (_eventName, handler) => {
+      streamHandler = handler as (event: { payload: unknown }) => void;
+      return () => {
+        streamHandler = null;
+      };
+    });
+    mockGetAgentRuntimeSession.mockResolvedValueOnce({
+      id: sessionId,
+      messages: [
+        {
+          role: "user",
+          timestamp: 1710000000,
+          content: [{ type: "text", text: "请先分析，再回答" }],
+        },
+        {
+          role: "assistant",
+          timestamp: 1710000005,
+          content: [
+            { type: "thinking", thinking: "先分析意图。" },
+            { type: "output_text", text: "分析完成，下面是回答。" },
+          ],
+        },
+      ],
+      turns: [
+        {
+          id: "turn-real-1",
+          thread_id: sessionId,
+          prompt_text: "请先分析，再回答",
+          status: "completed",
+          started_at: "2026-03-18T09:45:22.762244Z",
+          completed_at: "2026-03-18T09:45:54.994500Z",
+          created_at: "2026-03-18T09:45:22.762244Z",
+          updated_at: "2026-03-18T09:45:54.994500Z",
+        },
+      ],
+      items: [
+        {
+          id: "turn-summary-real-1",
+          thread_id: sessionId,
+          turn_id: "turn-real-1",
+          sequence: 1,
+          status: "completed",
+          started_at: "2026-03-18T09:45:22.900000Z",
+          completed_at: "2026-03-18T09:45:23.100000Z",
+          updated_at: "2026-03-18T09:45:23.100000Z",
+          type: "turn_summary",
+          text: "已决定：直接回答优先",
+        },
+        {
+          id: "reasoning-real-1",
+          thread_id: sessionId,
+          turn_id: "turn-real-1",
+          sequence: 2,
+          status: "completed",
+          started_at: "2026-03-18T09:45:23.200000Z",
+          completed_at: "2026-03-18T09:45:24.100000Z",
+          updated_at: "2026-03-18T09:45:24.100000Z",
+          type: "reasoning",
+          text: "先分析意图。",
+        },
+      ],
+    });
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请先分析，再回答", [], false, true, false, "react");
+      });
+
+      act(() => {
+        streamHandler?.({
+          payload: {
+            type: "final_done",
+          },
+        });
+      });
+
+      await flushEffects();
+      await flushEffects();
+
+      expect(mockGetAgentRuntimeSession).toHaveBeenCalledWith(sessionId);
+      expect(harness.getValue().currentTurnId).toBe("turn-real-1");
+      expect(harness.getValue().threadItems).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "turn-summary-real-1",
+            type: "turn_summary",
+            status: "completed",
+          }),
+          expect.objectContaining({
+            id: "reasoning-real-1",
+            type: "reasoning",
+            status: "completed",
+          }),
+        ]),
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
+
   it("final_done 前未收到正文时应给出明确失败提示，而不是静默无响应", async () => {
     const workspaceId = "ws-empty-final-response";
     seedSession(workspaceId, "session-empty-final-response");

@@ -1,26 +1,32 @@
-## Lime v0.90.0
+## Lime v0.91.0
 
 ### ✨ 主要更新
 
-- **Aster Agent 聊天链路完成收口**：前端统一走 `useAgentChatUnified -> useAsterAgentChat`，移除旧 `useAgentChat` / `agentStore` compat 路径；会话恢复、流式消息、工具状态与 topic snapshot 改为模块化协作
-- **Agent 会话与时间线持久化增强**：Aster session store、agent timeline DAO、数据库 schema 与迁移链路继续补强，聊天历史、统计与项目上下文构建更稳定
-- **托盘模型快捷切换上线**：新增全局托盘模型同步、主题感知的快捷模型组与模型选择联动，聊天页、侧边栏和模型选择器体验同步更新
-- **调试与性能诊断能力补齐**：新增前端 debug 上报 API、Tauri profiling 启动脚本、Perfetto / Tokio Console 支持与配套文档，运行时排障更直接
-- **OpenClaw 与运行时集成继续完善**：Browser Runtime、OpenClaw 页面与后端服务、Dev Bridge 查询和技能服务继续收口，提升桌面侧运行时协同
-- **品牌图标与托盘资产刷新**：应用图标、托盘状态图与启动页、侧边栏视觉资源同步更新
+- **Aster 运行时队列正式接入 Lime**：桌面端补齐 runtime queue service、Aster state support 与 session store 协作，Agent 会话恢复、排队执行和 runtime item 映射进一步收口
+- **Agent 聊天输入链路继续统一**：输入栏、空状态、图片附件、模型选择与会话 hooks 继续围绕 Aster 聊天主链路整理，减少旧 compat 路径分叉
+- **模型能力与视觉提示增强**：新增模型能力徽章、视觉能力提示与 provider model list 整理，模型选择和多模态提示更直接
+- **Skills / Social Post 执行链路补齐**：新增技能执行运行时与社交内容技能集成，Aster Skills 在 Lime 内的发现、执行与同步更完整
+- **数据库与治理清理继续推进**：移除旧 `unified_chat` / `tool_hooks` / `three stage workflow` 相关残留，统一到现役 Aster Agent、Memory 与 Workspace 路径
 
 ### ⚠️ 兼容性说明
 
-- Agent 聊天现役事实源已统一到 Aster 后端；旧 `useAgentChat` / `agentStore` 已移除，后续新功能不再沿 compat 路径扩展
-- Profiling 诊断能力仅在显式开发启动流程下启用；release / 生产构建默认忽略这些调试开关
+- Aster 相关聊天、会话与时间线事实源进一步集中到新的 runtime / session store 路径，旧 compat API 不再建议继续扩展
+- 模型可见性与能力展示依赖新的 provider model 推断逻辑，历史仅按名称匹配的前端分支需要逐步淘汰
+
+### 🔗 依赖同步
+
+- `src-tauri/Cargo.toml` 中的 `aster-rust` 依赖固定到 `v0.19.0`
 
 ### 🧪 测试
 
-- 发布前执行：`cargo test`、`cargo fmt --all`、`cargo clippy`、`npm run lint`
+- 发布前执行：`cd src-tauri && cargo test`
+- 发布前执行：`cd src-tauri && cargo fmt --all --check`
+- 发布前执行：`cd src-tauri && cargo clippy`
+- 发布前执行：`npm run lint`
 
 ### 📝 文档
 
-- 更新 Agent / Aster 集成、治理与 profiling 相关文档，补充前端诊断与发布说明
+- 更新 Aster 集成、治理、Skills 与发布相关文档，补充当前现役架构与发布说明
 
 ### 📦 Windows 下载说明
 
@@ -30,4 +36,4 @@
 
 ---
 
-**完整变更**: v0.89.1...v0.90.0
+**完整变更**: v0.90.0...v0.91.0

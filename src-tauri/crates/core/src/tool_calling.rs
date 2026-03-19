@@ -205,7 +205,7 @@ pub fn resolve_tool_input_examples(tool_name: &str, schema: &Value) -> Vec<Value
     let normalized = tool_name.trim().to_ascii_lowercase();
     let built_in = matches!(
         normalized.as_str(),
-        "websearch" | "webfetch" | "three_stage_workflow" | "tool_search"
+        "websearch" | "webfetch" | "tool_search"
     );
     if !built_in {
         return Vec::new();

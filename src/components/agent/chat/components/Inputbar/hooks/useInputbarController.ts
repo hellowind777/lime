@@ -27,7 +27,7 @@ interface UseInputbarControllerParams {
     thinking?: boolean,
     textOverride?: string,
     executionStrategy?: "react" | "code_orchestrated" | "auto",
-  ) => void;
+  ) => void | Promise<boolean> | boolean;
   onStop?: () => void;
   isLoading: boolean;
   disabled?: boolean;

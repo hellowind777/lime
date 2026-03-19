@@ -871,6 +871,29 @@ fn convert_item_status(
     }
 }
 
+fn format_runtime_status_text(title: &str, detail: &str, checkpoints: &[String]) -> String {
+    let mut lines = Vec::new();
+
+    let trimmed_title = title.trim();
+    if !trimmed_title.is_empty() {
+        lines.push(trimmed_title.to_string());
+    }
+
+    let trimmed_detail = detail.trim();
+    if !trimmed_detail.is_empty() {
+        lines.push(trimmed_detail.to_string());
+    }
+
+    for checkpoint in checkpoints {
+        let trimmed = checkpoint.trim();
+        if !trimmed.is_empty() {
+            lines.push(format!("• {trimmed}"));
+        }
+    }
+
+    lines.join("\n")
+}
+
 fn convert_item_payload(payload: ItemRuntimePayload) -> AgentThreadItemPayload {
     match payload {
         ItemRuntimePayload::UserMessage { content } => {
@@ -879,6 +902,26 @@ fn convert_item_payload(payload: ItemRuntimePayload) -> AgentThreadItemPayload {
         ItemRuntimePayload::AgentMessage { text } => {
             AgentThreadItemPayload::AgentMessage { text, phase: None }
         }
+        ItemRuntimePayload::Plan { text } => AgentThreadItemPayload::Plan { text },
+        ItemRuntimePayload::RuntimeStatus {
+            phase: _,
+            title,
+            detail,
+            checkpoints,
+        } => AgentThreadItemPayload::TurnSummary {
+            text: format_runtime_status_text(&title, &detail, &checkpoints),
+        },
+        ItemRuntimePayload::FileArtifact {
+            path,
+            source,
+            content,
+            metadata,
+        } => AgentThreadItemPayload::FileArtifact {
+            path,
+            source,
+            content,
+            metadata,
+        },
         ItemRuntimePayload::Reasoning { text } => AgentThreadItemPayload::Reasoning {
             text,
             summary: None,
@@ -1393,6 +1436,118 @@ mod tests {
                 }
             }
             other => panic!("Expected ItemCompleted event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_convert_item_started_plan_runtime_item() {
+        let now = chrono::Utc::now();
+        let item = ItemRuntime {
+            id: "plan:turn-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            sequence: 2,
+            status: ItemStatus::InProgress,
+            started_at: now,
+            completed_at: None,
+            updated_at: now,
+            payload: ItemRuntimePayload::Plan {
+                text: "- 调研\n- 实现".to_string(),
+            },
+        };
+
+        let events = convert_agent_event(AgentEvent::ItemStarted { item });
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            TauriAgentEvent::ItemStarted { item } => match &item.payload {
+                AgentThreadItemPayload::Plan { text } => {
+                    assert_eq!(text, "- 调研\n- 实现");
+                }
+                other => panic!("Unexpected payload: {other:?}"),
+            },
+            other => panic!("Expected ItemStarted event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_convert_item_started_file_artifact_runtime_item() {
+        let now = chrono::Utc::now();
+        let item = ItemRuntime {
+            id: "artifact-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            sequence: 3,
+            status: ItemStatus::Completed,
+            started_at: now,
+            completed_at: Some(now),
+            updated_at: now,
+            payload: ItemRuntimePayload::FileArtifact {
+                path: "/tmp/result.md".to_string(),
+                source: "tool_result".to_string(),
+                content: None,
+                metadata: Some(serde_json::json!({
+                    "output_file": "/tmp/result.md",
+                    "artifact_id": "artifact-1"
+                })),
+            },
+        };
+
+        let events = convert_agent_event(AgentEvent::ItemStarted { item });
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            TauriAgentEvent::ItemStarted { item } => match &item.payload {
+                AgentThreadItemPayload::FileArtifact {
+                    path,
+                    source,
+                    content,
+                    metadata,
+                } => {
+                    assert_eq!(path, "/tmp/result.md");
+                    assert_eq!(source, "tool_result");
+                    assert_eq!(content, &None);
+                    assert_eq!(
+                        metadata.as_ref().and_then(|value| value.get("artifact_id")),
+                        Some(&serde_json::json!("artifact-1"))
+                    );
+                }
+                other => panic!("Unexpected payload: {other:?}"),
+            },
+            other => panic!("Expected ItemStarted event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_convert_item_updated_runtime_status_runtime_item() {
+        let now = chrono::Utc::now();
+        let item = ItemRuntime {
+            id: "turn_summary:turn-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            sequence: 4,
+            status: ItemStatus::InProgress,
+            started_at: now,
+            completed_at: None,
+            updated_at: now,
+            payload: ItemRuntimePayload::RuntimeStatus {
+                phase: "routing".to_string(),
+                title: "已决定：先规划再输出".to_string(),
+                detail: "当前请求更像计划拆解，会先输出结构化行动路径。".to_string(),
+                checkpoints: vec!["检测到计划需求".to_string(), "优先整理关键步骤".to_string()],
+            },
+        };
+
+        let events = convert_agent_event(AgentEvent::ItemUpdated { item });
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            TauriAgentEvent::ItemUpdated { item } => match &item.payload {
+                AgentThreadItemPayload::TurnSummary { text } => {
+                    assert!(text.contains("已决定：先规划再输出"));
+                    assert!(text.contains("当前请求更像计划拆解"));
+                    assert!(text.contains("• 检测到计划需求"));
+                }
+                other => panic!("Unexpected payload: {other:?}"),
+            },
+            other => panic!("Expected ItemUpdated event, got {other:?}"),
         }
     }
 

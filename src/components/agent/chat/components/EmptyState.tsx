@@ -50,6 +50,10 @@ import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
 import type { MessageImage } from "../types";
 import { isGeneralResearchTheme } from "../utils/generalAgentPrompt";
+import {
+  getClipboardImageCandidates,
+  readImageAttachment,
+} from "../utils/imageAttachments";
 
 // Import Assets
 import capabilitySkillsPlaceholder from "@/assets/claw-home/capability-skills-placeholder.svg";
@@ -528,26 +532,43 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     if (!files || files.length === 0) return;
 
     Array.from(files).forEach((file) => {
-      if (!file.type.startsWith("image/")) {
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64 = event.target?.result as string;
-        const base64Data = base64.split(",")[1];
-        setPendingImages((prev) => [
-          ...prev,
-          {
-            data: base64Data,
-            mediaType: file.type,
-          },
-        ]);
-      };
-      reader.readAsDataURL(file);
+      void readImageAttachment(file)
+        .then((image) => {
+          setPendingImages((prev) => [...prev, image]);
+        })
+        .catch(() => {
+          toast.error(`图片读取失败: ${file.name || "未命名图片"}`);
+        });
     });
 
     e.target.value = "";
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const imageFiles = getClipboardImageCandidates(event.clipboardData);
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    imageFiles.forEach(({ file, mediaType }, index) => {
+      void readImageAttachment(file, mediaType)
+        .then((image) => {
+          setPendingImages((prev) => [...prev, image]);
+          if (index === 0) {
+            toast.success("已粘贴图片");
+          }
+        })
+        .catch(() => {
+          toast.error(`图片读取失败: ${file.name || "未命名图片"}`);
+        });
+    });
+  };
+
+  const handleRemoveImage = (index: number) => {
+    setPendingImages((prev) =>
+      prev.filter((_, currentIndex) => currentIndex !== index),
+    );
   };
 
   const handleSend = () => {
@@ -1054,8 +1075,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       onSubagentEnabledChange={onSubagentEnabledChange}
       webSearchEnabled={webSearchEnabled}
       onWebSearchEnabledChange={onWebSearchEnabledChange}
-      pendingImagesCount={pendingImages.length}
+      pendingImages={pendingImages}
       onFileSelect={handleFileSelect}
+      onPaste={handlePaste}
+      onRemoveImage={handleRemoveImage}
     />
   );
 

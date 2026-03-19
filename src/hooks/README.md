@@ -6,58 +6,17 @@
 
 | 文件 | 说明 |
 |------|------|
-| `useUnifiedChat.ts` | 统一对话 Hook，支持 Agent/General/Creator 三种模式 |
 | `useSkillExecution.ts` | Skill 执行 Hook，监听 Tauri 事件并管理执行状态 |
 
-## useUnifiedChat
-
-统一的对话逻辑 Hook，统一收口 Agent / General / Creator 三类对话入口。
-
-### 使用示例
-
-```typescript
-import { useUnifiedChat } from "@/hooks/useUnifiedChat";
-
-// Agent 模式
-const agentChat = useUnifiedChat({
-  mode: "agent",
-  providerType: "claude",
-  model: "claude-sonnet-4-20250514",
-});
-
-// 内容创作模式
-const creatorChat = useUnifiedChat({
-  mode: "creator",
-  systemPrompt: "你是一位专业的内容创作助手...",
-  onCanvasUpdate: (path, content) => {
-    // 更新画布内容
-  },
-});
-
-// 通用对话模式
-const generalChat = useUnifiedChat({
-  mode: "general",
-});
-```
-
-### 返回值
-
-- `session` - 当前会话
-- `messages` - 消息列表
-- `isLoading` - 加载状态
-- `isSending` - 发送状态
-- `error` - 错误信息
-- `createSession()` - 创建会话
-- `loadSession()` - 加载会话
-- `sendMessage()` - 发送消息
-- `stopGeneration()` - 停止生成
-- `configureProvider()` - 配置 Provider
+历史 `useUnifiedChat.ts` compat Hook 已删除。
+新 Agent / Codex 工作台统一走 `src/components/agent/chat/hooks/index.ts` 暴露的 `useAgentChatUnified`；
+底层实现为 `src/components/agent/chat/hooks/useAsterAgentChat.ts`；
+如果未来要恢复 General / Creator 能力，也应基于 `agent_runtime_*` 重建。
 
 ## 相关文档
 
 - 架构设计：`docs/prd/chat-architecture-redesign.md`
 - 类型定义：`src/types/chat.ts`
-- API 封装：`src/lib/api/unified-chat.ts`
 
 ## useSkillExecution
 

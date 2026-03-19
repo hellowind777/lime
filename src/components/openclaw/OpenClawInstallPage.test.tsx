@@ -252,6 +252,14 @@ describe("OpenClawInstallPage", () => {
           supplementalCommandCandidates: [
             "C:/Users/demo/AppData/Roaming/npm/openclaw.cmd",
           ],
+          gitWhereCandidates: ["C:/Program Files/Git/cmd/git.exe"],
+          gitSupplementalSearchDirs: [
+            "C:/Program Files/Git/cmd",
+            "C:/Program Files/Git/bin",
+          ],
+          gitSupplementalCommandCandidates: [
+            "C:/Program Files/Git/cmd/git.exe",
+          ],
         },
       }),
     });
@@ -282,6 +290,8 @@ describe("OpenClawInstallPage", () => {
     expect(container.textContent).toContain(
       "C:/Users/demo/AppData/Roaming/npm/openclaw.cmd",
     );
+    expect(container.textContent).toContain("`where git` 命中");
+    expect(container.textContent).toContain("C:/Program Files/Git/cmd/git.exe");
   });
 
   it("长路径应在执行环境与诊断摘要中压缩显示，并通过折叠入口展开详情", () => {
@@ -301,6 +311,9 @@ describe("OpenClawInstallPage", () => {
           whereCandidates: [],
           supplementalSearchDirs: [],
           supplementalCommandCandidates: [],
+          gitWhereCandidates: [],
+          gitSupplementalSearchDirs: [],
+          gitSupplementalCommandCandidates: [],
         },
       }),
       runtimeCandidates: [

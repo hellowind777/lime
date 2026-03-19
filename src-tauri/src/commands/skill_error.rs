@@ -7,7 +7,6 @@ pub const SKILL_ERR_CATALOG_UNAVAILABLE: &str = "skill_catalog_unavailable";
 pub const SKILL_ERR_NOT_FOUND: &str = "skill_not_found";
 pub const SKILL_ERR_SESSION_INIT_FAILED: &str = "skill_session_init_failed";
 pub const SKILL_ERR_PROVIDER_UNAVAILABLE: &str = "skill_provider_unavailable";
-pub const SKILL_ERR_STREAM_FAILED: &str = "skill_stream_failed";
 pub const SKILL_ERR_EXECUTE_FAILED: &str = "skill_execute_failed";
 
 pub fn format_skill_error(code: &str, message: impl AsRef<str>) -> String {

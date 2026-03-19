@@ -20,10 +20,11 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
-  getMemoryAutoIndex,
-  getMemoryEffectiveSources,
-  toggleMemoryAuto,
-  updateMemoryAutoNote,
+  getContextMemoryAutoIndex,
+  getContextMemoryEffectiveSources,
+  getContextMemoryOverview,
+  toggleContextMemoryAuto,
+  updateContextMemoryAutoNote,
   type AutoMemoryIndexResponse,
   type EffectiveMemorySourcesResponse,
   type MemoryAutoConfig,
@@ -31,7 +32,6 @@ import {
   type MemoryProfileConfig,
   type MemoryResolveConfig,
   type MemorySourcesConfig,
-  getMemoryOverview as getContextMemoryOverview,
 } from "@/lib/api/memoryRuntime";
 import { getConfig, saveConfig, type Config } from "@/lib/api/appConfig";
 import { getUnifiedMemoryStats } from "@/lib/api/unifiedMemory";
@@ -101,7 +101,7 @@ function normalizeSources(sources?: MemorySourcesConfig): MemorySourcesConfig {
       sources.project_rule_dirs.filter((item) => item.trim().length > 0)
         ? sources.project_rule_dirs
         : [".agents/rules"],
-    user_memory_path: sources?.user_memory_path ?? "~/.lime/AGENTS.md",
+    user_memory_path: sources?.user_memory_path ?? undefined,
     project_local_memory_path:
       sources?.project_local_memory_path ?? "AGENTS.local.md",
   };
@@ -390,8 +390,8 @@ export function MemorySettings() {
     setLoadingSourceState(true);
     try {
       const [sources, index] = await Promise.all([
-        getMemoryEffectiveSources().catch(() => null),
-        getMemoryAutoIndex().catch(() => null),
+        getContextMemoryEffectiveSources().catch(() => null),
+        getContextMemoryAutoIndex().catch(() => null),
       ]);
       setEffectiveSources(sources);
       setAutoIndex(index);
@@ -499,7 +499,7 @@ export function MemorySettings() {
     const current = normalizeAuto(draft.auto).enabled ?? true;
     const next = !current;
     try {
-      const result = await toggleMemoryAuto(next);
+      const result = await toggleContextMemoryAuto(next);
       setDraft((prev) => ({
         ...prev,
         auto: {
@@ -534,7 +534,7 @@ export function MemorySettings() {
 
     setSavingAutoNote(true);
     try {
-      const index = await updateMemoryAutoNote(
+      const index = await updateContextMemoryAutoNote(
         note,
         autoTopic.trim() || undefined,
       );
@@ -937,7 +937,7 @@ export function MemorySettings() {
                       }))
                     }
                     className={INPUT_CLASS_NAME}
-                    placeholder="例如 ~/.lime/AGENTS.md"
+                    placeholder="留空时使用应用默认 AGENTS.md 路径"
                   />
                 </label>
 

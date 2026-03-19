@@ -4,7 +4,7 @@
 
 use crate::database::dao::agent::{AgentDao, AgentModelPatternMatch};
 use crate::database::dao::orchestrator::OrchestratorDao;
-use crate::database::{summarize_pending_general, ConversationWindowSummary};
+use crate::database::ConversationWindowSummary;
 use chrono::{DateTime, Datelike, Duration, Local, TimeZone, Timelike};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -242,16 +242,12 @@ fn summarize_general_window(
     from_timestamp_ms: Option<i64>,
     to_timestamp_ms: Option<i64>,
 ) -> Result<ConversationWindowSummary, String> {
-    let unified = summarize_unified_window(
+    summarize_unified_window(
         conn,
         AgentModelPatternMatch::Like,
         from_timestamp_ms,
         to_timestamp_ms,
-    )?;
-    let pending = summarize_pending_general(conn, from_timestamp_ms, to_timestamp_ms)
-        .map_err(|e| format!("查询待迁移 general 摘要失败: {e}"))?;
-
-    Ok(unified.merge(pending))
+    )
 }
 
 fn summarize_agent_window(
@@ -298,6 +294,7 @@ fn build_conversation_stats(windows: ConversationWindowTriplet) -> ConversationS
     }
 }
 
+#[cfg(test)]
 fn query_general_chat_stats(
     conn: &Connection,
     today_start: &DateTime<Local>,
@@ -307,6 +304,7 @@ fn query_general_chat_stats(
         .map(build_conversation_stats)
 }
 
+#[cfg(test)]
 fn query_agent_chat_stats(
     conn: &Connection,
     today_start: &DateTime<Local>,
@@ -641,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn stats_ignore_legacy_general_after_migration_completed() {
+    fn stats_ignore_legacy_general_tables_during_runtime() {
         let conn = Connection::open_in_memory().expect("open in memory db");
         create_test_schema(&conn);
 
@@ -650,12 +648,6 @@ mod tests {
             .single()
             .expect("build datetime");
         let now_ms = now.timestamp_millis();
-
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
-            params!["migrated_general_chat_to_unified", "true"],
-        )
-        .unwrap();
 
         conn.execute(
             "INSERT INTO general_chat_sessions (id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)",

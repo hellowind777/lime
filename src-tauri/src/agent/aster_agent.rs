@@ -10,7 +10,7 @@ use futures::StreamExt;
 use lime_agent::{convert_agent_event, TauriAgentEvent, WriteArtifactEventEmitter};
 use tauri::{AppHandle, Emitter};
 
-pub use lime_agent::session_store::{
+pub use lime_agent::{
     PersistedSessionMetadata, SessionDetail, SessionInfo, SessionTitlePreviewMessage,
 };
 
@@ -121,30 +121,31 @@ impl AsterAgentWrapper {
         workspace_id: String,
         execution_strategy: Option<String>,
     ) -> Result<String, String> {
-        lime_agent::session_store::create_session_sync(
-            db,
-            name,
-            working_dir,
-            workspace_id,
-            execution_strategy,
-        )
+        lime_agent::create_session_sync(db, name, working_dir, workspace_id, execution_strategy)
     }
 
     /// 列出所有会话
     pub fn list_sessions_sync(db: &DbConnection) -> Result<Vec<SessionInfo>, String> {
-        lime_agent::session_store::list_sessions_sync(db)
+        lime_agent::list_sessions_sync(db)
     }
 
     /// 获取会话详情
     pub fn get_session_sync(db: &DbConnection, session_id: &str) -> Result<SessionDetail, String> {
-        lime_agent::session_store::get_session_sync(db, session_id)
+        lime_agent::get_session_sync(db, session_id)
+    }
+
+    pub async fn get_runtime_session_detail(
+        db: &DbConnection,
+        session_id: &str,
+    ) -> Result<SessionDetail, String> {
+        lime_agent::get_runtime_session_detail(db, session_id).await
     }
 
     pub fn get_persisted_session_metadata_sync(
         db: &DbConnection,
         session_id: &str,
     ) -> Result<Option<PersistedSessionMetadata>, String> {
-        lime_agent::session_store::get_persisted_session_metadata_sync(db, session_id)
+        lime_agent::get_persisted_session_metadata_sync(db, session_id)
     }
 
     pub fn list_title_preview_messages_sync(
@@ -152,7 +153,7 @@ impl AsterAgentWrapper {
         session_id: &str,
         limit: usize,
     ) -> Result<Vec<SessionTitlePreviewMessage>, String> {
-        lime_agent::session_store::list_title_preview_messages_sync(db, session_id, limit)
+        lime_agent::list_title_preview_messages_sync(db, session_id, limit)
     }
 
     /// 重命名会话
@@ -161,7 +162,7 @@ impl AsterAgentWrapper {
         session_id: &str,
         name: &str,
     ) -> Result<(), String> {
-        lime_agent::session_store::rename_session_sync(db, session_id, name)
+        lime_agent::rename_session_sync(db, session_id, name)
     }
 
     pub fn update_session_working_dir_sync(
@@ -169,7 +170,7 @@ impl AsterAgentWrapper {
         session_id: &str,
         working_dir: &str,
     ) -> Result<(), String> {
-        lime_agent::session_store::update_session_working_dir_sync(db, session_id, working_dir)
+        lime_agent::update_session_working_dir_sync(db, session_id, working_dir)
     }
 
     pub fn update_session_execution_strategy_sync(
@@ -177,16 +178,12 @@ impl AsterAgentWrapper {
         session_id: &str,
         execution_strategy: &str,
     ) -> Result<(), String> {
-        lime_agent::session_store::update_session_execution_strategy_sync(
-            db,
-            session_id,
-            execution_strategy,
-        )
+        lime_agent::update_session_execution_strategy_sync(db, session_id, execution_strategy)
     }
 
     /// 删除会话
     pub async fn delete_session(db: &DbConnection, session_id: &str) -> Result<(), String> {
-        lime_agent::session_store::delete_session(db, session_id).await
+        lime_agent::delete_session(db, session_id).await
     }
 }
 

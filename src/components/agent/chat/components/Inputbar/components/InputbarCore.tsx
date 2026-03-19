@@ -182,6 +182,23 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
     });
   }, [isFloatingVariant, toolMode]);
 
+  const handleRemoveImageMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    [],
+  );
+
+  const handleRemoveImageClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>, index: number) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onRemoveImage?.(index);
+    },
+    [onRemoveImage],
+  );
+
   return (
     <BaseComposer
       text={text}
@@ -242,7 +259,12 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
                         src={`data:${img.mediaType};base64,${img.data}`}
                         alt={`预览 ${index + 1}`}
                       />
-                      <ImageRemoveButton onClick={() => onRemoveImage?.(index)}>
+                      <ImageRemoveButton
+                        type="button"
+                        aria-label={`移除图片 ${index + 1}`}
+                        onMouseDown={handleRemoveImageMouseDown}
+                        onClick={(event) => handleRemoveImageClick(event, index)}
+                      >
                         <X size={12} />
                       </ImageRemoveButton>
                     </ImagePreviewItem>

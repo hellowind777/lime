@@ -430,13 +430,16 @@ impl WorkspaceManager {
     pub fn get_default(&self) -> Result<Option<Workspace>, String> {
         let conn = self.db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
 
+        Self::get_default_from_conn(&conn)
+    }
+
+    /// 基于现有数据库连接获取默认 workspace，避免重复加锁。
+    pub fn get_default_from_conn(conn: &rusqlite::Connection) -> Result<Option<Workspace>, String> {
         let result = conn.query_row(
             "SELECT id, name, workspace_type, root_path, is_default, settings_json, created_at, updated_at, icon, color, is_favorite, is_archived, tags_json
              FROM workspaces WHERE is_default = 1",
             [],
-            |row| {
-                Self::row_to_workspace(row)
-            },
+            Self::row_to_workspace,
         );
 
         match result {
@@ -444,6 +447,12 @@ impl WorkspaceManager {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(format!("获取默认 workspace 失败: {e}")),
         }
+    }
+
+    pub fn get_default_root_path_from_conn(
+        conn: &rusqlite::Connection,
+    ) -> Result<Option<PathBuf>, String> {
+        Ok(Self::get_default_from_conn(conn)?.map(|workspace| workspace.root_path))
     }
 
     /// 从数据库行解析 Workspace

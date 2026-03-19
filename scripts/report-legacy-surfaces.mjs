@@ -41,17 +41,17 @@ const agentLegacyHelperSurfaceMonitors = (
 const importSurfaceMonitors = [
   {
     id: "general-chat-root-entry",
-    classification: "deprecated",
-    description: "旧 general-chat 根导出入口",
+    classification: "dead-candidate",
+    description: "已删除的旧 general-chat 根导出入口",
     targets: ["src/components/general-chat/index.ts"],
     allowedPaths: [],
   },
   {
     id: "general-chat-page-entry",
-    classification: "deprecated",
-    description: "旧 general-chat 页面实现入口",
+    classification: "dead-candidate",
+    description: "已删除的旧 general-chat 页面实现入口",
     targets: ["src/components/general-chat/GeneralChatPage.tsx"],
-    allowedPaths: ["src/components/general-chat/index.ts"],
+    allowedPaths: [],
   },
   {
     id: "general-chat-legacy-session-hook",
@@ -62,22 +62,22 @@ const importSurfaceMonitors = [
   },
   {
     id: "general-chat-legacy-streaming-hook",
-    classification: "compat",
-    description: "旧 general-chat 流式兼容 Hook",
+    classification: "dead-candidate",
+    description: "已删除的旧 general-chat 流式兼容 Hook",
     targets: ["src/components/general-chat/hooks/useStreaming.ts"],
-    allowedPaths: ["src/components/general-chat/GeneralChatPage.tsx"],
+    allowedPaths: [],
   },
   {
     id: "general-chat-compat-gateway",
     classification: "dead-candidate",
     description: "general-chat compat API 网关",
     targets: ["src/lib/api/generalChatCompat.ts"],
-    allowedPaths: ["src/components/general-chat/store/useGeneralChatStore.ts"],
+    allowedPaths: [],
   },
   {
     id: "agent-compat-gateway",
-    classification: "deprecated",
-    description: "Agent / Aster compat API 网关",
+    classification: "dead-candidate",
+    description: "已删除的 Agent / Aster compat API 网关",
     targets: ["src/lib/api/agentCompat.ts"],
     allowedPaths: [],
   },
@@ -97,22 +97,22 @@ const importSurfaceMonitors = [
   },
   {
     id: "heartbeat-api-gateway",
-    classification: "deprecated",
-    description: "旧 heartbeat 前端 API 入口",
+    classification: "dead-candidate",
+    description: "已删除的旧 heartbeat 前端 API 入口",
     targets: ["src/lib/api/heartbeat.ts"],
     allowedPaths: [],
   },
   {
     id: "heartbeat-settings-page-entry",
-    classification: "deprecated",
-    description: "旧 heartbeat 设置页入口",
+    classification: "dead-candidate",
+    description: "已删除的旧 heartbeat 设置页入口",
     targets: ["src/components/settings-v2/system/heartbeat/index.tsx"],
     allowedPaths: [],
   },
   {
     id: "assistant-settings-page-entry",
-    classification: "deprecated",
-    description: "旧助理服务设置页入口",
+    classification: "dead-candidate",
+    description: "已删除的旧助理服务设置页入口",
     targets: ["src/components/settings-v2/agent/assistant/index.tsx"],
     allowedPaths: [],
   },
@@ -130,14 +130,56 @@ const importSurfaceMonitors = [
     targets: ["src/stores/agentStore.ts"],
     allowedPaths: [],
   },
+  {
+    id: "use-unified-chat-compat-hook",
+    classification: "dead-candidate",
+    description: "useUnifiedChat compat Hook 入口",
+    targets: ["src/hooks/useUnifiedChat.ts"],
+    allowedPaths: [],
+  },
+  {
+    id: "unified-chat-compat-gateway",
+    classification: "dead-candidate",
+    description: "unified-chat compat API 网关",
+    targets: ["src/lib/api/unified-chat.ts"],
+    allowedPaths: [],
+  },
+  {
+    id: "three-stage-workflow-hook-entry",
+    classification: "dead-candidate",
+    description: "旧 three-stage workflow React Hook 入口",
+    targets: ["src/hooks/useThreeStageWorkflow.ts"],
+    allowedPaths: [],
+  },
+  {
+    id: "three-stage-workflow-manager-entry",
+    classification: "dead-candidate",
+    description: "旧 three-stage workflow 管理器入口",
+    targets: ["src/lib/workflow/threeStageWorkflow.ts"],
+    allowedPaths: [],
+  },
+  {
+    id: "tool-hooks-api-gateway",
+    classification: "dead-candidate",
+    description: "旧 tool hooks 前端 API 网关",
+    targets: ["src/lib/api/toolHooks.ts"],
+    allowedPaths: [],
+  },
+  {
+    id: "context-memory-legacy-api-gateway",
+    classification: "dead-candidate",
+    description: "旧 context memory 前端 API 网关",
+    targets: ["src/lib/api/contextMemory.ts"],
+    allowedPaths: [],
+  },
 ];
 
 const commandSurfaceMonitors = [
   ...agentLegacyCommandSurfaceMonitors,
   {
     id: "general-chat-compat-commands",
-    classification: "compat",
-    description: "general_chat compat 命令前端边界",
+    classification: "dead-candidate",
+    description: "已零引用的 general_chat compat 命令前端边界",
     commands: [
       "general_chat_get_session",
       "general_chat_list_sessions",
@@ -146,31 +188,64 @@ const commandSurfaceMonitors = [
       "general_chat_rename_session",
       "general_chat_get_messages",
     ],
-    allowedPaths: ["src/lib/api/generalChatCompat.ts"],
+    allowedPaths: [],
   },
   {
     id: "conversation-memory-legacy-commands",
-    classification: "compat",
-    description: "旧 conversation memory 命令前端边界",
+    classification: "dead-candidate",
+    description: "已零引用的旧 conversation memory 命令前端边界",
     commands: [
       "get_conversation_memory_overview",
       "get_conversation_memory_stats",
       "request_conversation_memory_analysis",
       "cleanup_conversation_memory",
     ],
-    allowedPaths: ["src/lib/api/memoryRuntime.ts"],
+    allowedPaths: [],
+  },
+  {
+    id: "context-memory-legacy-commands",
+    classification: "dead-candidate",
+    description: "旧 context memory 命令前端边界",
+    commands: [
+      "save_memory_entry",
+      "get_session_memories",
+      "get_memory_context",
+      "record_error",
+      "should_avoid_operation",
+      "mark_error_resolved",
+      "get_memory_stats",
+      "cleanup_expired_memories",
+    ],
+    allowedPaths: [],
+  },
+  {
+    id: "chat-compat-commands",
+    classification: "dead-candidate",
+    description: "chat_* compat 命令前端边界",
+    commands: [
+      "chat_create_session",
+      "chat_list_sessions",
+      "chat_get_session",
+      "chat_delete_session",
+      "chat_rename_session",
+      "chat_get_messages",
+      "chat_send_message",
+      "chat_stop_generation",
+      "chat_configure_provider",
+    ],
+    allowedPaths: [],
   },
   {
     id: "prompt-switch-legacy-command",
-    classification: "deprecated",
-    description: "旧 prompt 切换命令前端边界",
+    classification: "dead-candidate",
+    description: "已零引用的旧 prompt 切换命令前端边界",
     commands: ["switch_prompt"],
     allowedPaths: [],
   },
   {
     id: "api-key-legacy-migration-commands",
-    classification: "deprecated",
-    description: "旧 API Key 迁移命令前端边界",
+    classification: "dead-candidate",
+    description: "已零引用的旧 API Key 迁移命令前端边界",
     commands: [
       "get_legacy_api_key_credentials",
       "migrate_legacy_api_key_credentials",
@@ -180,8 +255,8 @@ const commandSurfaceMonitors = [
   },
   {
     id: "heartbeat-legacy-commands",
-    classification: "deprecated",
-    description: "旧 heartbeat 命令前端边界",
+    classification: "dead-candidate",
+    description: "已零引用的旧 heartbeat 命令前端边界",
     commands: [
       "get_heartbeat_config",
       "update_heartbeat_config",
@@ -203,14 +278,29 @@ const commandSurfaceMonitors = [
     ],
     allowedPaths: [],
   },
+  {
+    id: "tool-hooks-legacy-commands",
+    classification: "dead-candidate",
+    description: "旧 tool hooks 命令前端边界",
+    commands: [
+      "execute_hooks",
+      "add_hook_rule",
+      "remove_hook_rule",
+      "toggle_hook_rule",
+      "get_hook_rules",
+      "get_hook_execution_stats",
+      "clear_hook_execution_stats",
+    ],
+    allowedPaths: [],
+  },
 ];
 
 const frontendTextSurfaceMonitors = [
   ...agentLegacyHelperSurfaceMonitors,
   {
     id: "frontend-assistant-settings-surfaces",
-    classification: "deprecated",
-    description: "前端助理服务设置页与配置面回流",
+    classification: "dead-candidate",
+    description: "已零引用的前端助理服务设置页与配置面回流",
     patterns: [
       "SettingsTabs.Assistant",
       "settings.tab.assistant",
@@ -225,8 +315,8 @@ const frontendTextSurfaceMonitors = [
   },
   {
     id: "stores-root-barrel-imports",
-    classification: "deprecated",
-    description: "从 @/stores 根 barrel 回流遗留 store 导入",
+    classification: "dead-candidate",
+    description: "已零引用的 @/stores 根 barrel 回流",
     patterns: ['from "@/stores"', "from '@/stores'"],
     allowedPaths: [],
   },
@@ -235,8 +325,8 @@ const frontendTextSurfaceMonitors = [
 const rustTextSurfaceMonitors = [
   {
     id: "rust-general-chat-dao",
-    classification: "deprecated",
-    description: "Rust 业务层 direct GeneralChatDao 依赖",
+    classification: "dead-candidate",
+    description: "已零引用的 Rust 业务层 direct GeneralChatDao 依赖",
     patterns: ["GeneralChatDao", "database::dao::general_chat"],
     allowedPaths: [],
   },
@@ -248,15 +338,14 @@ const rustTextSurfaceMonitors = [
     allowedPaths: [
       "src-tauri/crates/core/src/app_paths.rs",
       "src-tauri/crates/core/src/database/migration/general_chat_migration.rs",
-      "src-tauri/crates/core/src/database/pending_general_chat.rs",
       "src-tauri/crates/core/src/database/migration.rs",
       "src-tauri/crates/core/src/database/schema.rs",
     ],
   },
   {
     id: "rust-legacy-general-helper-usage",
-    classification: "compat",
-    description: "Rust runtime pending general raw helper 扩散",
+    classification: "dead-candidate",
+    description: "Rust runtime pending general raw helper 回流",
     patterns: [
       "load_pending_general_session_messages_raw",
       "load_pending_general_messages_raw",
@@ -269,15 +358,27 @@ const rustTextSurfaceMonitors = [
       "count_unmigrated_legacy_general_messages",
       "sum_unmigrated_legacy_general_message_chars",
     ],
-    allowedPaths: [
-      "src-tauri/crates/core/src/database/pending_general_chat.rs",
-      "src-tauri/crates/core/src/database/mod.rs",
+    allowedPaths: [],
+  },
+  {
+    id: "rust-pending-general-wrapper-usage",
+    classification: "dead-candidate",
+    description: "Rust 业务层 pending general 兼容 wrapper 回流",
+    patterns: [
+      "load_pending_general_messages(",
+      "load_pending_general_session_messages(",
+      "count_pending_general_sessions(",
+      "count_pending_general_messages(",
+      "sum_pending_general_message_chars(",
+      "summarize_pending_general(",
     ],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
   },
   {
     id: "rust-legacy-general-module-imports",
-    classification: "deprecated",
-    description: "Rust 外部模块直接引用 pending/legacy general 子模块",
+    classification: "dead-candidate",
+    description: "已零引用的 Rust 外部模块 direct pending/legacy general 子模块",
     patterns: [
       "crate::database::legacy_general_chat::",
       "lime_core::database::legacy_general_chat::",
@@ -296,14 +397,12 @@ const rustTextSurfaceMonitors = [
     ],
     allowedPaths: [
       "src-tauri/crates/core/src/database/migration/general_chat_migration.rs",
-      "src-tauri/crates/core/src/database/migration.rs",
-      "src-tauri/crates/core/src/database/mod.rs",
     ],
   },
   {
     id: "rust-services-crate-general-chat-compat",
-    classification: "deprecated",
-    description: "services crate 内部继续依赖 general_chat 兼容壳",
+    classification: "dead-candidate",
+    description: "已零引用的 services crate general_chat 兼容壳回流",
     patterns: [
       "use crate::general_chat::",
       "use crate::general_chat::{",
@@ -314,22 +413,22 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-cross-crate-general-chat-compat",
-    classification: "deprecated",
-    description: "跨 crate 引回 lime_services::general_chat 兼容壳",
+    classification: "dead-candidate",
+    description: "已零引用的跨 crate lime_services::general_chat 兼容壳回流",
     patterns: ["lime_services::general_chat::"],
     allowedPaths: [],
   },
   {
     id: "rust-provider-pool-legacy-selector",
-    classification: "deprecated",
-    description: "provider pool legacy 凭证选择兼容方法",
+    classification: "dead-candidate",
+    description: "已零引用的 provider pool legacy 凭证选择兼容方法",
     patterns: ["select_credential_with_fallback_legacy"],
     allowedPaths: [],
   },
   {
     id: "rust-memory-legacy-command-shells",
-    classification: "deprecated",
-    description: "旧 conversation memory Rust 命令壳回流",
+    classification: "dead-candidate",
+    description: "已零引用的旧 conversation memory Rust 命令壳回流",
     patterns: [
       "get_conversation_memory_stats",
       "get_conversation_memory_overview",
@@ -340,9 +439,138 @@ const rustTextSurfaceMonitors = [
     allowedPaths: [],
   },
   {
-    id: "rust-request-tool-policy-compat-service",
+    id: "rust-memory-profile-prompt-helper-leak",
     classification: "deprecated",
-    description: "request_tool_policy 旧服务壳回流",
+    description: "低层 build_memory_profile_prompt helper 泄漏到统一装配边界之外",
+    patterns: ["build_memory_profile_prompt("],
+    includePathPrefixes: ["src-tauri/src"],
+    allowedPaths: ["src-tauri/src/services/memory_profile_prompt_service.rs"],
+  },
+  {
+    id: "rust-memory-sources-prompt-helper-leak",
+    classification: "deprecated",
+    description: "低层 build_memory_sources_prompt helper 泄漏到统一装配边界之外",
+    patterns: ["build_memory_sources_prompt("],
+    includePathPrefixes: ["src-tauri/src"],
+    allowedPaths: [
+      "src-tauri/src/services/memory_profile_prompt_service.rs",
+      "src-tauri/src/services/memory_source_resolver_service.rs",
+    ],
+  },
+  {
+    id: "rust-project-session-config-helper-leak",
+    classification: "dead-candidate",
+    description: "旧 create_session_config_with_project helper 回流",
+    patterns: ["create_session_config_with_project("],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-unified-chat-command-module-leak",
+    classification: "dead-candidate",
+    description: "Rust unified_chat compat 命令模块重新回到 commands 编译图",
+    patterns: ["pub mod unified_chat_cmd;"],
+    includePathPrefixes: ["src-tauri/src/commands"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-tool-hooks-command-module-leak",
+    classification: "dead-candidate",
+    description: "Rust tool_hooks 旧命令模块重新回到 commands 编译图",
+    patterns: ["pub mod tool_hooks;"],
+    includePathPrefixes: ["src-tauri/src/commands"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-tool-hooks-service-module-leak",
+    classification: "dead-candidate",
+    description: "services crate 旧 tool_hooks_service 模块重新回到编译图",
+    patterns: ["pub mod tool_hooks_service;"],
+    includePathPrefixes: ["src-tauri/crates/services/src"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-three-stage-workflow-tool-leak",
+    classification: "dead-candidate",
+    description: "legacy three_stage_workflow 工具名重新回到 Lime Rust 编译图",
+    patterns: ['"three_stage_workflow"', "three_stage_workflow"],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-skill-workflow-tauri-orchestration-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 skill workflow 执行主链回流到 Tauri skills 模块",
+    patterns: [
+      "SessionConfigBuilder::new(",
+      "convert_agent_event(",
+      "WriteArtifactEventEmitter::new(",
+      ".reply(",
+    ],
+    includePathPrefixes: ["src-tauri/src/skills"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-skill-prompt-command-orchestration-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 skill prompt 执行主链回流到 skill_exec_cmd 命令层",
+    patterns: [
+      "SessionConfigBuilder::new(",
+      "convert_agent_event(",
+      "WriteArtifactEventEmitter::new(",
+      ".reply(",
+    ],
+    includePathPrefixes: ["src-tauri/src/commands/skill_exec_cmd.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-skill-runtime-command-bootstrap-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 skill runtime 准备与 provider fallback 回流到 skill_exec_cmd 命令层",
+    patterns: [
+      "ensure_browser_mcp_tools_registered(",
+      "ensure_social_image_tool_registered(",
+      "ensure_creation_task_tools_registered(",
+      "build_memory_profile_prompt(",
+      ".configure_provider_from_pool(",
+      "TauriExecutionCallback::new(",
+    ],
+    includePathPrefixes: ["src-tauri/src/commands/skill_exec_cmd.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-skill-catalog-command-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 skill catalog 枚举与详情装配回流到 skill_exec_cmd 命令层",
+    patterns: [
+      "get_skill_roots(",
+      "load_skills_from_directory(",
+      "find_skill_by_name(",
+      "invalid_skill_message(",
+      "load_skill_from_file(",
+      "parse_skill_frontmatter(",
+      "parse_allowed_tools(",
+      "parse_boolean(",
+    ],
+    includePathPrefixes: ["src-tauri/src/commands/skill_exec_cmd.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-skill-mode-branch-command-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 skill execution_mode 分支回流到 skill_exec_cmd 命令层",
+    patterns: [
+      "skill.execution_mode == \"workflow\"",
+      "!skill.workflow_steps.is_empty()",
+      "execute_skill_workflow(",
+      "execute_skill_prompt(",
+    ],
+    includePathPrefixes: ["src-tauri/src/commands/skill_exec_cmd.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-request-tool-policy-compat-service",
+    classification: "dead-candidate",
+    description: "已零引用的 request_tool_policy 旧服务壳回流",
     patterns: [
       "crate::services::request_tool_policy_prompt_service::",
       "lime_lib::services::request_tool_policy_prompt_service::",
@@ -352,8 +580,8 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-service-agent-table-query-leak",
-    classification: "deprecated",
-    description: "Tauri service 层 direct agent_sessions/agent_messages 查询回流",
+    classification: "dead-candidate",
+    description: "已零引用的 Tauri service 层 direct agent_sessions/agent_messages 查询回流",
     patterns: [
       "FROM agent_sessions s",
       "FROM agent_messages m",
@@ -364,10 +592,63 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-service-model-usage-table-query-leak",
-    classification: "deprecated",
-    description: "Tauri service 层 direct model_usage_stats 查询回流",
+    classification: "dead-candidate",
+    description: "已零引用的 Tauri service 层 direct model_usage_stats 查询回流",
     patterns: ["FROM model_usage_stats", "SELECT COUNT(*) FROM model_usage_stats"],
     includePathPrefixes: ["src-tauri/src/services"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-dev-bridge-unified-memory-sql-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 DevBridge unified_memory SQL 绕路回流",
+    patterns: [
+      "FROM unified_memory",
+      "INSERT INTO unified_memory",
+      "UPDATE unified_memory",
+      "DELETE FROM unified_memory",
+    ],
+    includePathPrefixes: ["src-tauri/src/dev_bridge/dispatcher/memory.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-runtime-legacy-queue-table-leak",
+    classification: "deprecated",
+    description: "legacy runtime queue 表名从数据库迁移边界向外扩散",
+    patterns: ["agent_runtime_queued_turns"],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/core/src/database/agent_runtime_queue_repository.rs"],
+  },
+  {
+    id: "rust-agent-runtime-legacy-queue-migration-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 legacy runtime queue 启动迁移 helper 回流到其他模块",
+    patterns: ["migrate_legacy_runtime_queue_to_aster_store("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-session-legacy-todo-state-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 Lime 业务层 direct legacy TodoState 读取回流",
+    patterns: ["TodoState::from_extension_data(", "TodoState::new("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-session-structured-todo-helper-bypass",
+    classification: "dead-candidate",
+    description: "已零引用的 Lime 业务层绕过 unified todo helper 直接读取 TodoListState",
+    patterns: ["TodoListState::from_extension_data(", "TodoListState::from_markdown("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-services-default-workspace-query-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 services crate direct 默认 workspace root 查询回流",
+    patterns: ["SELECT root_path FROM workspaces WHERE is_default = 1 LIMIT 1"],
+    includePathPrefixes: ["src-tauri/crates/services/src"],
     allowedPaths: [],
   },
   {
@@ -376,21 +657,25 @@ const rustTextSurfaceMonitors = [
     description: "Rust 上层模块 direct Agent session 记录与消息读写回流",
     patterns: [
       "AgentDao::get_session(",
+      "AgentDao::get_session_with_messages(",
       "AgentDao::list_sessions(",
+      "AgentDao::list_session_overviews(",
       "AgentDao::get_message_count(",
       "AgentDao::get_messages(",
+      "AgentDao::get_session_overview(",
       "AgentDao::session_exists(",
       "AgentDao::update_title(",
       "AgentDao::update_session_time(",
+      "AgentDao::rename_session(",
       "AgentDao::update_working_dir(",
       "AgentDao::update_execution_strategy(",
     ],
-    allowedPaths: ["src-tauri/crates/agent/src/session_store.rs"],
+    allowedPaths: ["src-tauri/crates/core/src/database/agent_session_repository.rs"],
   },
   {
     id: "rust-agent-session-direct-delete",
-    classification: "deprecated",
-    description: "Rust 业务层 direct AgentDao::delete_session 回流",
+    classification: "dead-candidate",
+    description: "已零引用的 Rust 业务层 direct AgentDao::delete_session 回流",
     patterns: ["AgentDao::delete_session("],
     allowedPaths: [],
   },
@@ -399,12 +684,191 @@ const rustTextSurfaceMonitors = [
     classification: "deprecated",
     description: "Rust 业务层 direct AgentDao::create_session 回流",
     patterns: ["AgentDao::create_session("],
-    allowedPaths: ["src-tauri/crates/agent/src/session_store.rs"],
+    allowedPaths: ["src-tauri/crates/core/src/database/agent_session_repository.rs"],
+  },
+  {
+    id: "rust-agent-dao-row-type-leak",
+    classification: "dead-candidate",
+    description: "agent crate 重新泄漏 core DAO row 类型",
+    patterns: ["AgentSessionOverviewRow"],
+    includePathPrefixes: ["src-tauri/crates/agent/src"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-workspace-query-leak",
+    classification: "dead-candidate",
+    description: "agent runtime direct workspaces 绑定查询回流",
+    patterns: ["SELECT id FROM workspaces WHERE root_path = ? LIMIT 1"],
+    includePathPrefixes: ["src-tauri/crates/agent/src"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-session-record-repository-module-leak",
+    classification: "dead-candidate",
+    description: "lime-agent 本地 session_record_repository 壳重新回到编译图",
+    patterns: ["mod session_record_repository;"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-session-compat-surface",
+    classification: "dead-candidate",
+    description: "agent crate 旧 compat session API 回流",
+    patterns: [
+      "CompatSessionInfo",
+      "list_compat_sessions_sync(",
+      "get_compat_session_sync(",
+    ],
+    includePathPrefixes: ["src-tauri/crates/agent/src"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-session-store-public-module-leak",
+    classification: "dead-candidate",
+    description: "lime-agent 重新对 crate 外暴露 session_store 模块",
+    patterns: ["pub mod session_store;"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-session-store-direct-module-usage",
+    classification: "dead-candidate",
+    description: "上层模块重新 direct 依赖 lime_agent::session_store 模块路径",
+    patterns: ["lime_agent::session_store::"],
+    includePathPrefixes: ["src-tauri/src"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-session-record-create-api-leak",
+    classification: "dead-candidate",
+    description: "lime-agent crate 根重新暴露内部 session record 创建 API",
+    patterns: ["create_session_record_sync,", "CreateSessionRecordInput,"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-integration-public-module-leak",
+    classification: "dead-candidate",
+    description: "agent 集成模块重新对外暴露 integration 模块路径",
+    patterns: ["pub mod integration;"],
+    includePathPrefixes: ["src-tauri/src/agent/mod.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-integration-module-compiled-leak",
+    classification: "dead-candidate",
+    description: "已退出编译图的 agent integration 模块重新回到 agent 根模块",
+    patterns: ["mod integration;"],
+    includePathPrefixes: ["src-tauri/src/agent/mod.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-integration-direct-module-usage",
+    classification: "dead-candidate",
+    description: "应用层重新 direct 依赖 crate::agent::integration 模块路径",
+    patterns: ["crate::agent::integration::"],
+    includePathPrefixes: ["src-tauri/src"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-subagent-direct-module-usage",
+    classification: "dead-candidate",
+    description: "应用层重新 direct 依赖 crate::agent::subagent_scheduler 模块路径",
+    patterns: ["crate::agent::subagent_scheduler::"],
+    includePathPrefixes: ["src-tauri/src"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-runtime-snapshot-helper-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 Lime 业务层 direct Aster runtime snapshot helper 回流",
+    patterns: ["load_session_runtime_snapshot("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-runtime-store-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 Lime 业务层 direct Aster shared runtime store 回流",
+    patterns: [
+      "shared_thread_runtime_store(",
+      "initialize_shared_thread_runtime_store(",
+      "initialize_shared_sqlite_thread_runtime_store(",
+    ],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-runtime-store-public-require-api-leak",
+    classification: "dead-candidate",
+    description: "Aster runtime support 重新对 crate 外暴露 require_aster_thread_runtime_store",
+    patterns: ["pub fn require_aster_thread_runtime_store("],
+    includePathPrefixes: ["src-tauri/crates/agent/src/aster_runtime_support.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-runtime-init-return-store-api-leak",
+    classification: "dead-candidate",
+    description: "Aster runtime 启动初始化 API 重新向 crate 外返回 runtime store",
+    patterns: [
+      "pub fn initialize_aster_thread_runtime_store() -> Result<Arc<dyn ThreadRuntimeStore>, String>",
+    ],
+    includePathPrefixes: ["src-tauri/crates/agent/src/aster_runtime_support.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-runtime-public-legacy-init-helper-leak",
+    classification: "dead-candidate",
+    description: "Aster runtime support 重新对 crate 外暴露旧 initialize_aster_thread_runtime_store helper",
+    patterns: ["pub fn initialize_aster_thread_runtime_store("],
+    includePathPrefixes: ["src-tauri/crates/agent/src/aster_runtime_support.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-runtime-snapshot-root-export-leak",
+    classification: "dead-candidate",
+    description: "lime-agent crate 根重新暴露 load_aster_runtime_snapshot helper",
+    patterns: ["load_aster_runtime_snapshot"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-runtime-queue-service-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 Lime 业务层 direct Aster shared runtime queue service 回流",
+    patterns: [],
+    regexPatterns: [String.raw`(?<!require_)shared_session_runtime_queue_service\(`],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-path-root-env-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 Lime 业务层 direct ASTER_PATH_ROOT 环境变量处理回流",
+    patterns: ['"ASTER_PATH_ROOT"'],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-aster-global-session-store-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 Aster 全局 session store 注册回流到统一 runtime support 边界之外",
+    patterns: ["set_global_session_store("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-hardcoded-aster-runtime-path-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 Lime 业务层硬编码 legacy aster runtime 路径回流",
+    patterns: ['join(".lime").join("aster")', "~/.lime/aster"],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
   },
   {
     id: "rust-heartbeat-business-surfaces",
-    classification: "deprecated",
-    description: "Rust 业务层 heartbeat 旧实现回流",
+    classification: "dead-candidate",
+    description: "已零引用的 Rust 业务层 heartbeat 旧实现回流",
     patterns: [
       "crate::services::heartbeat_service::",
       "services::heartbeat_service::",
@@ -420,8 +884,8 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-assistant-config-surfaces",
-    classification: "deprecated",
-    description: "Rust 助理服务配置面回流",
+    classification: "dead-candidate",
+    description: "已零引用的 Rust 助理服务配置面回流",
     patterns: [
       "AssistantConfig",
       "AssistantProfile",
@@ -450,9 +914,7 @@ const rustTextSurfaceMonitors = [
       '"model_registry_version"',
     ],
     allowedPaths: [
-      "src-tauri/crates/core/src/database/migration.rs",
       "src-tauri/crates/core/src/database/migration/api_key_migration.rs",
-      "src-tauri/crates/core/src/database/migration/general_chat_migration.rs",
       "src-tauri/crates/core/src/database/migration/mcp_migration.rs",
       "src-tauri/crates/core/src/database/migration/model_registry_migration.rs",
     ],
@@ -479,8 +941,8 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-startup-migration-manual-match-leak",
-    classification: "deprecated",
-    description: "startup migration 回流手写 match 调度",
+    classification: "dead-candidate",
+    description: "已零引用的 startup migration 手写 match 调度回流",
     patterns: [
       "match migration::migrate_provider_ids(",
       "match migration::migrate_api_keys_to_pool(",
@@ -496,8 +958,8 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-versioned-migration-local-helper-leak",
-    classification: "deprecated",
-    description: "versioned migration 本地重复 settings helper 回流",
+    classification: "dead-candidate",
+    description: "已零引用的 versioned migration 本地重复 settings helper 回流",
     patterns: [
       "fn is_migration_completed(conn:",
       "fn mark_migration_completed(conn:",
@@ -507,8 +969,8 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-versioned-migration-transaction-leak",
-    classification: "deprecated",
-    description: "versioned migration 直接手写事务样板回流",
+    classification: "dead-candidate",
+    description: "已零引用的 versioned migration 手写事务样板回流",
     patterns: [
       'conn.execute("BEGIN TRANSACTION"',
       'conn.execute("COMMIT"',
@@ -519,63 +981,83 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-hardcoded-projects-path-leak",
-    classification: "deprecated",
-    description: "数据库迁移硬编码 legacy projects 路径",
+    classification: "dead-candidate",
+    description: "已零引用的数据库迁移硬编码 legacy projects 路径",
     patterns: ['".lime/projects"', 'join(".lime").join("projects")'],
     includePathPrefixes: ["src-tauri/crates/core/src/database"],
     allowedPaths: [],
   },
   {
     id: "rust-hardcoded-session-files-path-leak",
-    classification: "deprecated",
-    description: "session files 硬编码 legacy sessions 路径",
+    classification: "dead-candidate",
+    description: "已零引用的 session files 硬编码 legacy sessions 路径",
     patterns: ["~/.lime/sessions", 'join(".lime").join("sessions")'],
     includePathPrefixes: ["src-tauri/crates/core/src/session_files"],
     allowedPaths: [],
   },
   {
     id: "rust-hardcoded-legacy-config-path-leak",
-    classification: "deprecated",
-    description: "数据库迁移硬编码 legacy config 路径",
+    classification: "dead-candidate",
+    description: "已零引用的数据库迁移硬编码 legacy config 路径",
     patterns: ["~/.lime/config.json", 'join(".lime").join("config.json")'],
     includePathPrefixes: ["src-tauri/crates/core/src/database"],
     allowedPaths: [],
   },
   {
     id: "rust-hardcoded-workspace-projects-path-leak",
-    classification: "deprecated",
-    description: "上层命令或桥接层硬编码 workspace projects 路径",
+    classification: "dead-candidate",
+    description: "已零引用的上层命令或桥接层硬编码 workspace projects 路径",
     patterns: ["~/.lime/projects", 'join(".lime").join("projects")'],
     includePathPrefixes: ["src-tauri/src"],
     allowedPaths: [],
   },
   {
+    id: "rust-services-hardcoded-projects-path-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 services crate 硬编码 legacy projects 路径",
+    patterns: ["~/.lime/projects", 'join(".lime").join("projects")'],
+    includePathPrefixes: ["src-tauri/crates/services/src"],
+    allowedPaths: [],
+  },
+  {
     id: "rust-hardcoded-logger-path-leak",
-    classification: "deprecated",
-    description: "logger fallback 硬编码 legacy logs 路径",
+    classification: "dead-candidate",
+    description: "已零引用的 logger fallback 硬编码 legacy logs 路径",
     patterns: ["~/.lime/logs", 'join(".lime").join("logs")'],
     includePathPrefixes: ["src-tauri/crates/core/src/logger.rs"],
     allowedPaths: [],
   },
   {
     id: "rust-hardcoded-skills-path-leak",
-    classification: "deprecated",
-    description: "skills 相关模块硬编码 legacy skills 路径",
+    classification: "dead-candidate",
+    description: "已零引用的 skills 相关模块硬编码 legacy skills 路径",
     patterns: ["~/.lime/skills", 'join(".lime").join("skills")'],
     includePathPrefixes: ["src-tauri/src"],
     allowedPaths: [],
   },
   {
     id: "rust-hardcoded-memory-path-leak",
-    classification: "deprecated",
-    description: "memory 相关模块硬编码 legacy memory 或 AGENTS 路径",
+    classification: "dead-candidate",
+    description: "已零引用的 memory 相关模块硬编码 legacy memory 或 AGENTS 路径",
     patterns: [
       "~/.lime/AGENTS.md",
       'join(".lime").join("AGENTS.md")',
       'join(".lime").join("memory")',
       ".lime/memory",
     ],
-    includePathPrefixes: ["src-tauri/src"],
+    includePathPrefixes: [
+      "src-tauri/src",
+      "src-tauri/crates/core/src/config",
+      "src-tauri/crates/agent/src/prompt",
+    ],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-legacy-global-instruction-path-leak",
+    classification: "dead-candidate",
+    description: "已零引用的 agent prompt 层 legacy 全局指令文件名回流",
+    patterns: ['".lime/AGENT.md"', '".lime/instructions.md"'],
+    includePathPrefixes: ["src-tauri/crates/agent/src/prompt"],
     allowedPaths: [],
   },
 ];
@@ -905,7 +1387,10 @@ function evaluateTextMonitor(monitor, runtimeSources, testSources) {
       )
     : testSources;
   const matchesPattern = (sourceCode) =>
-    monitor.patterns.some((pattern) => sourceCode.includes(pattern));
+    monitor.patterns.some((pattern) => sourceCode.includes(pattern)) ||
+    (monitor.regexPatterns ?? []).some((pattern) =>
+      new RegExp(pattern, "m").test(sourceCode),
+    );
 
   const references = filteredRuntimeSources
     .filter((file) => matchesPattern(file.sourceCode))
@@ -1019,15 +1504,43 @@ function evaluateTextCountMonitor(monitor, runtimeSources, testSources) {
   };
 }
 
+function getImportStatus(result) {
+  return result.violations.length > 0
+    ? "违规"
+    : result.references.length === 0 && result.existingTargets.length === 0
+      ? "已删除"
+      : result.references.length === 0
+        ? "零引用"
+        : "受控";
+}
+
+function getCommandStatus(result) {
+  const flattenedReferences = [...result.referencesByCommand.values()].flat();
+  const uniqueReferences = [...new Set(flattenedReferences)].sort();
+  return result.violations.length > 0
+    ? "违规"
+    : uniqueReferences.length === 0
+      ? "零引用"
+      : "受控";
+}
+
+function getTextStatus(result) {
+  return result.violations.length > 0
+    ? "违规"
+    : result.references.length === 0
+      ? "零引用"
+      : "受控";
+}
+
+function isStatusClassificationDrift(status, classification) {
+  return (
+    (status === "已删除" || status === "零引用") &&
+    classification !== "dead-candidate"
+  );
+}
+
 function printImportReport(result) {
-  const status =
-    result.violations.length > 0
-      ? "违规"
-      : result.references.length === 0 && result.existingTargets.length === 0
-        ? "已删除"
-        : result.references.length === 0
-          ? "零引用"
-          : "受控";
+  const status = getImportStatus(result);
 
   console.log(
     `- [${status}] ${result.id} (${result.classification})：${result.description}`,
@@ -1046,14 +1559,7 @@ function printImportReport(result) {
 }
 
 function printCommandReport(result) {
-  const flattenedReferences = [...result.referencesByCommand.values()].flat();
-  const uniqueReferences = [...new Set(flattenedReferences)].sort();
-  const status =
-    result.violations.length > 0
-      ? "违规"
-      : uniqueReferences.length === 0
-        ? "零引用"
-        : "受控";
+  const status = getCommandStatus(result);
 
   console.log(
     `- [${status}] ${result.id} (${result.classification})：${result.description}`,
@@ -1074,17 +1580,16 @@ function printCommandReport(result) {
 }
 
 function printTextReport(result) {
-  const status =
-    result.violations.length > 0
-      ? "违规"
-      : result.references.length === 0
-        ? "零引用"
-        : "受控";
+  const status = getTextStatus(result);
 
   console.log(
     `- [${status}] ${result.id} (${result.classification})：${result.description}`,
   );
-  console.log(`  关键字：${result.patterns.join(", ")}`);
+  const keywords = [
+    ...result.patterns,
+    ...(result.regexPatterns ?? []).map((pattern) => `regex:${pattern}`),
+  ];
+  console.log(`  关键字：${keywords.join(", ")}`);
   console.log(`  允许引用：${result.allowedPaths.join(", ") || "无"}`);
   console.log(`  实际引用：\n${formatPaths(result.references)}`);
   console.log(`  测试引用：\n${formatPaths(result.testReferences)}`);
@@ -1169,6 +1674,65 @@ const zeroReferenceCandidates = importResults
       result.references.length === 0 && result.existingTargets.length > 0,
   )
   .map((result) => `${result.id} (${result.description})`);
+const classificationDriftCandidates = [
+  ...importResults
+    .filter((result) =>
+      isStatusClassificationDrift(
+        getImportStatus(result),
+        result.classification,
+      ),
+    )
+    .map(
+      (result) =>
+        `${result.id} -> ${result.classification} / ${getImportStatus(result)}`,
+    ),
+  ...commandResults
+    .filter((result) =>
+      isStatusClassificationDrift(
+        getCommandStatus(result),
+        result.classification,
+      ),
+    )
+    .map(
+      (result) =>
+        `${result.id} -> ${result.classification} / ${getCommandStatus(result)}`,
+    ),
+  ...frontendTextResults
+    .filter((result) =>
+      isStatusClassificationDrift(
+        getTextStatus(result),
+        result.classification,
+      ),
+    )
+    .map(
+      (result) =>
+        `${result.id} -> ${result.classification} / ${getTextStatus(result)}`,
+    ),
+  ...rustTextResults
+    .filter((result) =>
+      isStatusClassificationDrift(
+        getTextStatus(result),
+        result.classification,
+      ),
+    )
+    .map(
+      (result) =>
+        `${result.id} -> ${result.classification} / ${getTextStatus(result)}`,
+    ),
+  ...rustTextCountResults
+    .filter((result) =>
+      isStatusClassificationDrift(
+        result.runtimeMatches.length === 0 ? "零引用" : "受控",
+        result.classification,
+      ),
+    )
+    .map(
+      (result) =>
+        `${result.id} -> ${result.classification} / ${
+          result.runtimeMatches.length === 0 ? "零引用" : "受控"
+        }`,
+    ),
+];
 const violations = [
   ...importResults.flatMap((result) =>
     result.violations.map((item) => `${result.id} -> ${item}`),
@@ -1223,6 +1787,10 @@ console.log(`- Rust 扫描文件数：${rustRuntimeSources.length}`);
 console.log(`- Rust 测试文件数：${rustTestSources.length}`);
 console.log(`- 零引用候选：${zeroReferenceCandidates.length}`);
 for (const candidate of zeroReferenceCandidates) {
+  console.log(`  - ${candidate}`);
+}
+console.log(`- 分类漂移候选：${classificationDriftCandidates.length}`);
+for (const candidate of classificationDriftCandidates) {
   console.log(`  - ${candidate}`);
 }
 console.log(`- 边界违规：${violations.length}`);

@@ -41,9 +41,6 @@ jobs:
           - platform: windows-2022
             target: x86_64-pc-windows-msvc
             name: Windows-x64
-          - platform: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            name: Linux-x64
 
     runs-on: ${{ matrix.platform }}
 
@@ -62,12 +59,6 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 9
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config libasound2-dev libxdo-dev
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -159,30 +150,6 @@ jobs:
           security import $RUNNER_TEMP/certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
           security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
-
-      - name: Build Tauri app (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 禁用 LTO 加速编译（正式发布可改为 thin）
-          CARGO_PROFILE_RELEASE_LTO: "off"
-          # 增加并行编译单元
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 32
-          CARGO_INCREMENTAL: 0
-          SCCACHE_GHA_ENABLED: "true"
-          RUSTC_WRAPPER: sccache
-          OPENSSL_NO_VENDOR: "1"
-        with:
-          tauriScript: npx tauri
-          projectPath: src-tauri
-          tagName: ${{ github.event.inputs.version || github.ref_name }}
-          releaseName: "Lime ${{ github.event.inputs.version || github.ref_name }}"
-          releaseBody: ${{ env.RELEASE_BODY }}
-          releaseDraft: false
-          prerelease: false
-          # 默认不启用 voice feature（包含 whisper-rs，编译很慢）
-          args: --target ${{ matrix.target }}
 
       - name: Build Tauri app (Windows offline)
         if: matrix.platform == 'windows-2022'

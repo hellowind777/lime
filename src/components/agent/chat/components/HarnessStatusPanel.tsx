@@ -1224,7 +1224,10 @@ export function HarnessStatusPanel({
             : harnessState.plan.phase === "ready"
               ? "已就绪"
               : "空闲",
-        hint: harnessState.plan.items[0]?.content || "未检测到显式计划快照",
+        hint:
+          harnessState.plan.items[0]?.content ||
+          harnessState.plan.summaryText ||
+          "未检测到显式计划快照",
         icon: ListChecks,
       },
       {
@@ -1247,6 +1250,7 @@ export function HarnessStatusPanel({
     harnessState.pendingApprovals.length,
     harnessState.plan.items,
     harnessState.plan.phase,
+    harnessState.plan.summaryText,
     harnessState.recentFileEvents,
     harnessState.runtimeStatus,
   ]);
@@ -2136,7 +2140,8 @@ export function HarnessStatusPanel({
                       ))
                     ) : (
                       <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
-                        已进入规划流程，但暂无可展示的 Todo 快照。
+                        {harnessState.plan.summaryText ||
+                          "已进入规划流程，但暂无可展示的 Todo 快照。"}
                       </div>
                     )}
                   </div>

@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { safeInvoke } from "@/lib/dev-bridge";
 import {
-  cleanupMemory,
-  getMemoryAutoIndex,
-  getMemoryEffectiveSources,
-  getMemoryOverview,
-  getMemoryStats,
-  requestMemoryAnalysis,
-  toggleMemoryAuto,
-  updateMemoryAutoNote,
+  analyzeContextMemory,
+  cleanupContextMemory,
+  getContextMemoryAutoIndex,
+  getContextMemoryEffectiveSources,
+  getContextMemoryOverview,
+  getContextMemoryStats,
+  toggleContextMemoryAuto,
+  updateContextMemoryAutoNote,
 } from "./memoryRuntime";
 
 vi.mock("@/lib/dev-bridge", () => ({
@@ -20,7 +20,7 @@ describe("memoryRuntime API", () => {
     vi.clearAllMocks();
   });
 
-  it("应代理记忆查询命令", async () => {
+  it("应通过 context memory 命名代理记忆查询命令", async () => {
     vi.mocked(safeInvoke).mockImplementation(async (command) => {
       switch (command) {
         case "memory_runtime_get_stats":
@@ -44,22 +44,22 @@ describe("memoryRuntime API", () => {
       }
     });
 
-    await expect(getMemoryStats()).resolves.toEqual(
+    await expect(getContextMemoryStats()).resolves.toEqual(
       expect.objectContaining({ total_entries: 1 }),
     );
-    await expect(requestMemoryAnalysis()).resolves.toEqual(
+    await expect(analyzeContextMemory()).resolves.toEqual(
       expect.objectContaining({ analyzed_sessions: 1 }),
     );
-    await expect(cleanupMemory()).resolves.toEqual(
+    await expect(cleanupContextMemory()).resolves.toEqual(
       expect.objectContaining({ cleaned_entries: 1 }),
     );
-    await expect(getMemoryOverview(200)).resolves.toEqual(
+    await expect(getContextMemoryOverview(200)).resolves.toEqual(
       expect.objectContaining({ entries: [] }),
     );
-    await expect(getMemoryEffectiveSources()).resolves.toEqual(
+    await expect(getContextMemoryEffectiveSources()).resolves.toEqual(
       expect.objectContaining({ sources: [] }),
     );
-    await expect(getMemoryAutoIndex()).resolves.toEqual(
+    await expect(getContextMemoryAutoIndex()).resolves.toEqual(
       expect.objectContaining({ items: [] }),
     );
 
@@ -81,15 +81,65 @@ describe("memoryRuntime API", () => {
     });
   });
 
-  it("应代理自动记忆开关与写入命令", async () => {
+  it("应暴露清晰的 context memory 命名", async () => {
+    vi.mocked(safeInvoke).mockImplementation(async (command) => {
+      switch (command) {
+        case "memory_runtime_get_stats":
+          return { total_entries: 9 };
+        case "memory_runtime_request_analysis":
+          return { analyzed_sessions: 3 };
+        case "memory_runtime_cleanup":
+          return { cleaned_entries: 4 };
+        case "memory_runtime_get_overview":
+          return { stats: {}, categories: [], entries: [] };
+        case "memory_get_effective_sources":
+          return { sources: [] };
+        case "memory_get_auto_index":
+          return { items: [] };
+        case "memory_toggle_auto":
+          return { enabled: true };
+        case "memory_update_auto_note":
+          return { items: [] };
+        default:
+          return null;
+      }
+    });
+
+    await expect(getContextMemoryStats()).resolves.toEqual(
+      expect.objectContaining({ total_entries: 9 }),
+    );
+    await expect(analyzeContextMemory()).resolves.toEqual(
+      expect.objectContaining({ analyzed_sessions: 3 }),
+    );
+    await expect(cleanupContextMemory()).resolves.toEqual(
+      expect.objectContaining({ cleaned_entries: 4 }),
+    );
+    await expect(getContextMemoryOverview()).resolves.toEqual(
+      expect.objectContaining({ entries: [] }),
+    );
+    await expect(getContextMemoryEffectiveSources()).resolves.toEqual(
+      expect.objectContaining({ sources: [] }),
+    );
+    await expect(getContextMemoryAutoIndex()).resolves.toEqual(
+      expect.objectContaining({ items: [] }),
+    );
+    await expect(toggleContextMemoryAuto(true)).resolves.toEqual(
+      expect.objectContaining({ enabled: true }),
+    );
+    await expect(updateContextMemoryAutoNote("note")).resolves.toEqual(
+      expect.objectContaining({ items: [] }),
+    );
+  });
+
+  it("应代理 context memory 自动记忆开关与写入命令", async () => {
     vi.mocked(safeInvoke)
       .mockResolvedValueOnce({ enabled: true })
       .mockResolvedValueOnce({ items: [] });
 
-    await expect(toggleMemoryAuto(true)).resolves.toEqual(
+    await expect(toggleContextMemoryAuto(true)).resolves.toEqual(
       expect.objectContaining({ enabled: true }),
     );
-    await expect(updateMemoryAutoNote("note", "topic")).resolves.toEqual(
+    await expect(updateContextMemoryAutoNote("note", "topic")).resolves.toEqual(
       expect.objectContaining({ items: [] }),
     );
   });

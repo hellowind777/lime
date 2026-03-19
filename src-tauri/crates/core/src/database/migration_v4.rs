@@ -10,6 +10,7 @@
 use rusqlite::{params, Connection};
 
 use crate::app_paths;
+use crate::workspace::WorkspaceManager;
 
 use super::migration_support::{
     is_migration_completed, mark_migration_completed, run_in_transaction,
@@ -176,17 +177,8 @@ fn execute_migration(
 
 /// 获取默认 workspace 的 root_path
 fn get_default_workspace_path(conn: &Connection) -> Result<Option<String>, String> {
-    let result = conn.query_row(
-        "SELECT root_path FROM workspaces WHERE is_default = 1 LIMIT 1",
-        [],
-        |row| row.get::<_, String>(0),
-    );
-
-    match result {
-        Ok(path) => Ok(Some(path)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(format!("查询默认 workspace 失败: {e}")),
-    }
+    WorkspaceManager::get_default_root_path_from_conn(conn)
+        .map(|path| path.map(|path| path.to_string_lossy().to_string()))
 }
 
 fn count_corrupted_workspaces(conn: &Connection) -> i64 {
@@ -205,4 +197,40 @@ fn count_corrupted_sessions(conn: &Connection) -> i64 {
         |row| row.get::<_, i64>(0),
     )
     .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::schema;
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().expect("创建内存数据库失败");
+        schema::create_tables(&conn).expect("初始化表结构失败");
+        conn
+    }
+
+    #[test]
+    fn get_default_workspace_path_should_return_none_without_default_workspace() {
+        let conn = setup_test_db();
+
+        let path = get_default_workspace_path(&conn).expect("查询默认 workspace 失败");
+
+        assert_eq!(path, None);
+    }
+
+    #[test]
+    fn get_default_workspace_path_should_return_default_workspace_root() {
+        let conn = setup_test_db();
+        conn.execute(
+            "INSERT INTO workspaces (id, name, workspace_type, root_path, is_default, settings_json, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, 1, '{}', 0, 0)",
+            params!["workspace-default", "默认项目", "general", "/tmp/lime-default"],
+        )
+        .expect("插入默认 workspace 失败");
+
+        let path = get_default_workspace_path(&conn).expect("查询默认 workspace 失败");
+
+        assert_eq!(path.as_deref(), Some("/tmp/lime-default"));
+    }
 }

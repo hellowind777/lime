@@ -11,6 +11,7 @@ import {
   Paperclip,
   Search,
   Workflow,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,7 @@ import type {
 } from "./types";
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
+import type { MessageImage } from "../types";
 
 import iconXhs from "@/assets/platforms/xhs.png";
 import iconGzh from "@/assets/platforms/gzh.png";
@@ -225,6 +227,52 @@ const Toolbar = styled.div`
   border-top: 1px solid rgba(226, 232, 240, 0.82);
   border-bottom-left-radius: 24px;
   border-bottom-right-radius: 24px;
+`;
+
+const PendingImagesRow = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 0 18px 12px;
+`;
+
+const PendingImageItem = styled.div`
+  position: relative;
+  width: 64px;
+  height: 64px;
+  overflow: hidden;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+  background: rgba(248, 250, 252, 0.96);
+  box-shadow: 0 10px 20px -18px rgba(15, 23, 42, 0.3);
+`;
+
+const PendingImagePreview = styled.img`
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+`;
+
+const PendingImageRemoveButton = styled.button`
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 6px 14px -10px rgba(15, 23, 42, 0.5);
+  cursor: pointer;
+  transition: background-color 0.16s ease;
+
+  &:hover {
+    background: rgba(220, 38, 38, 0.92);
+  }
 `;
 
 const ToolLoginLeft = styled.div`
@@ -473,8 +521,10 @@ interface EmptyStateComposerPanelProps {
   onSubagentEnabledChange?: (enabled: boolean) => void;
   webSearchEnabled: boolean;
   onWebSearchEnabledChange?: (enabled: boolean) => void;
-  pendingImagesCount: number;
+  pendingImages: MessageImage[];
   onFileSelect: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onRemoveImage?: (index: number) => void;
 }
 
 export function EmptyStateComposerPanel({
@@ -533,8 +583,10 @@ export function EmptyStateComposerPanel({
   onSubagentEnabledChange,
   webSearchEnabled,
   onWebSearchEnabledChange,
-  pendingImagesCount,
+  pendingImages,
   onFileSelect,
+  onPaste,
+  onRemoveImage,
 }: EmptyStateComposerPanelProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -614,6 +666,7 @@ export function EmptyStateComposerPanel({
         value={input}
         onChange={(event) => setInput(event.target.value)}
         onKeyDown={handleKeyDown}
+        onPaste={onPaste}
         placeholder={placeholder}
       />
 
@@ -636,10 +689,29 @@ export function EmptyStateComposerPanel({
         onChange={onFileSelect}
       />
 
-      {pendingImagesCount > 0 ? (
-        <div className="px-6 pb-2 text-xs text-slate-500">
-          已添加图片 {pendingImagesCount} 张
-        </div>
+      {pendingImages.length > 0 ? (
+        <>
+          <div className="px-6 pb-2 text-xs text-slate-500">
+            已添加图片 {pendingImages.length} 张
+          </div>
+          <PendingImagesRow>
+            {pendingImages.map((image, index) => (
+              <PendingImageItem key={`${image.mediaType}-${index}`}>
+                <PendingImagePreview
+                  src={`data:${image.mediaType};base64,${image.data}`}
+                  alt={`待发送图片 ${index + 1}`}
+                />
+                <PendingImageRemoveButton
+                  type="button"
+                  aria-label={`移除待发送图片 ${index + 1}`}
+                  onClick={() => onRemoveImage?.(index)}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </PendingImageRemoveButton>
+              </PendingImageItem>
+            ))}
+          </PendingImagesRow>
+        </>
       ) : null}
 
       <Toolbar>
@@ -801,7 +873,7 @@ export function EmptyStateComposerPanel({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="w-64 rounded-[20px] border border-slate-200/80 bg-white/96 p-2 shadow-lg shadow-slate-950/10"
+                  className="w-64 rounded-[20px] border border-slate-200/80 bg-white p-2 shadow-lg shadow-slate-950/10"
                   align="start"
                   side="top"
                 >
@@ -851,7 +923,7 @@ export function EmptyStateComposerPanel({
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="w-48 rounded-[18px] border border-slate-200/80 bg-white/96 p-1 shadow-lg shadow-slate-950/10"
+                  className="w-48 rounded-[18px] border border-slate-200/80 bg-white p-1 shadow-lg shadow-slate-950/10"
                   align="start"
                   side="top"
                 >
@@ -995,9 +1067,7 @@ export function EmptyStateComposerPanel({
           <LaunchButton
             size="sm"
             onClick={onSend}
-            disabled={
-              !input.trim() && !isEntryTheme && pendingImagesCount === 0
-            }
+            disabled={!input.trim() && !isEntryTheme && pendingImages.length === 0}
           >
             开始生成
             <ArrowRight className="ml-2 h-4 w-4" />

@@ -1,25 +1,54 @@
 <div align="center">
 
+<img src="./docs/images/lime-claw-readme.png" alt="Lime Logo" width="180" />
+
 # Lime
 
-**以创作为中心的本地优先 AI Agent 交互工作台**
+### 青柠一下，灵感即来
 
-一句话：用 Skills 组织经验与流程，用 MCP 接入标准能力，用 Claw 渠道把 Agent 带到飞书、Telegram 等入口，让创作、研究、执行与交付在同一个工作环境里闭合。
+**从一句想法，到成稿、成图、成片、成事**
+
+本地优先的 AI Agent 创作工作台
 
 </div>
 
 ---
 
+## 界面预览
+
+Lime 把创作工作台、任务会话与 Provider 管理整合在同一个本地优先桌面应用里，下面是三个核心界面的快速预览：
+
+### 工作台首页
+
+<img src="./docs/images/screenshot-20260319-114622.png" alt="Lime 工作台首页预览" />
+
+在同一个 Workspace 中组织任务、技能、自动化、浏览器协助与对话输入，让一句想法继续推进为可执行结果。
+
+### 任务与会话协作
+
+<img src="./docs/images/screenshot-20260319-115011.png" alt="Lime 任务与会话协作预览" />
+
+围绕单个任务持续补充上下文、追踪执行轨迹，并在同一界面中完成对话推进、模型切换与结果沉淀。
+
+### Provider 与凭证管理
+
+<img src="./docs/images/screenshot-20260319-114807.png" alt="Lime Provider 与凭证管理预览" />
+
+统一管理 API Key、Connect、语音服务与 OAuth 凭证，并在同一处完成启用状态、模型配置与连接测试。
+
+---
+
 ## 这是什么
 
-Lime 是一个基于 Tauri 的桌面应用，面向创作者、内容团队与轻知识工作者。它把 Workspace、Agent、Skills、MCP、Claw 渠道和 Artifact 交付整合到同一个桌面环境里，让工作从输入需求直接走向可沉淀、可复用、可继续执行的结果。
+Lime 是一个基于 Tauri 的桌面应用，面向创作者、内容团队与轻知识工作者。它把 Workspace、Agent、Skills、MCP、Claw 渠道和 Artifact 交付整合到同一个桌面环境里，让一句想法可以继续推进为成稿、成图、成片，并最终走向可执行、可协作、可沉淀的结果。
 
-你可以在一个地方完成：
+你可以在一个地方完成从想法到交付的整条链路：
 
-- 在项目里与 Agent 协作
-- 生成和编辑文档、脚本、图文方案等产物
-- 使用浏览器、终端、MCP 和插件扩展执行空间
-- 让结果沉淀为可复用的记忆、风格和版本资产
+- 成稿：生成和编辑文档、脚本、提纲、长文等内容产物
+- 成图：产出图文方案、海报草稿与视觉素材
+- 成片：围绕视频脚本、分镜、素材与创作流程持续协作
+- 成事：通过 Workspace、MCP、Claw 和插件把结果继续执行、协作与交付
+- 沉淀：让对话、版本、记忆、风格和项目资产可复用、可继续
 
 ---
 
@@ -126,6 +155,7 @@ brew install --cask lime
 
 从 [Releases](https://github.com/aiclientproxy/lime/releases) 下载对应平台安装包。
 
+- 当前仅提供 macOS 与 Windows 发布包，Linux 桌面端已暂停支持
 - Windows 用户优先下载 `Lime_*_x64-offline-setup.exe`（NSIS 离线安装器，内置 WebView2，安装更完整）
 - 如果只想下载更小的安装器，且当前网络可稳定访问微软下载源，再选择 `Lime_*_x64-online-setup.exe`
 - 如被 SmartScreen 拦截，属于未签名或签名信誉不足的 Windows 常见提示，不代表安装包必然损坏
@@ -161,3 +191,15 @@ npm run tauri build
 
 本项目仅供学习研究使用，用户需自行承担使用风险。  
 本项目不直接提供 AI 模型服务，模型能力由第三方提供商提供。
+
+---
+
+<div align="center">
+
+### 微信交流
+
+<img src="./docs/images/coso.jpg" alt="Lime 微信交流群二维码" width="180" />
+
+扫码加微信，备注 `Lime`，拉你进群讨论。
+
+</div>

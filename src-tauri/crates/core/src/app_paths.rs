@@ -10,6 +10,7 @@ const COMPAT_HOME_DIR_NAME: &str = ".lime";
 const DATABASE_FILE_NAME: &str = "lime.db";
 const LEGACY_DATABASE_FILE_NAME: &str = "proxycast.db";
 const MIGRATION_MARKER_FILE: &str = ".migration_completed";
+const LEGACY_USER_MEMORY_FILE_NAMES: &[&str] = &["AGENTS.md", "AGENT.md", "instructions.md"];
 const USER_SIGNAL_TABLES: &[&str] = &[
     "contents",
     "agent_sessions",
@@ -75,6 +76,10 @@ pub fn resolve_sessions_dir() -> Result<PathBuf, String> {
 
 pub fn resolve_skills_dir() -> Result<PathBuf, String> {
     resolve_runtime_subdir("skills")
+}
+
+pub fn resolve_aster_dir() -> Result<PathBuf, String> {
+    resolve_runtime_subdir("aster")
 }
 
 pub fn resolve_project_skills_dir() -> Option<PathBuf> {
@@ -209,6 +214,18 @@ fn resolve_default_project_dir_from_roots(
     resolve_default_project_dir_from_source_roots(preferred_root, &[legacy_root.to_path_buf()])
 }
 
+#[cfg(test)]
+fn resolve_aster_dir_from_roots(
+    preferred_root: &Path,
+    legacy_root: &Path,
+) -> Result<PathBuf, String> {
+    resolve_subdir_with_legacy_copy_from_source_roots(
+        preferred_root,
+        &[legacy_root.to_path_buf()],
+        "aster",
+    )
+}
+
 fn resolve_user_memory_path_from_source_roots(
     preferred_root: &Path,
     legacy_roots: &[PathBuf],
@@ -218,9 +235,9 @@ fn resolve_user_memory_path_from_source_roots(
         return Ok(preferred_path);
     }
 
-    let legacy_path = legacy_roots
+    let legacy_path = LEGACY_USER_MEMORY_FILE_NAMES
         .iter()
-        .map(|root| root.join("AGENTS.md"))
+        .flat_map(|file_name| legacy_roots.iter().map(move |root| root.join(file_name)))
         .find(|path| path.exists());
     let Some(legacy_path) = legacy_path else {
         return Ok(preferred_path);
@@ -738,6 +755,24 @@ mod tests {
     }
 
     #[test]
+    fn resolve_aster_dir_copies_legacy_runtime_directories() {
+        let temp = tempdir().unwrap();
+        let preferred_root = temp.path().join("appdata").join("lime");
+        let legacy_root = temp.path().join("home").join(".lime");
+        let legacy_aster_dir = legacy_root.join("aster").join("state").join("logs");
+        fs::create_dir_all(&legacy_aster_dir).unwrap();
+        fs::write(legacy_aster_dir.join("runtime.log"), "legacy runtime").unwrap();
+
+        let resolved = resolve_aster_dir_from_roots(&preferred_root, &legacy_root).unwrap();
+
+        assert_eq!(resolved, preferred_root.join("aster"));
+        assert_eq!(
+            fs::read_to_string(resolved.join("state").join("logs").join("runtime.log")).unwrap(),
+            "legacy runtime"
+        );
+    }
+
+    #[test]
     fn resolve_project_skills_dir_from_cwd_builds_agents_skills_path() {
         let cwd = Path::new("/tmp/workspace");
         let resolved = resolve_project_skills_dir_from_cwd(cwd);
@@ -757,6 +792,21 @@ mod tests {
         let expected = preferred_root.join("AGENTS.md");
         assert_eq!(resolved, expected);
         assert_eq!(fs::read_to_string(expected).unwrap(), "legacy agents");
+    }
+
+    #[test]
+    fn resolve_user_memory_path_copies_legacy_agent_file() {
+        let temp = tempdir().unwrap();
+        let preferred_root = temp.path().join("appdata").join("lime");
+        let legacy_root = temp.path().join("home").join(".lime");
+        fs::create_dir_all(&legacy_root).unwrap();
+        fs::write(legacy_root.join("AGENT.md"), "legacy agent").unwrap();
+
+        let resolved = resolve_user_memory_path_from_roots(&preferred_root, &legacy_root).unwrap();
+
+        let expected = preferred_root.join("AGENTS.md");
+        assert_eq!(resolved, expected);
+        assert_eq!(fs::read_to_string(expected).unwrap(), "legacy agent");
     }
 
     #[test]

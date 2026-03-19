@@ -19,10 +19,17 @@ export interface HarnessTodoItem {
   status: HarnessTodoStatus;
 }
 
+type PersistedHarnessTodoLike = {
+  id?: string;
+  content?: string;
+  status?: string;
+};
+
 export interface HarnessPlanState {
   phase: HarnessPlanPhase;
   items: HarnessTodoItem[];
   sourceToolCallId?: string;
+  summaryText?: string;
 }
 
 export interface HarnessToolActivity {
@@ -309,6 +316,14 @@ function normalizeTodoItem(
       record.status ?? record.done ?? record.completed ?? record.state,
     ),
   };
+}
+
+function normalizePersistedTodoItems(
+  items?: readonly PersistedHarnessTodoLike[],
+): HarnessTodoItem[] {
+  return (items || [])
+    .map((item, index) => normalizeTodoItem(item, index))
+    .filter((item): item is HarnessTodoItem => item !== null);
 }
 
 function extractTodoSnapshot(toolCall: ToolCallState): HarnessTodoItem[] {
@@ -1177,10 +1192,18 @@ function toActionRequired(item: AgentThreadItem): ActionRequired | null {
   return null;
 }
 
+function summarizePlanDecisionText(text?: string): string | undefined {
+  return buildTextPreview(text, {
+    maxLines: 4,
+    maxChars: 240,
+  });
+}
+
 function deriveHarnessSessionStateFromItems(
   messages: Message[],
   pendingApprovals: ActionRequired[],
   items: AgentThreadItem[],
+  persistedTodoItems: HarnessTodoItem[],
 ): HarnessSessionState {
   const safePendingApprovals = Array.isArray(pendingApprovals)
     ? pendingApprovals
@@ -1212,6 +1235,8 @@ function deriveHarnessSessionStateFromItems(
   const recentFileEvents: HarnessFileEvent[] = [];
   const derivedApprovalMap = new Map<string, ActionRequired>();
   let latestPlanItem: AgentThreadItem | null = null;
+  let latestTurnSummaryItem: Extract<AgentThreadItem, { type: "turn_summary" }> | null =
+    null;
 
   for (const item of sortedItems) {
     switch (item.type) {
@@ -1273,6 +1298,8 @@ function deriveHarnessSessionStateFromItems(
         });
         break;
       case "turn_summary":
+        activity.planning += 1;
+        latestTurnSummaryItem = item;
         outputSignals.push({
           id: `${item.id}:summary`,
           toolCallId: item.id,
@@ -1354,10 +1381,16 @@ function deriveHarnessSessionStateFromItems(
     }
   }
 
-  const planItems =
+  const derivedPlanItems =
     latestPlanItem && latestPlanItem.type === "plan"
       ? parsePlanTextToTodoItems(latestPlanItem.text)
       : [];
+  const planItems =
+    derivedPlanItems.length > 0 ? derivedPlanItems : persistedTodoItems;
+  const planSummaryText =
+    planItems.length > 0
+      ? undefined
+      : summarizePlanDecisionText(latestTurnSummaryItem?.text);
   const mergedApprovals = [...safePendingApprovals];
   for (const derived of derivedApprovalMap.values()) {
     if (!mergedApprovals.some((item) => item.requestId === derived.requestId)) {
@@ -1366,7 +1399,9 @@ function deriveHarnessSessionStateFromItems(
   }
 
   const planPhase: HarnessPlanPhase = !latestPlanItem
-    ? "idle"
+    ? planSummaryText
+      ? "ready"
+      : "idle"
     : latestPlanItem.status === "completed"
       ? "ready"
       : "planning";
@@ -1388,7 +1423,8 @@ function deriveHarnessSessionStateFromItems(
     plan: {
       phase: planPhase,
       items: planItems,
-      sourceToolCallId: latestPlanItem?.id,
+      sourceToolCallId: latestPlanItem?.id || latestTurnSummaryItem?.id,
+      summaryText: planSummaryText,
     },
     activity,
     delegatedTasks: delegatedTasks.slice(-5).reverse(),
@@ -1408,6 +1444,7 @@ function deriveHarnessSessionStateFromItems(
 function deriveHarnessSessionStateFromMessages(
   messages: Message[],
   pendingApprovals: ActionRequired[],
+  persistedTodoItems: HarnessTodoItem[],
 ): HarnessSessionState {
   const safePendingApprovals = Array.isArray(pendingApprovals)
     ? pendingApprovals
@@ -1428,6 +1465,7 @@ function deriveHarnessSessionStateFromMessages(
   let latestTodoSourceToolCallId: string | undefined;
   let latestPlanningTimestamp = 0;
   let latestExitPlanTimestamp = 0;
+  let latestDecisionSummaryText: string | undefined;
   const delegatedTasks: HarnessDelegatedTask[] = [];
   const outputSignals: HarnessOutputSignal[] = [];
   const recentFileEventMap = new Map<string, HarnessFileEvent>();
@@ -1513,11 +1551,34 @@ function deriveHarnessSessionStateFromMessages(
           message.contextTrace.length > 0,
       )?.contextTrace || [];
 
+  if (latestTodoItems.length === 0) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== "assistant") {
+        continue;
+      }
+      latestDecisionSummaryText = summarizePlanDecisionText(message.content);
+      if (latestDecisionSummaryText) {
+        break;
+      }
+    }
+  }
+
+  if (latestTodoItems.length === 0 && persistedTodoItems.length > 0) {
+    latestTodoItems = persistedTodoItems;
+  }
+
   const planPhase: HarnessPlanPhase =
     latestPlanningTimestamp === 0 &&
     latestExitPlanTimestamp === 0 &&
-    latestTodoItems.length === 0
+    latestTodoItems.length === 0 &&
+    !latestDecisionSummaryText
       ? "idle"
+      : latestTodoItems.length === 0 &&
+          latestPlanningTimestamp === 0 &&
+          latestExitPlanTimestamp === 0 &&
+          latestDecisionSummaryText
+        ? "ready"
       : latestExitPlanTimestamp > 0 &&
           latestExitPlanTimestamp >= latestPlanningTimestamp
         ? "ready"
@@ -1542,6 +1603,8 @@ function deriveHarnessSessionStateFromMessages(
       phase: planPhase,
       items: latestTodoItems,
       sourceToolCallId: latestTodoSourceToolCallId,
+      summaryText:
+        latestTodoItems.length === 0 ? latestDecisionSummaryText : undefined,
     },
     activity,
     delegatedTasks: delegatedTasks.slice(-5).reverse(),
@@ -1556,14 +1619,22 @@ export function deriveHarnessSessionState(
   messages: Message[],
   pendingApprovals: ActionRequired[],
   threadItems?: AgentThreadItem[],
+  persistedTodoItems?: readonly PersistedHarnessTodoLike[],
 ): HarnessSessionState {
+  const normalizedPersistedTodoItems =
+    normalizePersistedTodoItems(persistedTodoItems);
   if (Array.isArray(threadItems) && threadItems.length > 0) {
     return deriveHarnessSessionStateFromItems(
       messages,
       pendingApprovals,
       threadItems,
+      normalizedPersistedTodoItems,
     );
   }
 
-  return deriveHarnessSessionStateFromMessages(messages, pendingApprovals);
+  return deriveHarnessSessionStateFromMessages(
+    messages,
+    pendingApprovals,
+    normalizedPersistedTodoItems,
+  );
 }

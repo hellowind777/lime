@@ -22,7 +22,7 @@ src-tauri/src/services/
 ## 核心服务
 
 > 注意：`general_chat/` 兼容壳已删除。
-> 新功能与新治理都应直接落到 unified chat / `chat_*` 体系，不要重新引回旧入口。
+> 新功能与新治理都应直接落到 `agent_runtime_*` 与现役 `agent/chat` 体系，不要重新引回旧入口。
 > `ProviderPoolService::select_credential_with_fallback_legacy` 也已删除，凭证选择统一走现役 `select_credential_with_fallback`。
 
 ### ProviderPoolService

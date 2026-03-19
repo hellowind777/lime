@@ -8,53 +8,23 @@ import {
 } from "react";
 import { toast } from "sonner";
 import type { MessageImage } from "../../../types";
-
-function readImageAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onload = (event) => {
-      const result = event.target?.result;
-      if (typeof result !== "string") {
-        reject(new Error("invalid_result"));
-        return;
-      }
-
-      const [, base64Data = ""] = result.split(",");
-      resolve(base64Data);
-    };
-
-    reader.onerror = () => {
-      reject(reader.error ?? new Error("read_failed"));
-    };
-
-    reader.readAsDataURL(file);
-  });
-}
+import {
+  getClipboardImageCandidates,
+  readImageAttachment,
+} from "../../../utils/imageAttachments";
 
 export function useImageAttachments() {
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const appendImageFile = useCallback(
-    async (file: File, successMessage?: string) => {
-      if (!file.type.startsWith("image/")) {
-        toast.info(`暂不支持该文件类型: ${file.type}`);
-        return;
-      }
-
+    async (file: File, successMessage?: string, preferredMediaType?: string) => {
       try {
-        const base64Data = await readImageAsBase64(file);
-        setPendingImages((prev) => [
-          ...prev,
-          {
-            data: base64Data,
-            mediaType: file.type,
-          },
-        ]);
-        toast.success(successMessage ?? `已添加图片: ${file.name}`);
+        const image = await readImageAttachment(file, preferredMediaType);
+        setPendingImages((prev) => [...prev, image]);
+        toast.success(successMessage ?? `已添加图片: ${file.name || "未命名图片"}`);
       } catch {
-        toast.error(`图片读取失败: ${file.name}`);
+        toast.error(`图片读取失败: ${file.name || "未命名图片"}`);
       }
     },
     [],
@@ -84,23 +54,19 @@ export function useImageAttachments() {
 
   const handlePaste = useCallback(
     (event: ClipboardEvent) => {
-      const items = event.clipboardData?.items;
-      if (!items) {
+      const imageFiles = getClipboardImageCandidates(event.clipboardData);
+      if (imageFiles.length === 0) {
         return;
       }
 
-      for (const item of items) {
-        if (!item.type.startsWith("image/")) {
-          continue;
-        }
-
-        event.preventDefault();
-        const file = item.getAsFile();
-        if (file) {
-          void appendImageFile(file, "已粘贴图片");
-        }
-        break;
-      }
+      event.preventDefault();
+      imageFiles.forEach(({ file, mediaType }, index) => {
+        void appendImageFile(
+          file,
+          index === 0 ? "已粘贴图片" : undefined,
+          mediaType,
+        );
+      });
     },
     [appendImageFile],
   );
@@ -126,7 +92,9 @@ export function useImageAttachments() {
   );
 
   const handleRemoveImage = useCallback((index: number) => {
-    setPendingImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+    setPendingImages((prev) =>
+      prev.filter((_, currentIndex) => currentIndex !== index),
+    );
   }, []);
 
   const clearPendingImages = useCallback(() => {

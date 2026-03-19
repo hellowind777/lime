@@ -195,13 +195,13 @@ export const SkillSelector: React.FC<SkillSelectorProps> = ({
         </button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-80 overflow-hidden rounded-[22px] border border-slate-200/80 bg-white/96 p-0 shadow-xl shadow-slate-950/8 backdrop-blur-md"
+        className="w-80 overflow-hidden rounded-[22px] border border-slate-200/80 bg-white p-0 shadow-xl shadow-slate-950/8 opacity-100"
         side="top"
         align="start"
         sideOffset={8}
       >
-        <Command shouldFilter={false} className="bg-transparent">
-          <div className="border-b border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.94)_100%)] px-4 py-3">
+        <Command shouldFilter={false} className="bg-white">
+          <div className="border-b border-slate-200/80 bg-[linear-gradient(180deg,rgb(255,255,255)_0%,rgb(248,250,252)_100%)] px-4 py-3">
             <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
               技能能力
             </div>

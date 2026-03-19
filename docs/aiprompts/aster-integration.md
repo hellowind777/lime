@@ -7,6 +7,8 @@ Lime 已完整集成 aster-rust 框架，包括凭证池桥接。
 ## 当前事实源
 
 - `Aster thread / turn / item runtime` 是运行态事实源。
+- Aster shared runtime store 与全局 session store 必须在 Lime bootstrap 启动期显式初始化；启动恢复时由 runtime support 统一完成 legacy queue 迁移与 queued session 枚举。
+- 运行时命令与 service 只允许读取已准备好的 shared store / shared queue service，不再在热路径偷偷 fallback 到默认路径。
 - Lime 只负责事件映射、数据库投影和 UI 派生，不再伪造核心 runtime item。
 - 会话删除统一收口到存储边界；命令层和 Dev Bridge 不应直接调用 `AgentDao::delete_session`。
 - 需要恢复运行态时，优先从 Aster runtime 恢复，再映射到 Lime timeline。

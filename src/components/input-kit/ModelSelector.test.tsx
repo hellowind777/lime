@@ -84,8 +84,28 @@ beforeEach(() => {
   mockUseProviderModels.mockReturnValue({
     modelIds: ["gpt-5.3-codex", "gpt-5.2-codex"],
     models: [
-      { id: "gpt-5.3-codex" },
-      { id: "gpt-5.2-codex" },
+      {
+        id: "gpt-5.3-codex",
+        capabilities: {
+          vision: true,
+          tools: true,
+          streaming: true,
+          json_mode: true,
+          function_calling: true,
+          reasoning: true,
+        },
+      },
+      {
+        id: "gpt-5.2-codex",
+        capabilities: {
+          vision: false,
+          tools: true,
+          streaming: true,
+          json_mode: true,
+          function_calling: true,
+          reasoning: false,
+        },
+      },
     ],
     loading: false,
     error: null,
@@ -145,5 +165,25 @@ describe("ModelSelector", () => {
     });
 
     expect(setModel).toHaveBeenCalledWith("gpt-5.2-codex");
+  });
+
+  it("展开后应显示模型的思考与多模态能力标签", () => {
+    const { container } = renderModelSelector();
+
+    const trigger = container.querySelector(
+      'button[role="combobox"]',
+    ) as HTMLButtonElement | null;
+    if (!trigger) {
+      throw new Error("未找到模型选择触发器");
+    }
+
+    act(() => {
+      trigger.click();
+    });
+
+    const pageText = document.body.textContent || "";
+    expect(pageText).toContain("支持思考");
+    expect(pageText).toContain("支持多模态");
+    expect(pageText).toContain("无多模态");
   });
 });

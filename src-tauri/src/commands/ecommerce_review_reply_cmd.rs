@@ -7,9 +7,9 @@ use tauri::State;
 
 use crate::agent::AsterAgentState;
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
-use crate::commands::skill_exec_cmd::{execute_skill, SkillExecutionResult};
 use crate::config::GlobalConfigManagerState;
 use crate::database::DbConnection;
+use crate::skills::{execute_named_skill, SkillExecutionRequest, SkillExecutionResult};
 
 /// 电商差评回复请求
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,19 +72,20 @@ pub async fn execute_ecommerce_review_reply(
             .unwrap_or_default()
     );
 
-    // 调用通用的 execute_skill
-    execute_skill(
-        app_handle,
-        db,
-        api_key_provider_service,
-        config_manager,
-        aster_state,
-        "ecommerce-review-reply".to_string(),
-        user_input,
-        Some("anthropic".to_string()), // 优先使用 Anthropic
-        request.model,
-        request.execution_id,
-        None, // session_id
+    execute_named_skill(
+        &app_handle,
+        db.inner(),
+        api_key_provider_service.inner(),
+        config_manager.inner(),
+        aster_state.inner(),
+        SkillExecutionRequest {
+            skill_name: "ecommerce-review-reply".to_string(),
+            user_input,
+            provider_override: Some("anthropic".to_string()),
+            model_override: request.model,
+            execution_id: request.execution_id,
+            session_id: None,
+        },
     )
     .await
 }

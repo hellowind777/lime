@@ -23,6 +23,8 @@ function SearchResultHoverCard({
 }) {
   const [open, setOpen] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimerRef.current !== null && typeof window !== "undefined") {
@@ -36,24 +38,74 @@ function SearchResultHoverCard({
     setOpen(true);
   }, [clearCloseTimer]);
 
-  const handleScheduleClose = useCallback(() => {
+  const handleCloseNow = useCallback(() => {
     clearCloseTimer();
+    setOpen(false);
+  }, [clearCloseTimer]);
+
+  const handleScheduleClose = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      return;
+    }
     if (typeof window === "undefined") {
-      setOpen(false);
+      handleCloseNow();
       return;
     }
     closeTimerRef.current = window.setTimeout(() => {
       setOpen(false);
       closeTimerRef.current = null;
     }, 120);
-  }, [clearCloseTimer]);
+  }, [handleCloseNow]);
+
+  const isWithinHoverRegion = useCallback((target: EventTarget | null) => {
+    const node = target instanceof Node ? target : null;
+    if (!node) {
+      return false;
+    }
+    return Boolean(
+      triggerRef.current?.contains(node) || contentRef.current?.contains(node),
+    );
+  }, []);
 
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
+
+  useEffect(() => {
+    if (!open || typeof document === "undefined") {
+      return;
+    }
+
+    const handleDocumentMouseMove = (event: MouseEvent) => {
+      if (isWithinHoverRegion(event.target)) {
+        clearCloseTimer();
+        return;
+      }
+      handleScheduleClose();
+    };
+
+    const handleWindowBlur = () => {
+      handleCloseNow();
+    };
+
+    document.addEventListener("mousemove", handleDocumentMouseMove, true);
+    window.addEventListener("blur", handleWindowBlur);
+
+    return () => {
+      document.removeEventListener("mousemove", handleDocumentMouseMove, true);
+      window.removeEventListener("blur", handleWindowBlur);
+    };
+  }, [
+    clearCloseTimer,
+    handleCloseNow,
+    handleScheduleClose,
+    isWithinHoverRegion,
+    open,
+  ]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
+          ref={triggerRef}
           type="button"
           aria-label={`预览搜索结果：${item.title}`}
           className="w-full rounded-xl border border-border bg-background px-3 py-2 text-left transition-colors hover:bg-muted/60"
@@ -79,6 +131,7 @@ function SearchResultHoverCard({
         </button>
       </PopoverTrigger>
       <PopoverContent
+        ref={contentRef}
         side={popoverSide}
         align={popoverAlign}
         sideOffset={8}
@@ -86,6 +139,7 @@ function SearchResultHoverCard({
         className="w-[min(24rem,calc(100vw-3rem))] rounded-2xl border border-border/80 bg-background p-0 shadow-xl"
         onMouseEnter={handleOpenPreview}
         onMouseLeave={handleScheduleClose}
+        onOpenAutoFocus={(event) => event.preventDefault()}
       >
         <div className="space-y-3 p-4">
           <div className="flex items-start gap-3">

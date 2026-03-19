@@ -25,6 +25,7 @@ use crate::models::project_model::{
     BrandPersona, BrandPersonaExtension, BrandPersonaTemplate, CreateBrandExtensionRequest,
     CreatePersonaRequest, Persona, PersonaTemplate, PersonaUpdate, UpdateBrandExtensionRequest,
 };
+use crate::services::memory_profile_prompt_service::{build_memory_prompt, MemoryPromptContext};
 use lime_services::persona_service::PersonaService;
 
 // ============================================================================
@@ -361,9 +362,7 @@ pub async fn generate_persona(
         crate::agent::aster_state::SessionConfigBuilder::new(&session_id)
             .include_context_trace(true);
     if let Some(memory_prompt) =
-        crate::services::memory_profile_prompt_service::build_memory_profile_prompt(
-            &config_manager.config(),
-        )
+        build_memory_prompt(&config_manager.config(), MemoryPromptContext::default())
     {
         session_config_builder = session_config_builder.system_prompt(memory_prompt);
     }

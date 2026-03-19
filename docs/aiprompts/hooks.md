@@ -9,7 +9,6 @@
 ```
 src/hooks/
 ├── index.ts                # 导出入口
-├── useUnifiedChat.ts       # 统一对话 Hook（新）
 ├── useProviderPool.ts      # 凭证池管理
 ├── useOAuthCredentials.ts  # OAuth 凭证
 ├── useFlowEvents.ts        # 流量事件
@@ -22,69 +21,24 @@ src/hooks/
 
 - 新的前端能力优先落在 `src/lib/api/*`，再由 Hook 或组件消费。
 - 历史 `useTauri.ts` 兼容聚合层已删除，不要重新引入新的“大一统 API Hook”。
-- 旧聊天链路优先迁移到 `@/hooks/useUnifiedChat`，不要继续扩散 `useChat` / compat Hook。
+- Agent 工作台统一走 `src/components/agent/chat/hooks/index.ts` 暴露的 `useAgentChatUnified`，底层实现委托 `useAsterAgentChat`。
+- 历史 `@/hooks/useUnifiedChat` 与 `src/lib/api/unified-chat.ts` 已删除，不要重建 compat Hook / API。
 
 ## 核心 Hooks
 
-### useUnifiedChat（统一对话）
+### useAgentChatUnified / useAsterAgentChat（现役 Agent 对话）
 
-统一的对话 Hook，支持三种模式：Agent、General、Creator。
+现役 Agent / Codex 工作台事实源：
 
-```typescript
-import { useUnifiedChat } from "@/hooks/useUnifiedChat";
-
-// Agent 模式 - 支持工具调用
-const { messages, sendMessage, stopGeneration } = useUnifiedChat({
-  mode: "agent",
-  providerType: "claude",
-  model: "claude-sonnet-4-20250514",
-});
-
-// Creator 模式 - 支持画布输出
-const creatorChat = useUnifiedChat({
-  mode: "creator",
-  systemPrompt: "你是内容创作助手...",
-  harnessConfig: {
-    theme: "social-media",
-    artifactMode: "version-chain",
-  },
-  onHarnessEvent: (event) => {
-    /* 接收阶段推进、产物创建等语义事件 */
-  },
-  onArtifactUpdate: (artifact) => {
-    /* 接收产物快照 */
-  },
-  onCanvasUpdate: (path, content) => {
-    /* 更新画布 */
-  },
-  onWriteFile: (content, fileName) => {
-    /* 文件写入 */
-  },
-});
-
-// General 模式 - 纯文本对话
-const generalChat = useUnifiedChat({ mode: "general" });
-```
-
-**返回值**：
-
-- `session` - 当前会话
-- `messages` - 消息列表
-- `isLoading` / `isSending` - 状态
-- `createSession()` / `loadSession()` / `deleteSession()` - 会话管理
-- `sendMessage()` / `stopGeneration()` - 消息操作
-- `configureProvider()` - Provider 配置
-
-**补充说明**：
-
-- Creator 模式现在支持 `harnessConfig`、`onHarnessEvent`、`onArtifactUpdate`
-- 社媒内容推荐把 `<write_file>` 结果投影为“版本链产物”，而不是只按文件名覆盖
+- `useAgentChatUnified -> useAsterAgentChat -> useAgentContext / useAgentSession / useAgentTools / useAgentStream`
+- 命令主链：`agent_runtime_submit_turn -> runtime items(plan / runtime_status / artifact / tool / action) -> action_required -> respond_action`
+- 适用场景：Agent 工作台、任务执行、工具审批、timeline 渲染
 
 **相关文件**：
 
-- 类型定义：`src/types/chat.ts`
-- API 封装：`src/lib/api/unified-chat.ts`
-- 架构文档：`docs/prd/chat-architecture-redesign.md`
+- 统一入口：`src/components/agent/chat/hooks/index.ts`
+- Hook 实现：`src/components/agent/chat/hooks/useAsterAgentChat.ts`
+- API 封装：`src/lib/api/agentRuntime.ts`
 
 ### useProviderPool
 

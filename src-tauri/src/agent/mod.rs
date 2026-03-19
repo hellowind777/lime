@@ -3,10 +3,11 @@
 //! 纯逻辑部分已迁移到 lime-agent crate，
 //! 本模块保留深耦合部分（Aster 状态与 Tauri 桥接）。
 
-pub mod aster_agent;
+mod aster_agent;
 pub mod aster_state;
-pub mod credential_bridge;
-pub mod subagent_scheduler;
+mod credential_bridge;
+pub mod runtime_queue_service;
+mod subagent_scheduler;
 
 // 从 lime-agent crate re-export
 pub use lime_agent::event_converter;
@@ -23,8 +24,8 @@ pub use credential_bridge::{
     create_aster_provider, AsterProviderConfig, CredentialBridge, CredentialBridgeError,
 };
 pub use lime_agent::{
-    convert_agent_event, convert_to_tauri_message, QueueInsertResult, QueuedTurnSnapshot,
-    QueuedTurnTask, SessionTurnQueueManager, TauriAgentEvent,
+    convert_agent_event, convert_to_tauri_message, initialize_aster_runtime, QueuedTurnSnapshot,
+    QueuedTurnTask, TauriAgentEvent,
 };
 pub use subagent_scheduler::{
     LimeScheduler, LimeSubAgentExecutor, SubAgentProgressEvent, SubAgentRole,

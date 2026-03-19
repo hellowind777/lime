@@ -5,9 +5,17 @@
 //! 支持从 Lime 凭证池自动选择凭证
 
 use crate::agent::aster_state::{ProviderConfig, SessionConfigBuilder};
+use crate::agent::runtime_queue_service::{
+    clear_runtime_queue as clear_runtime_queue_service,
+    list_runtime_queue_snapshots as list_runtime_queue_snapshots_service,
+    remove_runtime_queued_turn as remove_runtime_queued_turn_service,
+    resume_persisted_runtime_queues_on_startup as resume_persisted_runtime_queues_on_startup_service,
+    resume_runtime_queue_if_needed as resume_runtime_queue_if_needed_service,
+    submit_runtime_turn as submit_runtime_turn_service, RuntimeQueueExecutor,
+};
 use crate::agent::{
-    AsterAgentState, AsterAgentWrapper, LimeScheduler, QueueInsertResult, QueuedTurnSnapshot,
-    QueuedTurnTask, SessionDetail, SessionInfo, SubAgentRole, TauriAgentEvent,
+    AsterAgentState, AsterAgentWrapper, LimeScheduler, QueuedTurnSnapshot, QueuedTurnTask,
+    SessionDetail, SessionInfo, SubAgentRole, TauriAgentEvent,
 };
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::commands::webview_cmd::{
@@ -15,18 +23,13 @@ use crate::commands::webview_cmd::{
     BrowserBackendType,
 };
 use crate::config::{GlobalConfigManager, GlobalConfigManagerState};
-use crate::database::dao::agent_runtime_queue::{
-    AgentRuntimeQueuedTurnDao, NewAgentRuntimeQueuedTurnRecord,
-};
 use crate::database::DbConnection;
 use crate::mcp::{McpManagerState, McpServerConfig};
-use crate::services::agent_timeline_service::{
-    build_action_response_value, complete_action_item, AgentTimelineRecorder,
-};
+use crate::services::agent_timeline_service::AgentTimelineRecorder;
 use crate::services::automation_service::AutomationServiceState;
 use crate::services::execution_tracker_service::{ExecutionTracker, RunFinishDecision, RunSource};
 use crate::services::memory_profile_prompt_service::{
-    merge_system_prompt_with_memory_profile, merge_system_prompt_with_memory_sources,
+    merge_system_prompt_with_memory_context, MemoryPromptContext,
 };
 use crate::services::web_search_prompt_service::merge_system_prompt_with_web_search;
 use crate::services::web_search_runtime_service::apply_web_search_runtime_env;
@@ -46,7 +49,7 @@ use aster::permission::{Permission, PermissionConfirmation, PrincipalType};
 use aster::sandbox::{
     detect_best_sandbox, execute_in_sandbox, ResourceLimits, SandboxConfig as ProcessSandboxConfig,
 };
-use aster::session::{SessionRuntimeSnapshot, TurnContextOverride};
+use aster::session::TurnContextOverride;
 use aster::tools::task_output_tool::TaskOutputInput;
 use aster::tools::{
     BashTool, KillShellTool, PermissionBehavior, PermissionCheckResult, TaskManager,
@@ -54,19 +57,18 @@ use aster::tools::{
     MAX_OUTPUT_LENGTH,
 };
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 #[cfg(test)]
 use lime_agent::request_tool_policy::REQUEST_TOOL_POLICY_MARKER;
 use lime_agent::request_tool_policy::{
     merge_system_prompt_with_request_tool_policy, resolve_request_tool_policy_with_mode,
-    stream_reply_with_policy, ReplyAttemptError, RequestToolPolicy, RequestToolPolicyMode,
+    stream_message_reply_with_policy, ReplyAttemptError, RequestToolPolicy, RequestToolPolicyMode,
 };
 use lime_agent::{
-    convert_item_runtime, convert_turn_runtime, durable_memory_permission_pattern,
-    is_virtual_memory_path, message_suggests_news_expansion, resolve_virtual_memory_path,
-    virtual_memory_relative_path, TauriRuntimeStatus, DURABLE_MEMORY_VIRTUAL_ROOT,
+    durable_memory_permission_pattern, is_virtual_memory_path, message_suggests_news_expansion,
+    resolve_virtual_memory_path, virtual_memory_relative_path, TauriRuntimeStatus,
+    DURABLE_MEMORY_VIRTUAL_ROOT,
 };
-use lime_core::database::dao::agent_timeline::{AgentThreadItem, AgentThreadTurn};
 use lime_services::api_key_provider_service::ApiKeyProviderService;
 use lime_services::mcp_service::McpService;
 use lime_services::video_generation_service::{
@@ -545,6 +547,8 @@ pub struct AgentRuntimeSessionDetail {
     pub turns: Vec<lime_core::database::dao::agent_timeline::AgentThreadTurn>,
     pub items: Vec<lime_core::database::dao::agent_timeline::AgentThreadItem>,
     #[serde(default)]
+    pub todo_items: Vec<lime_agent::SessionTodoItem>,
+    #[serde(default)]
     pub queued_turns: Vec<QueuedTurnSnapshot>,
 }
 
@@ -560,80 +564,10 @@ impl AgentRuntimeSessionDetail {
             execution_strategy: detail.execution_strategy,
             turns: detail.turns,
             items: detail.items,
+            todo_items: detail.todo_items,
             queued_turns,
         }
     }
-}
-
-fn sort_runtime_turns(turns: &mut [AgentThreadTurn]) {
-    turns.sort_by(|left, right| {
-        left.started_at
-            .cmp(&right.started_at)
-            .then(left.created_at.cmp(&right.created_at))
-            .then(left.id.cmp(&right.id))
-    });
-}
-
-fn sort_runtime_items(items: &mut [AgentThreadItem], turn_started_at: &HashMap<String, String>) {
-    items.sort_by(|left, right| {
-        let left_turn_started = turn_started_at
-            .get(&left.turn_id)
-            .map(String::as_str)
-            .unwrap_or(left.started_at.as_str());
-        let right_turn_started = turn_started_at
-            .get(&right.turn_id)
-            .map(String::as_str)
-            .unwrap_or(right.started_at.as_str());
-
-        left_turn_started
-            .cmp(right_turn_started)
-            .then(left.sequence.cmp(&right.sequence))
-            .then(left.turn_id.cmp(&right.turn_id))
-            .then(left.started_at.cmp(&right.started_at))
-            .then(left.id.cmp(&right.id))
-    });
-}
-
-fn apply_aster_runtime_snapshot(detail: &mut SessionDetail, snapshot: &SessionRuntimeSnapshot) {
-    if let Some(thread) = snapshot.threads.first() {
-        detail.thread_id = thread.thread.id.clone();
-    }
-
-    if snapshot.threads.is_empty() {
-        return;
-    }
-
-    let mut turns_by_id = detail
-        .turns
-        .drain(..)
-        .map(|turn| (turn.id.clone(), turn))
-        .collect::<HashMap<_, _>>();
-    for thread in &snapshot.threads {
-        for turn in &thread.turns {
-            turns_by_id.insert(turn.id.clone(), convert_turn_runtime(turn.clone()));
-        }
-    }
-    detail.turns = turns_by_id.into_values().collect();
-    sort_runtime_turns(&mut detail.turns);
-
-    let turn_started_at = detail
-        .turns
-        .iter()
-        .map(|turn| (turn.id.clone(), turn.started_at.clone()))
-        .collect::<HashMap<_, _>>();
-
-    let mut items_by_id = detail
-        .items
-        .drain(..)
-        .map(|item| (item.id.clone(), item))
-        .collect::<HashMap<_, _>>();
-    for thread in &snapshot.threads {
-        for item in &thread.items {
-            items_by_id.insert(item.id.clone(), convert_item_runtime(item.clone()));
-        }
-    }
-    detail.items = items_by_id.into_values().collect();
-    sort_runtime_items(&mut detail.items, &turn_started_at);
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -1633,6 +1567,100 @@ fn build_turn_runtime_statuses(
     )
 }
 
+fn emit_projected_runtime_item_event(
+    app: &AppHandle,
+    event_name: &str,
+    timeline_recorder: &Arc<Mutex<AgentTimelineRecorder>>,
+    workspace_root: &str,
+    event: TauriAgentEvent,
+) {
+    if let Err(error) = app.emit(event_name, &event) {
+        tracing::warn!("[AsterAgent] 发送 runtime item 投影事件失败: {}", error);
+    }
+
+    let mut recorder = match timeline_recorder.lock() {
+        Ok(guard) => guard,
+        Err(error) => error.into_inner(),
+    };
+    if let Err(error) = recorder.record_runtime_event(app, event_name, &event, workspace_root) {
+        tracing::warn!(
+            "[AsterAgent] 记录 runtime item 投影事件失败（已降级继续）: {}",
+            error
+        );
+    }
+}
+
+async fn emit_runtime_status_with_projection(
+    agent: &Agent,
+    app: &AppHandle,
+    event_name: &str,
+    timeline_recorder: &Arc<Mutex<AgentTimelineRecorder>>,
+    workspace_root: &str,
+    session_config: &aster::agents::SessionConfig,
+    status: TauriRuntimeStatus,
+) {
+    match agent
+        .upsert_runtime_status_item(
+            session_config,
+            status.phase.clone(),
+            status.title.clone(),
+            status.detail.clone(),
+            status.checkpoints.clone(),
+        )
+        .await
+    {
+        Ok(agent_event) => {
+            for event in lime_agent::convert_agent_event(agent_event) {
+                emit_projected_runtime_item_event(
+                    app,
+                    event_name,
+                    timeline_recorder,
+                    workspace_root,
+                    event,
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[AsterAgent] 写入 runtime_status item 失败，降级仅发送 transient 事件: {}",
+                error
+            );
+        }
+    }
+
+    let runtime_event = TauriAgentEvent::RuntimeStatus { status };
+    if let Err(error) = app.emit(event_name, &runtime_event) {
+        tracing::warn!("[AsterAgent] 发送 runtime_status 失败: {}", error);
+    }
+}
+
+async fn complete_runtime_status_projection(
+    agent: &Agent,
+    app: &AppHandle,
+    event_name: &str,
+    timeline_recorder: &Arc<Mutex<AgentTimelineRecorder>>,
+    workspace_root: &str,
+    session_config: &aster::agents::SessionConfig,
+) {
+    match agent.complete_runtime_status_item(session_config).await {
+        Ok(Some(agent_event)) => {
+            for event in lime_agent::convert_agent_event(agent_event) {
+                emit_projected_runtime_item_event(
+                    app,
+                    event_name,
+                    timeline_recorder,
+                    workspace_root,
+                    event,
+                );
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!("[AsterAgent] 完成 runtime_status item 失败: {}", error);
+        }
+    }
+}
+
 fn extend_map_with_harness_fields(
     target: &mut serde_json::Map<String, serde_json::Value>,
     request_metadata: Option<&serde_json::Value>,
@@ -2139,7 +2167,7 @@ async fn stream_reply_once<F>(
     agent: &Agent,
     app: &AppHandle,
     event_name: &str,
-    message_text: &str,
+    user_message: Message,
     working_directory: Option<&Path>,
     session_config: aster::agents::SessionConfig,
     cancel_token: CancellationToken,
@@ -2149,9 +2177,9 @@ async fn stream_reply_once<F>(
 where
     F: FnMut(&TauriAgentEvent),
 {
-    stream_reply_with_policy(
+    stream_message_reply_with_policy(
         agent,
-        message_text,
+        user_message,
         working_directory,
         session_config,
         Some(cancel_token),
@@ -2165,6 +2193,29 @@ where
     )
     .await
     .map(|_| ())
+}
+
+fn build_runtime_user_message(message_text: &str, images: Option<&[ImageInput]>) -> Message {
+    let mut message = Message::user();
+
+    if !message_text.is_empty() {
+        message = message.with_text(message_text);
+    }
+
+    if let Some(images) = images {
+        for image in images {
+            if image.data.trim().is_empty() || image.media_type.trim().is_empty() {
+                continue;
+            }
+            message = message.with_image(image.data.clone(), image.media_type.clone());
+        }
+    }
+
+    if message.content.is_empty() {
+        return Message::user().with_text(message_text);
+    }
+
+    message
 }
 
 /// 基于 aster::sandbox 的本地 bash 强隔离工具
@@ -5323,7 +5374,6 @@ async fn apply_workspace_sandbox_permissions(
         "WebSearch",
         "ask",
         "tool_search",
-        "three_stage_workflow",
         SOCIAL_IMAGE_TOOL_NAME,
         LIME_CREATE_VIDEO_TASK_TOOL_NAME,
         LIME_CREATE_BROADCAST_TASK_TOOL_NAME,
@@ -5687,11 +5737,10 @@ async fn execute_aster_chat_request(
             }
         };
 
-        let prompt_with_memory = merge_system_prompt_with_memory_sources(
-            merge_system_prompt_with_memory_profile(resolved_prompt, &runtime_config),
+        let prompt_with_memory = merge_system_prompt_with_memory_context(
+            resolved_prompt,
             &runtime_config,
-            Path::new(&workspace_root),
-            None,
+            MemoryPromptContext::with_working_dir(Path::new(&workspace_root)),
         );
         let merged_prompt = merge_system_prompt_with_auto_continue(
             merge_system_prompt_with_elicitation_context(
@@ -5874,6 +5923,33 @@ async fn execute_aster_chat_request(
         resolved_turn_id.clone(),
         request.message.clone(),
     )?));
+    let include_context_trace = runtime_config.memory.enabled;
+    let turn_context = build_turn_context_override(request.metadata.as_ref());
+    let runtime_status_session_config = {
+        let mut session_config_builder = SessionConfigBuilder::new(session_id)
+            .thread_id(resolved_thread_id.clone())
+            .turn_id(resolved_turn_id.clone());
+        if let Some(turn_context) = turn_context.clone() {
+            session_config_builder = session_config_builder.turn_context(turn_context);
+        }
+        session_config_builder.build()
+    };
+
+    // 获取 Agent Arc 并保持 guard 在整个流处理期间存活
+    let guard = agent_arc.read().await;
+    let agent = guard.as_ref().ok_or("Agent not initialized")?;
+    if let Err(error) = agent
+        .ensure_runtime_turn_initialized(
+            &runtime_status_session_config,
+            Some(request.message.clone()),
+        )
+        .await
+    {
+        tracing::warn!(
+            "[AsterAgent] 初始化 runtime turn 失败，后续降级继续: {}",
+            error
+        );
+    }
 
     let (initial_runtime_status, decided_runtime_status) = build_turn_runtime_statuses(
         &request,
@@ -5885,27 +5961,17 @@ async fn execute_aster_chat_request(
             .map(|config| config.model_name.as_str()),
     );
     for status in [initial_runtime_status, decided_runtime_status] {
-        let event = TauriAgentEvent::RuntimeStatus { status };
-        if let Err(error) = app.emit(&request.event_name, &event) {
-            tracing::warn!("[AsterAgent] 发送 runtime_status 失败: {}", error);
-        }
-        let mut recorder = match timeline_recorder.lock() {
-            Ok(guard) => guard,
-            Err(error) => error.into_inner(),
-        };
-        if let Err(error) =
-            recorder.record_runtime_event(app, &request.event_name, &event, workspace_root.as_str())
-        {
-            tracing::warn!("[AsterAgent] 记录 runtime_status 失败: {}", error);
-        }
+        emit_runtime_status_with_projection(
+            agent,
+            app,
+            &request.event_name,
+            &timeline_recorder,
+            workspace_root.as_str(),
+            &runtime_status_session_config,
+            status,
+        )
+        .await;
     }
-
-    // 获取 Agent Arc 并保持 guard 在整个流处理期间存活
-    let guard = agent_arc.read().await;
-    let agent = guard.as_ref().ok_or("Agent not initialized")?;
-
-    let include_context_trace = runtime_config.memory.enabled;
-    let turn_context = build_turn_context_override(request.metadata.as_ref());
     let resolved_thread_id_for_session = resolved_thread_id.clone();
     let resolved_turn_id_for_session = resolved_turn_id.clone();
 
@@ -5941,7 +6007,7 @@ async fn execute_aster_chat_request(
                     agent,
                     app,
                     &request.event_name,
-                    &request.message,
+                    build_runtime_user_message(&request.message, request.images.as_deref()),
                     Some(Path::new(&workspace_root)),
                     build_session_config(),
                     cancel_token.clone(),
@@ -6013,7 +6079,10 @@ async fn execute_aster_chat_request(
                             agent,
                             &app,
                             &request.event_name,
-                            &request.message,
+                            build_runtime_user_message(
+                                &request.message,
+                                request.images.as_deref(),
+                            ),
                             Some(Path::new(&workspace_root)),
                             build_session_config(),
                             cancel_token.clone(),
@@ -6109,6 +6178,15 @@ async fn execute_aster_chat_request(
 
     match final_result {
         Ok(()) => {
+            complete_runtime_status_projection(
+                agent,
+                app,
+                &request.event_name,
+                &timeline_recorder,
+                workspace_root.as_str(),
+                &runtime_status_session_config,
+            )
+            .await;
             {
                 let mut recorder = match timeline_recorder.lock() {
                     Ok(guard) => guard,
@@ -6124,6 +6202,15 @@ async fn execute_aster_chat_request(
             }
         }
         Err(e) => {
+            complete_runtime_status_projection(
+                agent,
+                app,
+                &request.event_name,
+                &timeline_recorder,
+                workspace_root.as_str(),
+                &runtime_status_session_config,
+            )
+            .await;
             {
                 let mut recorder = match timeline_recorder.lock() {
                     Ok(guard) => guard,
@@ -6149,60 +6236,6 @@ async fn execute_aster_chat_request(
     state.remove_cancel_token(session_id).await;
 
     Ok(())
-}
-
-struct AgentRuntimeExecutionContext {
-    app: AppHandle,
-    state: AsterAgentState,
-    db: DbConnection,
-    api_key_provider_service: ApiKeyProviderServiceState,
-    logs: LogState,
-    config_manager: GlobalConfigManagerState,
-    mcp_manager: McpManagerState,
-    automation_state: AutomationServiceState,
-}
-
-impl AgentRuntimeExecutionContext {
-    fn from_states(
-        app: AppHandle,
-        state: &AsterAgentState,
-        db: &DbConnection,
-        api_key_provider_service: &ApiKeyProviderServiceState,
-        logs: &LogState,
-        config_manager: &GlobalConfigManagerState,
-        mcp_manager: &McpManagerState,
-        automation_state: &AutomationServiceState,
-    ) -> Self {
-        Self {
-            app,
-            state: state.clone(),
-            db: db.clone(),
-            api_key_provider_service: ApiKeyProviderServiceState(
-                api_key_provider_service.0.clone(),
-            ),
-            logs: logs.clone(),
-            config_manager: GlobalConfigManagerState(config_manager.0.clone()),
-            mcp_manager: mcp_manager.clone(),
-            automation_state: automation_state.clone(),
-        }
-    }
-}
-
-impl Clone for AgentRuntimeExecutionContext {
-    fn clone(&self) -> Self {
-        Self {
-            app: self.app.clone(),
-            state: self.state.clone(),
-            db: self.db.clone(),
-            api_key_provider_service: ApiKeyProviderServiceState(
-                self.api_key_provider_service.0.clone(),
-            ),
-            logs: self.logs.clone(),
-            config_manager: GlobalConfigManagerState(self.config_manager.0.clone()),
-            mcp_manager: self.mcp_manager.clone(),
-            automation_state: self.automation_state.clone(),
-        }
-    }
 }
 
 fn build_queued_turn_preview(message: &str) -> String {
@@ -6252,254 +6285,28 @@ fn deserialize_queued_turn_request(payload: serde_json::Value) -> Result<AsterCh
     serde_json::from_value(payload).map_err(|e| format!("反序列化排队 turn 失败: {e}"))
 }
 
-fn persist_runtime_queued_turn(
-    db: &DbConnection,
-    task: &QueuedTurnTask<serde_json::Value>,
-) -> Result<(), String> {
-    let payload_json = serde_json::to_string(&task.payload)
-        .map_err(|e| format!("序列化排队 turn 持久化 payload 失败: {e}"))?;
-    let conn = crate::database::lock_db(db)?;
-    AgentRuntimeQueuedTurnDao::insert(
-        &conn,
-        &NewAgentRuntimeQueuedTurnRecord {
-            queued_turn_id: task.queued_turn_id.clone(),
-            session_id: task.session_id.clone(),
-            event_name: task.event_name.clone(),
-            message_preview: task.message_preview.clone(),
-            message_text: task.message_text.clone(),
-            payload_json,
-            image_count: task.image_count,
-            created_at: task.created_at,
-        },
-    )
-    .map_err(|e| format!("持久化排队 turn 失败: {e}"))?;
-    Ok(())
-}
-
-fn remove_persisted_runtime_queued_turn(
-    db: &DbConnection,
-    queued_turn_id: &str,
-) -> Result<bool, String> {
-    let conn = crate::database::lock_db(db)?;
-    AgentRuntimeQueuedTurnDao::remove(&conn, queued_turn_id)
-        .map_err(|e| format!("删除持久化排队 turn 失败: {e}"))
-}
-
-fn list_persisted_runtime_queue_session_ids(db: &DbConnection) -> Result<Vec<String>, String> {
-    let conn = crate::database::lock_db(db)?;
-    AgentRuntimeQueuedTurnDao::list_distinct_session_ids(&conn)
-        .map_err(|e| format!("读取排队会话列表失败: {e}"))
-}
-
-fn load_persisted_runtime_queue_tasks(
-    db: &DbConnection,
-    session_id: &str,
-) -> Result<Vec<QueuedTurnTask<serde_json::Value>>, String> {
-    let conn = crate::database::lock_db(db)?;
-    let records = AgentRuntimeQueuedTurnDao::list_by_session(&conn, session_id)
-        .map_err(|e| format!("读取持久化排队 turn 失败: {e}"))?;
-
-    let mut tasks = Vec::with_capacity(records.len());
-    let mut invalid_ids = Vec::new();
-    for record in records {
-        match serde_json::from_str::<serde_json::Value>(&record.payload_json) {
-            Ok(payload) => tasks.push(QueuedTurnTask {
-                queued_turn_id: record.queued_turn_id,
-                session_id: record.session_id,
-                event_name: record.event_name,
-                message_preview: record.message_preview,
-                message_text: record.message_text,
-                created_at: record.created_at,
-                image_count: record.image_count,
-                payload,
-            }),
-            Err(error) => {
-                tracing::warn!(
-                    "[AsterAgent][Queue] 跳过损坏的持久化排队 turn: session_id={}, queued_turn_id={}, error={}",
-                    session_id,
-                    record.queued_turn_id,
-                    error
-                );
-                invalid_ids.push(record.queued_turn_id);
-            }
+fn build_runtime_queue_executor() -> RuntimeQueueExecutor {
+    Arc::new(|context, payload| {
+        async move {
+            let request = deserialize_queued_turn_request(payload)?;
+            execute_aster_chat_request(
+                &context.app,
+                &context.state,
+                &context.db,
+                &context.api_key_provider_service,
+                &context.logs,
+                &context.config_manager,
+                &context.mcp_manager,
+                &context.automation_state,
+                request,
+            )
+            .await
         }
-    }
-
-    for queued_turn_id in invalid_ids {
-        if let Err(error) = AgentRuntimeQueuedTurnDao::remove(&conn, &queued_turn_id) {
-            tracing::warn!(
-                "[AsterAgent][Queue] 删除损坏的持久化排队 turn 失败: queued_turn_id={}, error={}",
-                queued_turn_id,
-                error
-            );
-        }
-    }
-
-    Ok(tasks)
+        .boxed()
+    })
 }
 
-fn ensure_runtime_queue_loaded(
-    state: &AsterAgentState,
-    db: &DbConnection,
-    session_id: &str,
-) -> Result<(), String> {
-    if state.turn_queue().has_session_state(session_id) {
-        return Ok(());
-    }
-
-    let tasks = load_persisted_runtime_queue_tasks(db, session_id)?;
-    if tasks.is_empty() {
-        return Ok(());
-    }
-
-    tracing::info!(
-        "[AsterAgent][Queue] 从持久化存储恢复会话排队: session_id={}, count={}",
-        session_id,
-        tasks.len()
-    );
-    state.turn_queue().restore_pending(session_id, tasks);
-    Ok(())
-}
-
-fn emit_runtime_queue_event(app: &AppHandle, event_name: &str, event: &TauriAgentEvent) {
-    if let Err(error) = app.emit(event_name, event) {
-        tracing::warn!(
-            "[AsterAgent][Queue] 发送队列事件失败: event_name={}, error={}",
-            event_name,
-            error
-        );
-    }
-}
-
-fn schedule_next_runtime_turn(context: AgentRuntimeExecutionContext, session_id: String) {
-    let queue = context.state.turn_queue();
-
-    loop {
-        let Some(next_task) = queue.finish_and_take_next(&session_id) else {
-            return;
-        };
-
-        if let Err(error) =
-            remove_persisted_runtime_queued_turn(&context.db, &next_task.queued_turn_id)
-        {
-            tracing::warn!(
-                "[AsterAgent][Queue] 删除已启动的持久化排队 turn 失败: queued_turn_id={}, error={}",
-                next_task.queued_turn_id,
-                error
-            );
-        }
-
-        emit_runtime_queue_event(
-            &context.app,
-            &next_task.event_name,
-            &TauriAgentEvent::QueueStarted {
-                session_id: session_id.clone(),
-                queued_turn_id: next_task.queued_turn_id.clone(),
-            },
-        );
-
-        let next_request = match deserialize_queued_turn_request(next_task.payload) {
-            Ok(request) => request,
-            Err(error) => {
-                emit_runtime_queue_event(
-                    &context.app,
-                    &next_task.event_name,
-                    &TauriAgentEvent::Error { message: error },
-                );
-                continue;
-            }
-        };
-
-        tokio::spawn(async move {
-            if let Err(error) =
-                execute_runtime_turn_and_continue_queue(context.clone(), next_request).await
-            {
-                tracing::warn!("[AsterAgent][Queue] 队列任务执行失败: {}", error);
-            }
-        });
-        return;
-    }
-}
-
-async fn execute_runtime_turn_and_continue_queue(
-    context: AgentRuntimeExecutionContext,
-    request: AsterChatRequest,
-) -> Result<(), String> {
-    let session_id = request.session_id.clone();
-    let result = execute_aster_chat_request(
-        &context.app,
-        &context.state,
-        &context.db,
-        &context.api_key_provider_service,
-        &context.logs,
-        &context.config_manager,
-        &context.mcp_manager,
-        &context.automation_state,
-        request,
-    )
-    .await;
-
-    schedule_next_runtime_turn(context, session_id);
-    result
-}
-
-fn resume_runtime_queue_if_needed(
-    context: AgentRuntimeExecutionContext,
-    session_id: String,
-) -> Result<bool, String> {
-    ensure_runtime_queue_loaded(&context.state, &context.db, &session_id)?;
-
-    if context.state.turn_queue().has_active(&session_id) {
-        return Ok(false);
-    }
-
-    if context.state.turn_queue().snapshot(&session_id).is_empty() {
-        return Ok(false);
-    }
-
-    schedule_next_runtime_turn(context, session_id);
-    Ok(true)
-}
-
-fn clear_pending_runtime_queue(
-    app: &AppHandle,
-    state: &AsterAgentState,
-    db: &DbConnection,
-    session_id: &str,
-) -> Vec<QueuedTurnTask<serde_json::Value>> {
-    let cleared = state.turn_queue().clear_pending(session_id);
-    if cleared.is_empty() {
-        return cleared;
-    }
-
-    let queued_turn_ids = cleared
-        .iter()
-        .map(|task| task.queued_turn_id.clone())
-        .collect::<Vec<_>>();
-    for queued_turn_id in &queued_turn_ids {
-        if let Err(error) = remove_persisted_runtime_queued_turn(db, queued_turn_id) {
-            tracing::warn!(
-                "[AsterAgent][Queue] 删除已清空的持久化排队 turn 失败: queued_turn_id={}, error={}",
-                queued_turn_id,
-                error
-            );
-        }
-    }
-    for task in &cleared {
-        emit_runtime_queue_event(
-            app,
-            &task.event_name,
-            &TauriAgentEvent::QueueCleared {
-                session_id: session_id.to_string(),
-                queued_turn_ids: queued_turn_ids.clone(),
-            },
-        );
-    }
-
-    cleared
-}
-
-pub fn resume_persisted_runtime_queues_on_startup(
+pub async fn resume_persisted_runtime_queues_on_startup(
     app: AppHandle,
     state: &AsterAgentState,
     db: &DbConnection,
@@ -6509,33 +6316,18 @@ pub fn resume_persisted_runtime_queues_on_startup(
     mcp_manager: &McpManagerState,
     automation_state: &AutomationServiceState,
 ) -> Result<usize, String> {
-    let session_ids = list_persisted_runtime_queue_session_ids(db)?;
-    if session_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let mut resumed = 0usize;
-    for session_id in session_ids {
-        let context = AgentRuntimeExecutionContext::from_states(
-            app.clone(),
-            state,
-            db,
-            api_key_provider_service,
-            logs,
-            config_manager,
-            mcp_manager,
-            automation_state,
-        );
-        if resume_runtime_queue_if_needed(context, session_id.clone())? {
-            resumed += 1;
-            tracing::info!(
-                "[AsterAgent][Queue] 启动阶段已恢复会话排队执行: session_id={}",
-                session_id
-            );
-        }
-    }
-
-    Ok(resumed)
+    resume_persisted_runtime_queues_on_startup_service(
+        app,
+        state,
+        db,
+        api_key_provider_service,
+        logs,
+        config_manager,
+        mcp_manager,
+        automation_state,
+        build_runtime_queue_executor(),
+    )
+    .await
 }
 
 /// 统一运行时：提交一个 turn。
@@ -6554,9 +6346,7 @@ pub async fn agent_runtime_submit_turn(
     let runtime_request: AsterChatRequest = request.into();
     let queue_if_busy = runtime_request.queue_if_busy.unwrap_or(false);
     let queued_task = build_queued_turn_task(runtime_request)?;
-    let session_id = queued_task.session_id.clone();
-    ensure_runtime_queue_loaded(state.inner(), db.inner(), &session_id)?;
-    let context = AgentRuntimeExecutionContext::from_states(
+    submit_runtime_turn_service(
         app,
         state.inner(),
         db.inner(),
@@ -6565,39 +6355,11 @@ pub async fn agent_runtime_submit_turn(
         config_manager.inner(),
         mcp_manager.inner(),
         automation_state.inner(),
-    );
-
-    let _ = resume_runtime_queue_if_needed(context.clone(), session_id.clone())?;
-
-    if !queue_if_busy && state.inner().turn_queue().has_active(&session_id) {
-        return Err("当前会话仍在生成，无法立即开始执行".to_string());
-    }
-
-    match state
-        .inner()
-        .turn_queue()
-        .start_or_enqueue(queued_task.clone())
-    {
-        QueueInsertResult::StartNow(task) => {
-            let request = deserialize_queued_turn_request(task.payload)?;
-            execute_runtime_turn_and_continue_queue(context, request).await
-        }
-        QueueInsertResult::Enqueued {
-            event_name,
-            snapshot,
-        } => {
-            persist_runtime_queued_turn(db.inner(), &queued_task)?;
-            emit_runtime_queue_event(
-                &context.app,
-                &event_name,
-                &TauriAgentEvent::QueueAdded {
-                    session_id,
-                    queued_turn: snapshot,
-                },
-            );
-            Ok(())
-        }
-    }
+        queued_task,
+        queue_if_busy,
+        build_runtime_queue_executor(),
+    )
+    .await
 }
 
 /// 统一运行时：中断当前 turn。
@@ -6605,13 +6367,11 @@ pub async fn agent_runtime_submit_turn(
 pub async fn agent_runtime_interrupt_turn(
     app: AppHandle,
     state: State<'_, AsterAgentState>,
-    db: State<'_, DbConnection>,
     request: AgentRuntimeInterruptTurnRequest,
 ) -> Result<bool, String> {
     let session_id = request.session_id;
-    ensure_runtime_queue_loaded(state.inner(), db.inner(), &session_id)?;
     let cancelled = state.cancel_session(&session_id).await;
-    let cleared = clear_pending_runtime_queue(&app, state.inner(), db.inner(), &session_id);
+    let cleared = clear_runtime_queue_service(&app, &session_id).await?;
     Ok(cancelled || !cleared.is_empty())
 }
 
@@ -6735,14 +6495,6 @@ fn list_runtime_sessions_internal(db: &DbConnection) -> Result<Vec<SessionInfo>,
     AsterAgentWrapper::list_sessions_sync(db)
 }
 
-fn get_runtime_session_detail_internal(
-    db: &DbConnection,
-    session_id: &str,
-) -> Result<SessionDetail, String> {
-    tracing::info!("[AsterAgent] 获取会话: {}", session_id);
-    AsterAgentWrapper::get_session_sync(db, session_id)
-}
-
 /// 统一运行时：获取会话详情。
 #[tauri::command]
 pub async fn agent_runtime_get_session(
@@ -6756,44 +6508,31 @@ pub async fn agent_runtime_get_session(
     automation_state: State<'_, AutomationServiceState>,
     session_id: String,
 ) -> Result<AgentRuntimeSessionDetail, String> {
-    ensure_runtime_queue_loaded(state.inner(), db.inner(), &session_id)?;
-    let mut detail = get_runtime_session_detail_internal(db.inner(), &session_id)?;
+    tracing::info!("[AsterAgent] 获取运行时会话: {}", session_id);
+    let detail = AsterAgentWrapper::get_runtime_session_detail(db.inner(), &session_id).await?;
 
-    let agent_arc = state.get_agent_arc();
-    let guard = agent_arc.read().await;
-    if let Some(agent) = guard.as_ref() {
-        match agent.runtime_snapshot(&session_id).await {
-            Ok(snapshot) => apply_aster_runtime_snapshot(&mut detail, &snapshot),
-            Err(error) => {
-                tracing::warn!(
-                    "[AsterAgent] 读取 Aster runtime snapshot 失败: session_id={}, error={}",
-                    session_id,
-                    error
-                );
-            }
-        }
-    }
-
-    let queued_turns = state.inner().turn_queue().snapshot(&session_id);
-    if !queued_turns.is_empty() && !state.inner().turn_queue().has_active(&session_id) {
-        let context = AgentRuntimeExecutionContext::from_states(
-            app,
-            state.inner(),
-            db.inner(),
-            api_key_provider_service.inner(),
-            logs.inner(),
-            config_manager.inner(),
-            mcp_manager.inner(),
-            automation_state.inner(),
+    if let Err(error) = resume_runtime_queue_if_needed_service(
+        app,
+        state.inner(),
+        db.inner(),
+        api_key_provider_service.inner(),
+        logs.inner(),
+        config_manager.inner(),
+        mcp_manager.inner(),
+        automation_state.inner(),
+        session_id.clone(),
+        build_runtime_queue_executor(),
+    )
+    .await
+    {
+        tracing::warn!(
+            "[AsterAgent][Queue] 获取会话后恢复排队执行失败: session_id={}, error={}",
+            session_id,
+            error
         );
-        if let Err(error) = resume_runtime_queue_if_needed(context, session_id.clone()) {
-            tracing::warn!(
-                "[AsterAgent][Queue] 获取会话后恢复排队执行失败: session_id={}, error={}",
-                session_id,
-                error
-            );
-        }
     }
+
+    let queued_turns = list_runtime_queue_snapshots_service(&session_id).await?;
     Ok(AgentRuntimeSessionDetail::from_session_detail(
         detail,
         queued_turns,
@@ -6804,8 +6543,6 @@ pub async fn agent_runtime_get_session(
 #[tauri::command]
 pub async fn agent_runtime_remove_queued_turn(
     app: AppHandle,
-    state: State<'_, AsterAgentState>,
-    db: State<'_, DbConnection>,
     request: AgentRuntimeRemoveQueuedTurnRequest,
 ) -> Result<bool, String> {
     let session_id = request.session_id.trim().to_string();
@@ -6814,25 +6551,7 @@ pub async fn agent_runtime_remove_queued_turn(
         return Ok(false);
     }
 
-    ensure_runtime_queue_loaded(state.inner(), db.inner(), &session_id)?;
-    let removed = state
-        .inner()
-        .turn_queue()
-        .remove_queued(&session_id, &queued_turn_id);
-    if let Some(task) = removed {
-        remove_persisted_runtime_queued_turn(db.inner(), &queued_turn_id)?;
-        emit_runtime_queue_event(
-            &app,
-            &task.event_name,
-            &TauriAgentEvent::QueueRemoved {
-                session_id,
-                queued_turn_id,
-            },
-        );
-        return Ok(true);
-    }
-
-    Ok(false)
+    remove_runtime_queued_turn_service(&app, &session_id, &queued_turn_id).await
 }
 
 fn rename_runtime_session_internal(
@@ -6892,7 +6611,7 @@ pub async fn agent_runtime_delete_session(
 ) -> Result<(), String> {
     let trimmed_session_id = session_id.trim().to_string();
     let _ = state.cancel_session(&trimmed_session_id).await;
-    let _ = clear_pending_runtime_queue(&app, state.inner(), db.inner(), &trimmed_session_id);
+    let _ = clear_runtime_queue_service(&app, &trimmed_session_id).await;
     delete_runtime_session_internal(db.inner(), &trimmed_session_id).await
 }
 
@@ -6980,16 +6699,9 @@ fn build_runtime_action_user_data(request: &AgentRuntimeRespondActionRequest) ->
 #[tauri::command]
 pub async fn agent_runtime_respond_action(
     state: State<'_, AsterAgentState>,
-    db: State<'_, DbConnection>,
     request: AgentRuntimeRespondActionRequest,
 ) -> Result<(), String> {
-    let response_value = build_action_response_value(
-        request.confirmed,
-        request.response.as_deref(),
-        request.user_data.as_ref(),
-    );
-
-    let result = match request.action_type {
+    match request.action_type {
         AgentRuntimeActionType::ToolConfirmation => {
             confirm_runtime_action_internal(
                 state.inner(),
@@ -7014,13 +6726,7 @@ pub async fn agent_runtime_respond_action(
             )
             .await
         }
-    };
-
-    if result.is_ok() {
-        complete_action_item(db.inner(), &request.request_id, response_value)?;
     }
-
-    result
 }
 
 async fn submit_runtime_elicitation_response_internal(
@@ -7624,6 +7330,27 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("hook-facade")
         );
+    }
+
+    #[test]
+    fn test_build_runtime_user_message_includes_images() {
+        let message = build_runtime_user_message(
+            "这个是什么",
+            Some(&[ImageInput {
+                data: "aGVsbG8=".to_string(),
+                media_type: "image/png".to_string(),
+            }]),
+        );
+
+        assert_eq!(message.as_concat_text(), "这个是什么");
+        assert_eq!(message.content.len(), 2);
+
+        if let MessageContent::Image(image) = &message.content[1] {
+            assert_eq!(image.data, "aGVsbG8=");
+            assert_eq!(image.mime_type, "image/png");
+        } else {
+            panic!("expected image content in runtime user message");
+        }
     }
 
     #[test]

@@ -1,10 +1,11 @@
+pub mod agent_runtime_queue_repository;
+pub mod agent_session_repository;
 pub mod dao;
 pub mod migration;
 mod migration_support;
 pub mod migration_v2;
 pub mod migration_v3;
 pub mod migration_v4;
-mod pending_general_chat;
 pub mod schema;
 mod startup_migrations;
 pub mod system_providers;
@@ -28,133 +29,6 @@ pub struct ConversationWindowSummary {
     pub session_count: i64,
     pub message_count: i64,
     pub content_chars: i64,
-}
-
-impl ConversationWindowSummary {
-    pub fn merge(self, other: Self) -> Self {
-        Self {
-            session_count: self.session_count + other.session_count,
-            message_count: self.message_count + other.message_count,
-            content_chars: self.content_chars + other.content_chars,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PendingGeneralMessage {
-    pub id: String,
-    pub session_id: String,
-    pub role: String,
-    pub content: String,
-    pub created_at: i64,
-}
-
-impl From<pending_general_chat::PendingGeneralMessageRow> for PendingGeneralMessage {
-    fn from(message: pending_general_chat::PendingGeneralMessageRow) -> Self {
-        Self {
-            id: message.id,
-            session_id: message.session_id,
-            role: message.role,
-            content: message.content,
-            created_at: message.created_at,
-        }
-    }
-}
-
-fn run_pending_general_query<T, F>(
-    conn: &Connection,
-    empty_value: T,
-    query: F,
-) -> Result<T, rusqlite::Error>
-where
-    F: FnOnce(&Connection) -> Result<T, rusqlite::Error>,
-{
-    if migration::is_general_chat_migration_completed(conn) {
-        return Ok(empty_value);
-    }
-
-    query(conn)
-}
-
-pub fn load_pending_general_session_messages(
-    conn: &Connection,
-    session_id: &str,
-) -> Result<Vec<PendingGeneralMessage>, rusqlite::Error> {
-    run_pending_general_query(conn, Vec::new(), |tx| {
-        pending_general_chat::load_pending_general_session_messages_raw(tx, session_id)
-            .map(|messages| messages.into_iter().map(Into::into).collect())
-    })
-}
-
-pub fn load_pending_general_messages(
-    conn: &Connection,
-    from_timestamp_ms: Option<i64>,
-    to_timestamp_ms: Option<i64>,
-    limit: usize,
-) -> Result<Vec<PendingGeneralMessage>, rusqlite::Error> {
-    run_pending_general_query(conn, Vec::new(), |tx| {
-        pending_general_chat::load_pending_general_messages_raw(
-            tx,
-            from_timestamp_ms,
-            to_timestamp_ms,
-            limit,
-        )
-        .map(|messages| messages.into_iter().map(Into::into).collect())
-    })
-}
-
-pub fn count_pending_general_sessions(
-    conn: &Connection,
-    from_timestamp_ms: Option<i64>,
-    to_timestamp_ms: Option<i64>,
-) -> Result<i64, rusqlite::Error> {
-    run_pending_general_query(conn, 0, |tx| {
-        pending_general_chat::count_pending_general_sessions_raw(
-            tx,
-            from_timestamp_ms,
-            to_timestamp_ms,
-        )
-    })
-}
-
-pub fn count_pending_general_messages(
-    conn: &Connection,
-    from_timestamp_ms: Option<i64>,
-    to_timestamp_ms: Option<i64>,
-) -> Result<i64, rusqlite::Error> {
-    run_pending_general_query(conn, 0, |tx| {
-        pending_general_chat::count_pending_general_messages_raw(
-            tx,
-            from_timestamp_ms,
-            to_timestamp_ms,
-        )
-    })
-}
-
-pub fn sum_pending_general_message_chars(
-    conn: &Connection,
-    from_timestamp_ms: Option<i64>,
-    to_timestamp_ms: Option<i64>,
-) -> Result<i64, rusqlite::Error> {
-    run_pending_general_query(conn, 0, |tx| {
-        pending_general_chat::sum_pending_general_message_chars_raw(
-            tx,
-            from_timestamp_ms,
-            to_timestamp_ms,
-        )
-    })
-}
-
-pub fn summarize_pending_general(
-    conn: &Connection,
-    from_timestamp_ms: Option<i64>,
-    to_timestamp_ms: Option<i64>,
-) -> Result<ConversationWindowSummary, rusqlite::Error> {
-    Ok(ConversationWindowSummary {
-        session_count: count_pending_general_sessions(conn, from_timestamp_ms, to_timestamp_ms)?,
-        message_count: count_pending_general_messages(conn, from_timestamp_ms, to_timestamp_ms)?,
-        content_chars: sum_pending_general_message_chars(conn, from_timestamp_ms, to_timestamp_ms)?,
-    })
 }
 
 /// 获取数据库连接锁（自动处理 poisoned lock）
@@ -200,43 +74,4 @@ pub fn init_database() -> Result<DbConnection, String> {
     startup_migrations::run_startup_migrations(&conn);
 
     Ok(Arc::new(Mutex::new(conn)))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn setup_completed_general_migration_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, 'true')",
-            [migration::GENERAL_CHAT_MIGRATION_COMPLETED_KEY],
-        )
-        .unwrap();
-        conn
-    }
-
-    #[test]
-    fn pending_general_queries_short_circuit_after_migration_completed() {
-        let conn = setup_completed_general_migration_db();
-
-        let messages = load_pending_general_messages(&conn, None, None, 10).unwrap();
-        let session_messages = load_pending_general_session_messages(&conn, "session-1").unwrap();
-        let session_count = count_pending_general_sessions(&conn, None, None).unwrap();
-        let message_count = count_pending_general_messages(&conn, None, None).unwrap();
-        let char_count = sum_pending_general_message_chars(&conn, None, None).unwrap();
-        let summary = summarize_pending_general(&conn, None, None).unwrap();
-
-        assert!(messages.is_empty());
-        assert!(session_messages.is_empty());
-        assert_eq!(session_count, 0);
-        assert_eq!(message_count, 0);
-        assert_eq!(char_count, 0);
-        assert_eq!(summary, ConversationWindowSummary::default());
-    }
 }

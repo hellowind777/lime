@@ -26,29 +26,6 @@ fn get_optional_bool_arg(args: &JsonValue, primary: &str, secondary: &str) -> Op
         .and_then(|value| value.as_bool())
 }
 
-fn get_workspace_projects_root_dir() -> Result<PathBuf, String> {
-    lime_core::app_paths::resolve_projects_dir()
-}
-
-fn sanitize_project_dir_name(name: &str) -> String {
-    let sanitized: String = name
-        .trim()
-        .chars()
-        .map(|ch| match ch {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ if ch.is_control() => '_',
-            _ => ch,
-        })
-        .collect();
-
-    let trimmed = sanitized.trim().trim_matches('.').to_string();
-    if trimmed.is_empty() {
-        "未命名项目".to_string()
-    } else {
-        trimmed
-    }
-}
-
 fn to_workspace_list_item_json<T>(workspace: T) -> Result<JsonValue, DynError>
 where
     WorkspaceListItem: From<T>,
@@ -73,25 +50,6 @@ fn build_ensure_result(
             .map(|path| path.to_string_lossy().to_string()),
         warning: ensured.warning,
     }
-}
-
-fn create_default_project_if_missing(manager: &WorkspaceManager) -> Result<JsonValue, DynError> {
-    if let Some(workspace) = manager.get_default()? {
-        return to_workspace_list_item_json(workspace);
-    }
-
-    let default_project_path = get_workspace_projects_root_dir()?.join("default");
-    std::fs::create_dir_all(&default_project_path)
-        .map_err(|e| format!("创建默认项目目录失败: {e}"))?;
-
-    let workspace = manager.create_with_type(
-        "默认项目".to_string(),
-        default_project_path,
-        WorkspaceType::Persistent,
-    )?;
-    manager.set_default(&workspace.id)?;
-    let workspace = manager.get(&workspace.id)?.ok_or("创建默认项目失败")?;
-    to_workspace_list_item_json(workspace)
 }
 
 fn remove_workspace_directory_if_requested(

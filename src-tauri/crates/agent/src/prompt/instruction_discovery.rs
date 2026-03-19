@@ -3,19 +3,14 @@
 //! 从文件系统发现并加载多层级的 AGENT.md 指令文件，
 //! 按优先级从低到高：全局 -> 项目根 -> 当前目录
 
+use lime_core::app_paths;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 /// 支持的指令文件名列表（按优先级排序）
-const INSTRUCTION_FILENAMES: &[&str] = &[
-    "AGENT.md",
-    ".agent.md",
-    "agent.md",
-    ".lime/AGENT.md",
-    ".lime/instructions.md",
-];
+const INSTRUCTION_FILENAMES: &[&str] = &["AGENT.md", ".agent.md", "agent.md"];
 
 // 保留旧常量供测试使用（第一优先级文件名）
 #[cfg(test)]
@@ -24,7 +19,7 @@ const INSTRUCTION_FILENAME: &str = "AGENT.md";
 /// 指令来源，按优先级从低到高
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstructionSource {
-    /// ~/.lime/AGENT.md
+    /// 应用级用户指令文件（统一收口到 app_paths::resolve_user_memory_path）
     Global,
     /// 项目根目录/AGENT.md
     Project,
@@ -51,16 +46,19 @@ fn find_instruction_file(dir: &Path) -> Option<PathBuf> {
     None
 }
 
+fn find_global_instruction_file() -> Option<PathBuf> {
+    app_paths::resolve_user_memory_path()
+        .ok()
+        .filter(|path| path.is_file())
+}
+
 /// 从文件系统发现并加载层级化指令
 /// 返回按优先级排序的指令列表（低优先级在前）
 pub fn discover_instructions(working_dir: &Path) -> Vec<InstructionLayer> {
     let mut layers = Vec::new();
 
-    // 1. 全局: ~/.lime/ 下查找指令文件
-    if let Some(home) = dirs::home_dir() {
-        let global_dir = home.join(".lime");
-        // 全局层只查找 AGENT.md（不递归子目录模式）
-        let global_path = global_dir.join("AGENT.md");
+    // 1. 全局: 统一用户指令文件
+    if let Some(global_path) = find_global_instruction_file() {
         if let Some(layer) = load_layer(&global_path, InstructionSource::Global) {
             layers.push(layer);
         }
@@ -384,7 +382,7 @@ mod tests {
             InstructionLayer {
                 source: InstructionSource::Global,
                 content: "global rule".to_string(),
-                path: PathBuf::from("/home/.lime/AGENT.md"),
+                path: PathBuf::from("/appdata/lime/AGENTS.md"),
             },
             InstructionLayer {
                 source: InstructionSource::Project,
@@ -458,6 +456,22 @@ mod tests {
             .collect();
         assert_eq!(project.len(), 1);
         assert!(project[0].content.contains("primary agent"));
+    }
+
+    #[test]
+    fn test_project_discovery_ignores_legacy_lime_subdir_files() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir(tmp.path().join(".git")).unwrap();
+        let legacy_dir = tmp.path().join(".lime");
+        fs::create_dir(&legacy_dir).unwrap();
+        fs::write(legacy_dir.join("AGENT.md"), "legacy nested agent").unwrap();
+
+        let layers = discover_instructions(tmp.path());
+        let project: Vec<_> = layers
+            .iter()
+            .filter(|l| l.source == InstructionSource::Project)
+            .collect();
+        assert!(project.is_empty());
     }
 
     #[test]

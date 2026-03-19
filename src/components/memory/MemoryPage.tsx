@@ -43,7 +43,7 @@ import type { MemoryPageParams, Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
 import { getConfig, saveConfig, type Config } from "@/lib/api/appConfig";
 import {
-  getMemoryOverview as getContextMemoryOverview,
+  getContextMemoryOverview,
   type MemoryConfig as TauriMemoryConfig,
 } from "@/lib/api/memoryRuntime";
 import {

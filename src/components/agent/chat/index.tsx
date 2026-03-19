@@ -162,10 +162,7 @@ import { browserExecuteAction, launchBrowserSession } from "@/lib/webview-api";
 import type { Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
 import { skillsApi, type Skill } from "@/lib/api/skills";
-import {
-  buildClawAgentParams,
-  buildHomeAgentParams,
-} from "@/lib/workspace/navigation";
+import { buildHomeAgentParams } from "@/lib/workspace/navigation";
 import { loadConfiguredProviders } from "@/hooks/useConfiguredProviders";
 import { useSubAgentScheduler } from "@/hooks/useSubAgentScheduler";
 import {
@@ -188,6 +185,7 @@ import {
   resolveBaseModelOnThinkingOff,
   resolveThinkingModel,
 } from "@/lib/model/thinkingModelResolver";
+import { resolveVisionModel } from "@/lib/model/visionModelResolver";
 import {
   loadRememberedBaseModel,
   saveRememberedBaseModel,
@@ -292,6 +290,8 @@ const SUPPORTED_ENTRY_THEMES: ThemeType[] = [
 
 const GENERAL_BROWSER_ASSIST_PROFILE_KEY = "general_browser_assist";
 const GENERAL_BROWSER_ASSIST_ARTIFACT_ID = "browser-assist:general";
+const HOME_ENHANCEMENT_IDLE_TIMEOUT_MS = 1_500;
+const HOME_ENHANCEMENT_FALLBACK_DELAY_MS = 180;
 
 function isResumableBrowserTaskReason(
   statusReason?: TaskStatusReason,
@@ -323,6 +323,28 @@ function normalizeInitialTheme(value?: string): ThemeType {
     return value as ThemeType;
   }
   return "general";
+}
+
+function scheduleDeferredHomeEnhancement(task: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => undefined;
+  }
+
+  if (typeof window.requestIdleCallback === "function") {
+    const idleId = window.requestIdleCallback(() => task(), {
+      timeout: HOME_ENHANCEMENT_IDLE_TIMEOUT_MS,
+    });
+    return () => {
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }
+
+  const timeoutId = window.setTimeout(task, HOME_ENHANCEMENT_FALLBACK_DELAY_MS);
+  return () => {
+    window.clearTimeout(timeoutId);
+  };
 }
 
 function shouldPreserveGeneralArtifact(artifact: Artifact): boolean {
@@ -2449,7 +2471,6 @@ export function AgentChatPage({
     null,
   );
   const handledNewChatRequestRef = useRef<string | null>(null);
-  const promotedNewTaskEntryRef = useRef(false);
 
   const incomingNewChatRequestKey =
     typeof newChatAt === "number" ? String(newChatAt) : null;
@@ -3248,6 +3269,7 @@ export function AgentChatPage({
     currentTurnId,
     turns,
     threadItems,
+    todoItems = [],
     queuedTurns = [],
     isSending,
     sendMessage,
@@ -3414,8 +3436,13 @@ export function AgentChatPage({
   );
   const harnessState = useMemo(
     () =>
-      deriveHarnessSessionState(messages, pendingActions, effectiveThreadItems),
-    [effectiveThreadItems, messages, pendingActions],
+      deriveHarnessSessionState(
+        messages,
+        pendingActions,
+        effectiveThreadItems,
+        todoItems,
+      ),
+    [effectiveThreadItems, messages, pendingActions, todoItems],
   );
   const activeRuntimeStatusTitle = useMemo(() => {
     if (!isSending) {
@@ -3590,8 +3617,15 @@ export function AgentChatPage({
   }, []);
 
   useEffect(() => {
-    void loadSkills(false);
-  }, [loadSkills]);
+    if (!isNewTaskEntry) {
+      void loadSkills(false);
+      return;
+    }
+
+    return scheduleDeferredHomeEnhancement(() => {
+      void loadSkills(false);
+    });
+  }, [isNewTaskEntry, loadSkills]);
 
   // 主题工作台模式：同步 skills 状态到 store
   // 注意：不再设置 themeSkillsRailState，避免"操作面板"覆盖默认 Skills Rail
@@ -5109,6 +5143,7 @@ export function AgentChatPage({
     model,
     setModel,
     activeTheme: mappedTheme,
+    deferInitialSync: isNewTaskEntry,
   });
 
   useEffect(() => {
@@ -5406,10 +5441,10 @@ export function AgentChatPage({
       sendOptions?: HandleSendOptions,
     ) => {
       let sourceText = textOverride ?? input;
-      if (!sourceText.trim() && (!images || images.length === 0)) return;
+      if (!sourceText.trim() && (!images || images.length === 0)) return false;
       if (browserTaskPreflight && !sendOptions?.browserPreflightConfirmed) {
         toast.info("请先完成当前浏览器准备后，再继续发送新的任务");
-        return;
+        return false;
       }
 
       const browserRequirementMatch =
@@ -5427,7 +5462,7 @@ export function AgentChatPage({
       if (!projectId) {
         sendOptions?.observer?.onError?.("请先选择项目后再开始对话");
         toast.error("请先选择项目后再开始对话");
-        return;
+        return false;
       }
 
       if (
@@ -5456,7 +5491,7 @@ export function AgentChatPage({
         setInput("");
         setMentionedCharacters([]);
         setBrowserTaskPreflight(preflight);
-        return;
+        return true;
       }
 
       if (
@@ -5539,9 +5574,6 @@ export function AgentChatPage({
         });
       }
 
-      setInput("");
-      setMentionedCharacters([]); // 清空引用的角色
-
       try {
         const { selectedProvider, providerModels } =
           await resolveSendProviderContext();
@@ -5609,6 +5641,33 @@ export function AgentChatPage({
             toast.warning(compatibilityResult.reason);
           }
         }
+
+        if ((images?.length || 0) > 0) {
+          const visionResult = resolveVisionModel({
+            currentModelId: effectiveModel,
+            models: providerModels,
+          });
+
+          if (visionResult.reason === "no_vision_model") {
+            toast.error(
+              "当前 Provider 没有可用的多模态模型，请切换到支持多模态的 Provider 或模型后再发送图片",
+            );
+            return false;
+          }
+
+          if (visionResult.reason !== "already_vision") {
+            const suggestedModel = visionResult.targetModelId.trim();
+            toast.error(
+              suggestedModel
+                ? `当前模型 ${effectiveModel} 不支持多模态图片理解，请切换到 ${suggestedModel} 或其他支持多模态的模型后再发送图片`
+                : `当前模型 ${effectiveModel} 不支持多模态图片理解，请切换到支持多模态的模型后再发送图片`,
+            );
+            return false;
+          }
+        }
+
+        setInput("");
+        setMentionedCharacters([]); // 清空引用的角色
 
         const existingHarnessMetadata =
           sendOptions?.requestMetadata &&
@@ -5681,17 +5740,7 @@ export function AgentChatPage({
           );
         }
 
-        if (isNewTaskEntry && !promotedNewTaskEntryRef.current) {
-          promotedNewTaskEntryRef.current = true;
-          _onNavigate?.(
-            "agent",
-            buildClawAgentParams({
-              projectId,
-              contentId,
-              theme: activeTheme,
-            }),
-          );
-        }
+        return true;
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
@@ -5700,6 +5749,7 @@ export function AgentChatPage({
         toast.error(`发送失败: ${errorMessage}`);
         // 恢复输入内容，让用户可以重试
         setInput(sourceText);
+        return false;
       }
     },
     [
@@ -5716,9 +5766,7 @@ export function AgentChatPage({
       mentionedCharacters,
       mappedTheme,
       activeTheme,
-      isNewTaskEntry,
       model,
-      _onNavigate,
       projectId,
       providerType,
       resolveSendProviderContext,
@@ -5729,10 +5777,6 @@ export function AgentChatPage({
       themeWorkbenchActiveQueueItem?.title,
     ],
   );
-
-  useEffect(() => {
-    promotedNewTaskEntryRef.current = false;
-  }, [agentEntry, newChatAt]);
 
   const handleSendRef = useRef(handleSend);
   const webSearchPreferenceRef = useRef(chatToolPreferences.webSearch);
@@ -7832,6 +7876,25 @@ export function AgentChatPage({
     [openArtifactInWorkbench],
   );
 
+  const findArtifactForCodeBlock = useCallback(
+    (code: string) => {
+      const normalizedCode = code.replace(/\r\n/g, "\n").trimEnd();
+      if (!normalizedCode) {
+        return undefined;
+      }
+
+      return artifacts.find((artifact) => {
+        if (typeof artifact.content !== "string") {
+          return false;
+        }
+        return (
+          artifact.content.replace(/\r\n/g, "\n").trimEnd() === normalizedCode
+        );
+      });
+    },
+    [artifacts],
+  );
+
   // 处理文件点击 - 在画布中显示文件内容
   const handleFileClick = useCallback(
     (fileName: string, content: string) => {
@@ -7948,31 +8011,19 @@ export function AgentChatPage({
     (language: string, code: string) => {
       console.log("[AgentChatPage] 代码块点击:", language);
 
-      // 尝试找到匹配的 artifact（根据内容匹配）
-      const matchingArtifact = artifacts.find((a) => a.content === code);
-
-      if (matchingArtifact) {
-        // 如果找到匹配的 artifact，选中它
-        console.log(
-          "[AgentChatPage] 找到匹配的 artifact:",
-          matchingArtifact.id,
+      const matchingArtifact = findArtifactForCodeBlock(code);
+      if (!matchingArtifact) {
+        console.warn(
+          "[AgentChatPage] 代码块未匹配到 artifact，保持内联渲染:",
+          language,
         );
-        setSelectedArtifactId(matchingArtifact.id);
-      } else {
-        // 如果没有匹配的 artifact，使用 General 画布显示代码
-        console.log("[AgentChatPage] 未找到匹配的 artifact，使用 General 画布");
-        setGeneralCanvasState({
-          isOpen: true,
-          contentType: "code",
-          content: code,
-          language: language || "text",
-          filename: `代码片段.${language || "txt"}`,
-          isEditing: false,
-        });
+        return;
       }
-      setLayoutMode("chat-canvas");
+
+      console.log("[AgentChatPage] 找到匹配的 artifact:", matchingArtifact.id);
+      void openArtifactInWorkbench(matchingArtifact);
     },
-    [artifacts, setSelectedArtifactId],
+    [findArtifactForCodeBlock, openArtifactInWorkbench],
   );
 
   // 判断是否应该折叠代码块（当画布打开且有 artifact 时）
@@ -7982,6 +8033,26 @@ export function AgentChatPage({
     // 当画布打开时折叠代码块
     return artifacts.length > 0 || generalCanvasState.isOpen;
   }, [activeTheme, layoutMode, artifacts.length, generalCanvasState.isOpen]);
+
+  const shouldCollapseCodeBlockInChat = useCallback(
+    (language: string, code: string) => {
+      if (!shouldCollapseCodeBlocks) {
+        return false;
+      }
+
+      const normalizedLanguage = language.trim().toLowerCase();
+      if (
+        ["", "text", "plaintext", "plain", "txt", "markdown", "md"].includes(
+          normalizedLanguage,
+        )
+      ) {
+        return false;
+      }
+
+      return Boolean(findArtifactForCodeBlock(code));
+    },
+    [findArtifactForCodeBlock, shouldCollapseCodeBlocks],
+  );
 
   // 处理任务文件点击 - 在画布中显示文件内容
   const handleTaskFileClick = useCallback(
@@ -9347,6 +9418,7 @@ export function AgentChatPage({
                       )}
                       renderA2UIInline={shouldRenderInlineA2UI}
                       collapseCodeBlocks={shouldCollapseCodeBlocks}
+                      shouldCollapseCodeBlock={shouldCollapseCodeBlockInChat}
                       onCodeBlockClick={handleCodeBlockClick}
                     />
                   </MessageViewport>
@@ -9370,6 +9442,7 @@ export function AgentChatPage({
                     )}
                     renderA2UIInline={shouldRenderInlineA2UI}
                     collapseCodeBlocks={shouldCollapseCodeBlocks}
+                    shouldCollapseCodeBlock={shouldCollapseCodeBlockInChat}
                     onCodeBlockClick={handleCodeBlockClick}
                   />
                 )}
@@ -9604,6 +9677,7 @@ export function AgentChatPage({
       workspacePathMissing,
       resolvedCanvasState,
       shouldHideThemeWorkbenchInputForTheme,
+      shouldCollapseCodeBlockInChat,
       shouldRenderInlineA2UI,
     ],
   );

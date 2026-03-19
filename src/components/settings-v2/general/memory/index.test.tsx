@@ -30,11 +30,11 @@ vi.mock("@/lib/api/appConfig", () => ({
 }));
 
 vi.mock("@/lib/api/memoryRuntime", () => ({
-  getMemoryOverview: mockGetMemoryOverview,
-  getMemoryEffectiveSources: mockGetMemoryEffectiveSources,
-  getMemoryAutoIndex: mockGetMemoryAutoIndex,
-  toggleMemoryAuto: mockToggleMemoryAuto,
-  updateMemoryAutoNote: mockUpdateMemoryAutoNote,
+  getContextMemoryOverview: mockGetMemoryOverview,
+  getContextMemoryEffectiveSources: mockGetMemoryEffectiveSources,
+  getContextMemoryAutoIndex: mockGetMemoryAutoIndex,
+  toggleContextMemoryAuto: mockToggleMemoryAuto,
+  updateContextMemoryAutoNote: mockUpdateMemoryAutoNote,
 }));
 
 vi.mock("@/lib/api/unifiedMemory", () => ({
@@ -152,7 +152,7 @@ beforeEach(() => {
       sources: {
         project_memory_paths: ["AGENTS.md"],
         project_rule_dirs: [".agents/rules"],
-        user_memory_path: "~/.lime/AGENTS.md",
+        user_memory_path: undefined,
       },
     },
   });
@@ -230,7 +230,7 @@ describe("MemorySettings", () => {
     expect(mockGetMemoryAutoIndex).toHaveBeenCalledTimes(1);
   });
 
-  it("点击立即关闭应调用 toggleMemoryAuto", async () => {
+  it("点击立即关闭应调用 toggleContextMemoryAuto", async () => {
     const container = renderComponent();
     await flushEffects();
     await flushEffects();

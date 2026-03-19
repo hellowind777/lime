@@ -104,7 +104,13 @@ pub async fn unified_memory_list(
     info!("[Unified Memory] List memories: {:?}", filters);
 
     let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    list_unified_memories(&conn, filters)
+}
 
+pub(crate) fn list_unified_memories(
+    conn: &rusqlite::Connection,
+    filters: ListFilters,
+) -> Result<Vec<UnifiedMemory>, String> {
     let archived = filters.archived.unwrap_or(false);
     let sort_by = normalize_sort_by(filters.sort_by.as_deref());
     let order = normalize_sort_order(filters.order.as_deref());
@@ -374,7 +380,12 @@ pub async fn unified_memory_stats(
     info!("[Unified Memory] Stats");
 
     let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+    collect_unified_memory_stats(&conn)
+}
 
+pub(crate) fn collect_unified_memory_stats(
+    conn: &rusqlite::Connection,
+) -> Result<MemoryStatsResponse, String> {
     let (total_entries, memory_count, storage_used): (i64, i64, i64) = conn
         .query_row(
             "SELECT COUNT(*), COUNT(DISTINCT session_id), COALESCE(SUM(length(title) + length(content) + length(summary) + length(tags)), 0) FROM unified_memory WHERE archived = 0",

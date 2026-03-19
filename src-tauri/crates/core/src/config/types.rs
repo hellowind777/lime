@@ -2404,7 +2404,7 @@ impl Default for MemorySourcesConfig {
             managed_policy_path: None,
             project_memory_paths: vec!["AGENTS.md".to_string(), ".agents/AGENTS.md".to_string()],
             project_rule_dirs: vec![".agents/rules".to_string()],
-            user_memory_path: Some("~/.lime/AGENTS.md".to_string()),
+            user_memory_path: None,
             project_local_memory_path: Some("AGENTS.local.md".to_string()),
         }
     }
@@ -2422,7 +2422,7 @@ pub struct MemoryAutoConfig {
     /// 启动时加载 MEMORY 入口的最大行数
     #[serde(default = "default_memory_auto_max_loaded_lines")]
     pub max_loaded_lines: u32,
-    /// 自动记忆根目录（可选，默认 ~/.lime/projects/<project>/memory）
+    /// 自动记忆根目录（可选，默认位于应用数据目录下的 projects/<project>/memory）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_dir: Option<String>,
 }

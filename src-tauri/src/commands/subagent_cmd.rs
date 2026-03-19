@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use aster::agents::context::AgentContext;
 use aster::agents::subagent_scheduler::{SchedulerConfig, SchedulerExecutionResult, SubAgentTask};
 
-use crate::agent::subagent_scheduler::{LimeScheduler, SubAgentRole};
+use crate::agent::{LimeScheduler, SubAgentRole};
 use crate::database::DbConnection;
 
 /// SubAgent 调度器状态

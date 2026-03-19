@@ -21,6 +21,7 @@ import { useProviderModels } from "@/hooks/useProviderModels";
 import { filterModelsByTheme } from "@/components/agent/chat/utils/modelThemePolicy";
 import { getProviderModelCompatibilityIssue } from "@/components/agent/chat/utils/providerModelCompatibility";
 import { getProviderLabel } from "@/lib/constants/providerMappings";
+import { ModelCapabilityBadges } from "@/components/model/ModelCapabilityBadges";
 
 const compactTriggerClassName =
   "h-8 min-w-[104px] max-w-[168px] justify-start gap-1.5 rounded-full border-slate-200/80 bg-white/92 px-2.5 text-slate-600 shadow-none transition-colors hover:border-slate-300 hover:bg-white hover:text-slate-800";
@@ -127,6 +128,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
         });
         return {
           id: item.id,
+          metadata: item,
           compatibilityIssue,
         };
       }),
@@ -328,14 +330,14 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
 
         <PopoverContent
           data-model-selector-popover="true"
-          className="z-[80] w-[440px] max-w-[calc(100vw-24px)] overflow-hidden rounded-[22px] border border-slate-200/80 bg-white/96 p-0 shadow-xl shadow-slate-950/8 backdrop-blur-md opacity-100"
+          className="z-[80] w-[440px] max-w-[calc(100vw-24px)] overflow-hidden rounded-[22px] border border-slate-200/80 bg-white p-0 shadow-xl shadow-slate-950/8 opacity-100"
           align="start"
           side={popoverSide}
           sideOffset={8}
           avoidCollisions
           collisionPadding={8}
         >
-          <div className="border-b border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.94)_100%)] px-4 py-3">
+          <div className="border-b border-slate-200/80 bg-[linear-gradient(180deg,rgb(255,255,255)_0%,rgb(248,250,252)_100%)] px-4 py-3">
             <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
               模型选择
             </div>
@@ -354,7 +356,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           </div>
 
           <div className="flex h-[336px]">
-            <div className="flex w-[156px] flex-col gap-1 overflow-y-auto border-r border-slate-200/80 bg-slate-50/70 p-2">
+            <div className="flex w-[156px] flex-col gap-1 overflow-y-auto border-r border-slate-200/80 bg-slate-50 p-2">
               <div className="mb-1 px-2 py-1 text-[11px] font-semibold tracking-[0.08em] text-slate-500">
                 供应商
               </div>
@@ -375,7 +377,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                         itemClassName,
                         isSelected
                           ? "border-slate-200 bg-white text-slate-900 shadow-sm shadow-slate-950/5"
-                          : "text-slate-500 hover:border-slate-200 hover:bg-white/90 hover:text-slate-900",
+                          : "text-slate-500 hover:border-slate-200 hover:bg-white hover:text-slate-900",
                       )}
                     >
                       <span className="flex items-center gap-2 min-w-0">
@@ -402,7 +404,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
               {showThemeFilterHint || (
                 normalizedTheme !== "general" && filteredResult.usedFallback
               ) || incompatibleModelCount > 0 ? (
-                <div className="mb-2 space-y-1 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+                <div className="mb-2 space-y-1 rounded-2xl border border-slate-200/80 bg-slate-50 px-3 py-2">
                   {showThemeFilterHint ? (
                     <div className="text-[11px] leading-5 text-slate-500">
                       已按 {activeThemeLabel} 主题筛选模型
@@ -446,11 +448,11 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                             ? "cursor-not-allowed border-transparent bg-transparent text-slate-400 opacity-70"
                             : model === currentModelItem.id
                             ? "border-slate-200 bg-slate-50 text-slate-900"
-                            : "text-slate-500 hover:border-slate-200 hover:bg-slate-50/90 hover:text-slate-900",
+                            : "text-slate-500 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900",
                         )}
                         title={currentModelItem.compatibilityIssue?.message}
                       >
-                        <span className="flex items-center gap-2 min-w-0">
+                          <span className="flex items-center gap-2 min-w-0">
                           {selectedProvider && (
                             <ProviderIcon
                               providerType={selectedProvider.key}
@@ -458,8 +460,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
                               size={15}
                             />
                           )}
-                          <span className="min-w-0 flex flex-col">
+                          <span className="min-w-0 flex flex-col gap-1">
                             <span className="truncate">{currentModelItem.id}</span>
+                            <ModelCapabilityBadges
+                              capabilities={currentModelItem.metadata.capabilities}
+                              compact
+                            />
                             {currentModelItem.compatibilityIssue ? (
                               <span className="truncate text-[11px] text-amber-700">
                                 {currentModelItem.compatibilityIssue.message}
@@ -483,7 +489,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
           {onManageProviders && (
             <button
               type="button"
-              className="flex h-11 w-full items-center justify-between border-t border-slate-200/80 px-4 text-sm text-slate-600 transition-colors hover:bg-slate-50/90 hover:text-slate-900"
+              className="flex h-11 w-full items-center justify-between border-t border-slate-200/80 px-4 text-sm text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900"
               onClick={() => {
                 setOpen(false);
                 onManageProviders();

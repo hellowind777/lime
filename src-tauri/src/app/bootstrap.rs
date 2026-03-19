@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::agent::AsterAgentState;
+use crate::agent::{initialize_aster_runtime, AsterAgentState};
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::commands::connect_cmd::ConnectStateWrapper;
 use crate::commands::context_memory::ContextMemoryServiceState;
@@ -19,7 +19,6 @@ use crate::commands::resilience_cmd::ResilienceConfigState;
 use crate::commands::session_files_cmd::SessionFilesState;
 use crate::commands::skill_cmd::SkillServiceState;
 use crate::commands::terminal_cmd::TerminalManagerState;
-use crate::commands::tool_hooks::ToolHooksServiceState;
 use crate::commands::webview_cmd::{
     ChromeProfileManagerWrapper, WebviewManagerState, WebviewManagerWrapper,
 };
@@ -36,12 +35,10 @@ use lime_core::config::{Config, ConfigManager};
 use lime_scheduler::AgentScheduler;
 use lime_server as server;
 use lime_services::api_key_provider_service::ApiKeyProviderService;
-use lime_services::aster_session_store::LimeSessionStore;
 use lime_services::context_memory_service::{ContextMemoryConfig, ContextMemoryService};
 use lime_services::provider_pool_service::ProviderPoolService;
 use lime_services::skill_service::SkillService;
 use lime_services::token_cache_service::TokenCacheService;
-use lime_services::tool_hooks_service::ToolHooksService;
 use lime_services::update_check_service::UpdateCheckServiceState;
 
 use super::types::{AppState, LogState, TokenCacheServiceState};
@@ -75,7 +72,6 @@ pub struct AppStates {
     pub update_check_service: UpdateCheckServiceState,
     pub session_files: SessionFilesState,
     pub context_memory_service: ContextMemoryServiceState,
-    pub tool_hooks_service: ToolHooksServiceState,
     pub recording_service: RecordingServiceState,
     pub mcp_manager: McpManagerState,
     pub automation_service: AutomationServiceState,
@@ -131,6 +127,8 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         }
     }
 
+    initialize_aster_runtime(db.clone()).map_err(|e| format!("Aster 运行时初始化失败: {e}"))?;
+
     // 服务状态
     let skill_service = SkillService::new().map_err(|e| format!("SkillService 初始化失败: {e}"))?;
     let skill_service_state = SkillServiceState(Arc::new(skill_service));
@@ -181,44 +179,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
     let (telemetry_state, shared_stats, shared_tokens, shared_logger) = init_telemetry(config)?;
 
     // 其他状态
-    // 设置 Aster 全局 session store（使用 Lime 数据库）
-    let session_store = Arc::new(LimeSessionStore::new(db.clone()));
-
-    // 使用 tokio runtime 来设置全局 store
-    // 使用 Builder 模式以获得更好的跨平台兼容性
-    let rt = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
-        // Windows: IOCP, macOS: kqueue, Linux: epoll/io-uring
-        #[cfg(target_os = "windows")]
-        tracing::info!("[Bootstrap] Windows 平台 - 创建 Tokio Runtime (IOCP)");
-
-        #[cfg(target_os = "macos")]
-        tracing::info!("[Bootstrap] macOS 平台 - 创建 Tokio Runtime (kqueue)");
-
-        #[cfg(target_os = "linux")]
-        tracing::info!("[Bootstrap] Linux 平台 - 创建 Tokio Runtime (epoll)");
-
-        // 使用 Builder 模式获得更多控制，提高 Windows 兼容性
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2) // 限制线程数，避免 Windows 资源问题
-            .thread_name("lime-runtime")
-            .enable_io()
-            .enable_time()
-            .build()
-            .expect("Failed to create tokio runtime: 系统资源不足或配置错误")
-            .handle()
-            .clone()
-    });
-    rt.block_on(async {
-        if let Err(e) = aster::session::set_global_session_store(session_store).await {
-            tracing::warn!(
-                "[Bootstrap] 设置全局 session store 失败（可能已设置）: {}",
-                e
-            );
-        } else {
-            tracing::info!("[Bootstrap] 已设置 Aster 全局 session store");
-        }
-    });
-
     let aster_agent_state = AsterAgentState::new();
     let orchestrator_state = OrchestratorState::new();
 
@@ -282,13 +242,7 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
     let context_memory_config = build_context_memory_config(config);
     let context_memory_service = ContextMemoryService::new(context_memory_config)
         .map_err(|e| format!("ContextMemoryService 初始化失败: {e}"))?;
-    let context_memory_service_arc = Arc::new(context_memory_service);
-    let context_memory_service_state =
-        ContextMemoryServiceState(context_memory_service_arc.clone());
-
-    // 初始化工具钩子服务
-    let tool_hooks_service = ToolHooksService::new(context_memory_service_arc.clone());
-    let tool_hooks_service_state = ToolHooksServiceState(Arc::new(tool_hooks_service));
+    let context_memory_service_state = ContextMemoryServiceState(Arc::new(context_memory_service));
 
     // 录音服务（使用独立线程 + channel 通信解决 cpal::Stream 不是 Send 的问题）
     let recording_service_state = create_recording_service_state();
@@ -339,7 +293,6 @@ pub fn init_states(config: &Config) -> Result<AppStates, String> {
         update_check_service: update_check_service_state,
         session_files: session_files_state,
         context_memory_service: context_memory_service_state,
-        tool_hooks_service: tool_hooks_service_state,
         recording_service: recording_service_state,
         mcp_manager: mcp_manager_state,
         automation_service: automation_service_state,

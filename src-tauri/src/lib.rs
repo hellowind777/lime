@@ -16,6 +16,9 @@
 // 该警告来自 cocoa/objc 依赖的 msg_send! 宏，是已知的 issue
 #![allow(unexpected_cfgs)]
 
+#[cfg(target_os = "linux")]
+compile_error!("Lime 已暂停 Linux 桌面端支持，请使用 macOS 或 Windows 构建。");
+
 // 从 providers crate 重新导出（保持 crate::xxx 路径兼容）
 pub use lime_providers::providers;
 
@@ -56,6 +59,7 @@ mod dev_bridge;
 mod logger;
 mod profiling;
 mod theme;
+mod workspace_support;
 use lime_core::models;
 
 // 测试模块

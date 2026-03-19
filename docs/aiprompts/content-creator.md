@@ -11,7 +11,7 @@
      ↓
 用户发送消息 → useAgentChatUnified.sendMessage()
      ↓
-统一收口到 useAsterAgentChat / agent_runtime_*
+统一收口到 useAgentChatUnified / useAsterAgentChat / agent_runtime_*
      ↓
 第一条消息时注入 systemPrompt → 发送到 Aster Agent
      ↓
@@ -40,7 +40,7 @@ src/components/
 │       └── parser.ts            # A2UI 和 write_file 解析器
 ├── agent/chat/
 │   ├── hooks/
-│   │   ├── index.ts             # useAgentChatUnified 统一入口
+│   │   ├── index.ts             # Agent chat hooks 导出入口
 │   │   └── useAsterAgentChat.ts # Agent 聊天主 Hook
 │   ├── components/
 │   │   ├── StreamingRenderer.tsx # 流式渲染（解析 write_file）
@@ -119,7 +119,7 @@ export function parseAIResponse(
 - `write_file` - 完整的文件写入
 - `pending_write_file` - 流式传输中的文件写入
 
-### 3. useAgentChatUnified / useAsterAgentChat - systemPrompt 注入
+### 3. useAsterAgentChat - systemPrompt 注入
 
 在发送第一条消息时注入 systemPrompt，并通过现役 runtime adapter 提交到 `agent_runtime_*`。
 

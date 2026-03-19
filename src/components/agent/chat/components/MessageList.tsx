@@ -75,6 +75,8 @@ interface MessageListProps {
   onPermissionResponse?: (response: ConfirmResponse) => void;
   /** 是否折叠代码块（当画布打开时） */
   collapseCodeBlocks?: boolean;
+  /** 按代码块决定是否折叠 */
+  shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
   /** 代码块点击回调（用于在画布中显示） */
   onCodeBlockClick?: (language: string, code: string) => void;
   /** 是否将待处理问答提升为输入区 A2UI 表单 */
@@ -98,6 +100,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
   onArtifactClick,
   onPermissionResponse,
   collapseCodeBlocks,
+  shouldCollapseCodeBlock,
   onCodeBlockClick,
   promoteActionRequestsToA2UI = false,
 }) => {
@@ -259,7 +262,9 @@ const MessageListInner: React.FC<MessageListProps> = ({
         <ContentColumn>
           {showIdentity ? (
             <MessageHeader>
-              <SenderName>{msg.role === "user" ? "用户" : assistantLabel}</SenderName>
+              <SenderName>
+                {msg.role === "user" ? "用户" : assistantLabel}
+              </SenderName>
               <TimeStamp>{formatTime(msg.timestamp)}</TimeStamp>
             </MessageHeader>
           ) : (
@@ -321,8 +326,10 @@ const MessageListInner: React.FC<MessageListProps> = ({
                 onFileClick={onFileClick}
                 onPermissionResponse={onPermissionResponse}
                 collapseCodeBlocks={collapseCodeBlocks}
+                shouldCollapseCodeBlock={shouldCollapseCodeBlock}
                 onCodeBlockClick={onCodeBlockClick}
                 promoteActionRequestsToA2UI={promoteActionRequestsToA2UI}
+                renderProposedPlanBlocks={!timeline}
               />
             ) : (
               <MarkdownRenderer
@@ -468,9 +475,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
                   {filePath}
                 </div>
                 <div className="mt-1 flex items-center gap-2">
-                  <span
-                    className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
-                  >
+                  <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
                     {statusLabel}
                   </span>
                   {previewText ? (

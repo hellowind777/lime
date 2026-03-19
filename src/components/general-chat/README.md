@@ -9,7 +9,7 @@
 
 > 治理说明：`general-chat` 当前只剩桥接层与画布层；
 > 新代码不应继续在这里新增聊天状态、页面入口、Hook 或 Store。
-> 新逻辑优先走统一对话链路（如 `@/hooks/useUnifiedChat`）或现有工作台/路由接入。
+> 新逻辑优先走现役 Agent 工作台链路（如 `src/components/agent/chat/hooks/index.ts` 暴露的 `useAgentChatUnified`）或现有工作台/路由接入。
 > 如必须跨模块复用 `general-chat` 的少量能力，请优先走 `bridge.ts`，不要直接深导入内部目录。
 
 ### 技术栈

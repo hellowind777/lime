@@ -21,6 +21,19 @@ fn should_minimize_to_tray(window_label: &str, minimize_to_tray: bool) -> bool {
     minimize_to_tray && window_label == MAIN_WINDOW_LABEL
 }
 
+fn reveal_main_window(window: &tauri::WebviewWindow) {
+    let run_action = |action: &str, operation: &dyn Fn() -> tauri::Result<()>| {
+        if let Err(error) = operation() {
+            tracing::warn!("[启动] 主窗口{}失败: {}", action, error);
+        }
+    };
+
+    run_action("取消最小化", &|| window.unminimize());
+    run_action("最大化", &|| window.maximize());
+    run_action("显示", &|| window.show());
+    run_action("聚焦", &|| window.set_focus());
+}
+
 /// 运行 Tauri 应用
 ///
 /// 这是应用的主入口点，负责：
@@ -87,7 +100,6 @@ pub fn run() {
         update_check_service: update_check_service_state,
         session_files: session_files_state,
         context_memory_service,
-        tool_hooks_service,
         recording_service,
         mcp_manager: mcp_manager_state,
         automation_service: automation_service_state,
@@ -144,10 +156,7 @@ pub fn run() {
 
             // 将窗口带到前台
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.maximize();
-                let _ = window.show();
-                let _ = window.set_focus();
+                reveal_main_window(&window);
             }
         }));
 
@@ -177,7 +186,6 @@ pub fn run() {
         .manage(update_check_service_state)
         .manage(session_files_state)
         .manage(context_memory_service)
-        .manage(tool_hooks_service)
         .manage(recording_service)
         .manage(mcp_manager_state)
         .manage(automation_service_state)
@@ -216,20 +224,17 @@ pub fn run() {
             }
         })
         .setup(move |app| {
-            // 启动时先最大化再显示，避免用户看到“先小窗后展开”的过程
+            // 启动时先最大化再显示，避免用户看到“先小窗后展开”的过程。
             if let Some(main_window) = app.get_webview_window("main") {
-                if let Err(e) = main_window.maximize() {
-                    tracing::warn!("[启动] 主窗口最大化失败: {}", e);
-                }
-                if let Err(e) = main_window.show() {
-                    tracing::warn!("[启动] 主窗口显示失败: {}", e);
-                }
+                reveal_main_window(&main_window);
 
                 #[cfg(debug_assertions)]
                 if crate::profiling::should_open_webview_devtools() {
                     main_window.open_devtools();
                     tracing::info!("[Profiling] 已自动打开主窗口 WebView DevTools");
                 }
+            } else {
+                tracing::warn!("[启动] 未找到主窗口，无法执行启动展示流程");
             }
 
             #[cfg(target_os = "windows")]
@@ -360,26 +365,30 @@ pub fn run() {
                 automation_state,
             )) = startup_runtime_resume
             {
-                match crate::commands::aster_agent_cmd::resume_persisted_runtime_queues_on_startup(
-                    app_handle,
-                    &state,
-                    &db,
-                    &api_key_provider_service,
-                    &logs,
-                    &config_manager,
-                    &mcp_manager,
-                    &automation_state,
-                ) {
-                    Ok(resumed) if resumed > 0 => {
-                        tracing::info!("[启动] 已恢复 {} 个会话的排队执行", resumed);
+                tauri::async_runtime::spawn(async move {
+                    match crate::commands::aster_agent_cmd::resume_persisted_runtime_queues_on_startup(
+                        app_handle,
+                        &state,
+                        &db,
+                        &api_key_provider_service,
+                        &logs,
+                        &config_manager,
+                        &mcp_manager,
+                        &automation_state,
+                    )
+                    .await
+                    {
+                        Ok(resumed) if resumed > 0 => {
+                            tracing::info!("[启动] 已恢复 {} 个会话的排队执行", resumed);
+                        }
+                        Ok(_) => {
+                            tracing::debug!("[启动] 无需恢复持久化排队执行");
+                        }
+                        Err(error) => {
+                            tracing::warn!("[启动] 恢复持久化排队执行失败: {}", error);
+                        }
                     }
-                    Ok(_) => {
-                        tracing::debug!("[启动] 无需恢复持久化排队执行");
-                    }
-                    Err(error) => {
-                        tracing::warn!("[启动] 恢复持久化排队执行失败: {}", error);
-                    }
-                }
+                });
             }
 
             #[cfg(debug_assertions)]
@@ -1585,16 +1594,6 @@ pub fn run() {
             commands::document_import_cmd::import_document,
             commands::document_import_cmd::import_document_to_session,
             commands::document_import_cmd::save_exported_document,
-            // Unified Chat commands（统一对话 API，后续治理收口入口）
-            commands::unified_chat_cmd::chat_create_session,
-            commands::unified_chat_cmd::chat_list_sessions,
-            commands::unified_chat_cmd::chat_get_session,
-            commands::unified_chat_cmd::chat_delete_session,
-            commands::unified_chat_cmd::chat_rename_session,
-            commands::unified_chat_cmd::chat_get_messages,
-            commands::unified_chat_cmd::chat_send_message,
-            commands::unified_chat_cmd::chat_stop_generation,
-            commands::unified_chat_cmd::chat_configure_provider,
             // Workspace commands
             commands::workspace_cmd::workspace_create,
             commands::workspace_cmd::workspace_list,
@@ -1716,15 +1715,6 @@ pub fn run() {
             commands::memory_cmd::outline_node_update,
             commands::memory_cmd::outline_node_delete,
             commands::memory_cmd::project_memory_get,
-            // Context Memory commands
-            commands::context_memory::save_memory_entry,
-            commands::context_memory::get_session_memories,
-            commands::context_memory::get_memory_context,
-            commands::context_memory::record_error,
-            commands::context_memory::should_avoid_operation,
-            commands::context_memory::mark_error_resolved,
-            commands::context_memory::get_memory_stats,
-            commands::context_memory::cleanup_expired_memories,
             // Usage Stats commands
             commands::usage_stats_cmd::get_usage_stats,
             commands::usage_stats_cmd::get_model_usage_ranking,
@@ -1757,14 +1747,6 @@ pub fn run() {
             // File Upload commands
             commands::file_upload_cmd::upload_avatar,
             commands::file_upload_cmd::delete_avatar,
-            // Tool Hooks commands
-            commands::tool_hooks::execute_hooks,
-            commands::tool_hooks::add_hook_rule,
-            commands::tool_hooks::remove_hook_rule,
-            commands::tool_hooks::toggle_hook_rule,
-            commands::tool_hooks::get_hook_rules,
-            commands::tool_hooks::get_hook_execution_stats,
-            commands::tool_hooks::clear_hook_execution_stats,
             // ASR commands
             commands::asr_cmd::get_asr_credentials,
             commands::asr_cmd::add_asr_credential,

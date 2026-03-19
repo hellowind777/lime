@@ -46,8 +46,16 @@ const Container = styled.div<{ $isExiting: boolean }>`
   justify-content: center;
   overflow: hidden;
   background:
-    radial-gradient(circle at 20% 18%, rgba(132, 204, 22, 0.18), transparent 30%),
-    radial-gradient(circle at 78% 12%, rgba(250, 204, 21, 0.14), transparent 28%),
+    radial-gradient(
+      circle at 20% 18%,
+      rgba(132, 204, 22, 0.18),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 78% 12%,
+      rgba(250, 204, 21, 0.14),
+      transparent 28%
+    ),
     radial-gradient(circle at 50% 84%, rgba(34, 197, 94, 0.1), transparent 28%),
     linear-gradient(
       180deg,
@@ -108,8 +116,12 @@ const LogoGlow = styled.div`
   position: absolute;
   inset: 12% 12% 16%;
   border-radius: 999px;
-  background:
-    radial-gradient(circle, rgba(163, 230, 53, 0.34) 0%, rgba(163, 230, 53, 0.12) 44%, transparent 72%);
+  background: radial-gradient(
+    circle,
+    rgba(163, 230, 53, 0.34) 0%,
+    rgba(163, 230, 53, 0.12) 44%,
+    transparent 72%
+  );
   filter: blur(24px);
   animation: ${glowPulse} 2.8s ease-in-out infinite;
 `;
@@ -170,12 +182,11 @@ const ProgressTrack = styled.div`
   width: min(320px, 72vw);
   height: 8px;
   border-radius: 999px;
-  background:
-    linear-gradient(
-      90deg,
-      hsl(var(--muted) / 0.82) 0%,
-      hsl(var(--muted) / 0.96) 100%
-    );
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted) / 0.82) 0%,
+    hsl(var(--muted) / 0.96) 100%
+  );
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.32),
     0 12px 28px rgba(15, 23, 42, 0.08);
@@ -186,12 +197,11 @@ const ProgressBar = styled.div`
   inset: 0 auto 0 0;
   width: 44%;
   border-radius: inherit;
-  background:
-    linear-gradient(
-      90deg,
-      rgba(132, 204, 22, 0.96) 0%,
-      rgba(250, 204, 21, 0.9) 100%
-    );
+  background: linear-gradient(
+    90deg,
+    rgba(132, 204, 22, 0.96) 0%,
+    rgba(250, 204, 21, 0.9) 100%
+  );
   box-shadow: 0 0 24px rgba(163, 230, 53, 0.35);
   animation: ${progressShift} 1.6s ease-in-out infinite;
 `;
@@ -199,11 +209,13 @@ const ProgressBar = styled.div`
 interface SplashScreenProps {
   onComplete: () => void;
   duration?: number;
+  exitDuration?: number;
 }
 
 export function SplashScreen({
   onComplete,
-  duration = 1500,
+  duration = 220,
+  exitDuration = 180,
 }: SplashScreenProps) {
   const [isExiting, setIsExiting] = useState(false);
 
@@ -214,13 +226,13 @@ export function SplashScreen({
 
     const completeTimer = setTimeout(() => {
       onComplete();
-    }, duration + 500);
+    }, duration + exitDuration);
 
     return () => {
       clearTimeout(exitTimer);
       clearTimeout(completeTimer);
     };
-  }, [duration, onComplete]);
+  }, [duration, exitDuration, onComplete]);
 
   return (
     <Container $isExiting={isExiting}>

@@ -237,6 +237,8 @@ interface MarkdownRendererProps {
   renderA2UIInline?: boolean;
   /** 是否折叠代码块（当画布打开时） */
   collapseCodeBlocks?: boolean;
+  /** 按代码块决定是否折叠 */
+  shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
   /** 代码块点击回调（用于在画布中显示） */
   onCodeBlockClick?: (language: string, code: string) => void;
   /** 是否正在流式生成 */
@@ -249,6 +251,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
     onA2UISubmit,
     renderA2UIInline = true,
     collapseCodeBlocks = false,
+    shouldCollapseCodeBlock,
     onCodeBlockClick,
     isStreaming = false,
   }) => {
@@ -436,7 +439,13 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = memo(
                 }
 
                 // 如果启用了代码块折叠，显示占位符卡片
-                if (collapseCodeBlocks) {
+                const shouldRenderArtifactPlaceholder =
+                  collapseCodeBlocks &&
+                  (shouldCollapseCodeBlock
+                    ? shouldCollapseCodeBlock(language, codeContent)
+                    : true);
+
+                if (shouldRenderArtifactPlaceholder) {
                   const lineCount = codeContent.split("\n").length;
                   return (
                     <ArtifactPlaceholder

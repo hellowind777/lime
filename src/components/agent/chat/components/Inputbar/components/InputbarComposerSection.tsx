@@ -9,6 +9,7 @@ import { InputbarCore } from "./InputbarCore";
 import { SkillSelector } from "./SkillSelector";
 import { ThemeWorkbenchStatusPanel } from "./ThemeWorkbenchStatusPanel";
 import { InputbarModelExtra } from "./InputbarModelExtra";
+import { InputbarVisionCapabilityNotice } from "./InputbarVisionCapabilityNotice";
 import { InputbarExecutionStrategySelect } from "./InputbarExecutionStrategySelect";
 import { isGeneralResearchTheme } from "../../../utils/generalAgentPrompt";
 import type {
@@ -94,6 +95,9 @@ export const InputbarComposerSection: React.FC<
 }) => {
   const showSkillSelector =
     !isThemeWorkbenchVariant && isGeneralResearchTheme(activeTheme);
+  const currentPendingImages =
+    (inputAdapter.state.attachments as MessageImage[] | undefined) ||
+    pendingImages;
 
   if (renderThemeWorkbenchGeneratingPanel) {
     return (
@@ -141,8 +145,7 @@ export const InputbarComposerSection: React.FC<
         executionStrategy={executionStrategy}
         showExecutionStrategy={false}
         pendingImages={
-          (inputAdapter.state.attachments as MessageImage[] | undefined) ||
-          pendingImages
+          currentPendingImages
         }
         onRemoveImage={onRemoveImage}
         onPaste={onPaste}
@@ -159,7 +162,16 @@ export const InputbarComposerSection: React.FC<
         showTranslate={!isThemeWorkbenchVariant}
         showDragHandle={!isThemeWorkbenchVariant}
         visualVariant={isThemeWorkbenchVariant ? "floating" : "default"}
-        topExtra={topExtra}
+        topExtra={
+          <>
+            {topExtra}
+            <InputbarVisionCapabilityNotice
+              providerType={inputAdapter.model?.providerType}
+              model={inputAdapter.model?.model}
+              hasPendingImages={currentPendingImages.length > 0}
+            />
+          </>
+        }
         activeTheme={activeTheme}
         queuedTurns={queuedTurns}
         onRemoveQueuedTurn={onRemoveQueuedTurn}

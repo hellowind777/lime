@@ -293,12 +293,12 @@ export const TerminalAIModeSelector: React.FC<TerminalAIModeSelectorProps> = ({
         </button>
       </PopoverTrigger>
       <PopoverContent
-        className="w-[380px] p-0 bg-zinc-900/95 backdrop-blur-sm border-zinc-700"
+        className="w-[380px] border-zinc-700 bg-zinc-900 p-0"
         align="start"
       >
         <div className="flex h-[280px]">
           {/* 左侧：Provider 列表 */}
-          <div className="w-[130px] border-r border-zinc-700 bg-zinc-800/30 p-2 overflow-y-auto">
+          <div className="w-[130px] overflow-y-auto border-r border-zinc-700 bg-zinc-800 p-2">
             <div className="text-xs font-semibold text-zinc-400 px-2 py-1 mb-1">
               Providers
             </div>

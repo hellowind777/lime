@@ -94,6 +94,12 @@ export interface AsterSessionInfo {
   working_dir?: string;
 }
 
+export interface AsterTodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  active_form?: string;
+}
+
 /**
  * TauriMessageContent（匹配后端 TauriMessageContent 枚举）
  */
@@ -135,6 +141,7 @@ export interface AsterSessionDetail {
   turns?: AgentThreadTurn[];
   items?: AgentThreadItem[];
   queued_turns?: QueuedTurnSnapshot[];
+  todo_items?: AsterTodoItem[];
 }
 
 export interface AgentTurnConfigSnapshot {

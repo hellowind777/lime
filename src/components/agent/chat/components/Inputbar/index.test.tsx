@@ -276,8 +276,9 @@ describe("Inputbar", () => {
     ) as HTMLButtonElement | null;
     expect(sendButton).toBeTruthy();
 
-    act(() => {
+    await act(async () => {
       sendButton?.click();
+      await Promise.resolve();
     });
 
     expect(onSend).toHaveBeenCalledWith(
@@ -307,8 +308,9 @@ describe("Inputbar", () => {
     ) as HTMLButtonElement | null;
     expect(sendButton).toBeTruthy();
 
-    act(() => {
+    await act(async () => {
       sendButton?.click();
+      await Promise.resolve();
     });
 
     expect(onSend).toHaveBeenCalledWith(

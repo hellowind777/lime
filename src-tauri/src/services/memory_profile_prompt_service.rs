@@ -1,7 +1,7 @@
-//! 记忆画像提示词服务
+//! 记忆提示词装配服务
 //!
-//! 将设置页中的记忆画像（学习状态、擅长领域、解释偏好、难题偏好）
-//! 转换为可注入到系统提示词中的统一指令片段。
+//! 将设置页中的记忆画像与配置化记忆来源统一装配为可注入到 system prompt
+//! 的单一记忆指令片段，避免调用方继续各自决定拼装顺序。
 
 use lime_core::config::Config;
 use std::path::Path;
@@ -10,6 +10,26 @@ use crate::services::memory_source_resolver_service::build_memory_sources_prompt
 
 const MEMORY_PROFILE_PROMPT_MARKER: &str = "【用户记忆画像偏好】";
 const MEMORY_SOURCE_PROMPT_MARKER: &str = "【记忆来源补充指令】";
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MemoryPromptContext<'a> {
+    pub working_dir: Option<&'a Path>,
+    pub active_relative_path: Option<&'a str>,
+}
+
+impl<'a> MemoryPromptContext<'a> {
+    pub fn with_working_dir(working_dir: &'a Path) -> Self {
+        Self {
+            working_dir: Some(working_dir),
+            active_relative_path: None,
+        }
+    }
+
+    pub fn with_active_relative_path(mut self, active_relative_path: Option<&'a str>) -> Self {
+        self.active_relative_path = active_relative_path;
+        self
+    }
+}
 
 fn normalize_text(input: &str) -> Option<String> {
     let trimmed = input.trim();
@@ -32,7 +52,7 @@ fn normalize_list(items: &[String]) -> Vec<String> {
 /// 仅在以下条件满足时返回：
 /// - 记忆功能已启用
 /// - 至少有一项画像字段有值
-pub fn build_memory_profile_prompt(config: &Config) -> Option<String> {
+fn build_memory_profile_prompt(config: &Config) -> Option<String> {
     let memory = &config.memory;
     if !memory.enabled {
         return None;
@@ -83,59 +103,73 @@ pub fn build_memory_profile_prompt(config: &Config) -> Option<String> {
     Some(lines.join("\n"))
 }
 
-/// 合并基础系统提示词与记忆画像提示词
-///
-/// - 已包含画像标记时不会重复追加
-/// - 任一方为空时返回另一方
-pub fn merge_system_prompt_with_memory_profile(
-    base_prompt: Option<String>,
+fn build_memory_sources_prompt_for_context(
     config: &Config,
+    context: MemoryPromptContext<'_>,
 ) -> Option<String> {
-    let memory_prompt = build_memory_profile_prompt(config);
+    let working_dir = context.working_dir?;
+    if !config.memory.enabled {
+        return None;
+    }
 
-    match (base_prompt, memory_prompt) {
-        (Some(base), Some(memory)) => {
-            if base.contains(MEMORY_PROFILE_PROMPT_MARKER) {
+    build_memory_sources_prompt(config, working_dir, context.active_relative_path, 4000)
+}
+
+fn merge_prompt_section(
+    base_prompt: Option<String>,
+    section_prompt: Option<String>,
+    marker: &str,
+) -> Option<String> {
+    match (base_prompt, section_prompt) {
+        (Some(base), Some(section)) => {
+            if base.contains(marker) {
                 Some(base)
             } else if base.trim().is_empty() {
-                Some(memory)
+                Some(section)
             } else {
-                Some(format!("{base}\n\n{memory}"))
+                Some(format!("{base}\n\n{section}"))
             }
         }
         (Some(base), None) => Some(base),
-        (None, Some(memory)) => Some(memory),
+        (None, Some(section)) => Some(section),
         (None, None) => None,
     }
 }
 
-pub fn merge_system_prompt_with_memory_sources(
+pub fn build_memory_prompt(config: &Config, context: MemoryPromptContext<'_>) -> Option<String> {
+    let with_profile = merge_prompt_section(
+        None,
+        build_memory_profile_prompt(config),
+        MEMORY_PROFILE_PROMPT_MARKER,
+    );
+
+    merge_prompt_section(
+        with_profile,
+        build_memory_sources_prompt_for_context(config, context),
+        MEMORY_SOURCE_PROMPT_MARKER,
+    )
+}
+
+/// 合并基础系统提示词与统一记忆提示词。
+///
+/// - 画像与来源统一在同一边界内拼装
+/// - 已包含对应 marker 时不会重复追加
+pub fn merge_system_prompt_with_memory_context(
     base_prompt: Option<String>,
     config: &Config,
-    working_dir: &Path,
-    active_relative_path: Option<&str>,
+    context: MemoryPromptContext<'_>,
 ) -> Option<String> {
-    if !config.memory.enabled {
-        return base_prompt;
-    }
+    let with_profile = merge_prompt_section(
+        base_prompt,
+        build_memory_profile_prompt(config),
+        MEMORY_PROFILE_PROMPT_MARKER,
+    );
 
-    let memory_sources_prompt =
-        build_memory_sources_prompt(config, working_dir, active_relative_path, 4000);
-
-    match (base_prompt, memory_sources_prompt) {
-        (Some(base), Some(source_prompt)) => {
-            if base.contains(MEMORY_SOURCE_PROMPT_MARKER) {
-                Some(base)
-            } else if base.trim().is_empty() {
-                Some(source_prompt)
-            } else {
-                Some(format!("{base}\n\n{source_prompt}"))
-            }
-        }
-        (Some(base), None) => Some(base),
-        (None, Some(source_prompt)) => Some(source_prompt),
-        (None, None) => None,
-    }
+    merge_prompt_section(
+        with_profile,
+        build_memory_sources_prompt_for_context(config, context),
+        MEMORY_SOURCE_PROMPT_MARKER,
+    )
 }
 
 #[cfg(test)]
@@ -192,7 +226,11 @@ mod tests {
         config.memory.profile = Some(profile);
 
         let base = Some("前置内容\n\n【用户记忆画像偏好】\n已有内容".to_string());
-        let merged = merge_system_prompt_with_memory_profile(base.clone(), &config);
+        let merged = merge_system_prompt_with_memory_context(
+            base.clone(),
+            &config,
+            MemoryPromptContext::default(),
+        );
         assert_eq!(merged, base);
     }
 
@@ -210,10 +248,40 @@ mod tests {
         config.memory.sources.project_memory_paths = vec!["AGENTS.md".to_string()];
         config.memory.sources.project_rule_dirs = Vec::new();
 
-        let merged = merge_system_prompt_with_memory_sources(None, &config, tmp.path(), None)
-            .expect("should build sources prompt");
+        let merged = merge_system_prompt_with_memory_context(
+            None,
+            &config,
+            MemoryPromptContext::with_working_dir(tmp.path()),
+        )
+        .expect("should build sources prompt");
 
         assert!(merged.contains("【记忆来源补充指令】"));
         assert!(merged.contains("偏好简洁输出"));
+    }
+
+    #[test]
+    fn should_build_combined_memory_prompt() {
+        let tmp = TempDir::new().expect("create temp dir");
+        fs::write(tmp.path().join("AGENTS.md"), "# 项目记忆\n- 保持简洁")
+            .expect("write memory file");
+
+        let mut config = Config::default();
+        config.memory.enabled = true;
+        let mut profile = config.memory.profile.clone().unwrap_or_default();
+        profile.current_status = Some("高级开发者".to_string());
+        config.memory.profile = Some(profile);
+        config.memory.sources.project_memory_paths = vec!["AGENTS.md".to_string()];
+        config.memory.sources.project_rule_dirs = Vec::new();
+        config.memory.sources.managed_policy_path = Some("missing-managed.md".to_string());
+        config.memory.sources.user_memory_path = Some("missing-user.md".to_string());
+
+        let prompt =
+            build_memory_prompt(&config, MemoryPromptContext::with_working_dir(tmp.path()))
+                .expect("should build combined prompt");
+
+        assert!(prompt.contains("【用户记忆画像偏好】"));
+        assert!(prompt.contains("高级开发者"));
+        assert!(prompt.contains("【记忆来源补充指令】"));
+        assert!(prompt.contains("保持简洁"));
     }
 }

@@ -38,6 +38,12 @@ interface MountedHarness {
   root: Root;
 }
 
+interface RenderOptions {
+  isStreaming?: boolean;
+  collapseCodeBlocks?: boolean;
+  shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
+}
+
 const mountedRoots: MountedHarness[] = [];
 
 beforeEach(() => {
@@ -61,14 +67,26 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function render(content: string, isStreaming = false): HTMLDivElement {
+function render(
+  content: string,
+  {
+    isStreaming = false,
+    collapseCodeBlocks = false,
+    shouldCollapseCodeBlock,
+  }: RenderOptions = {},
+): HTMLDivElement {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
 
   act(() => {
     root.render(
-      <MarkdownRenderer content={content} isStreaming={isStreaming} />,
+      <MarkdownRenderer
+        content={content}
+        isStreaming={isStreaming}
+        collapseCodeBlocks={collapseCodeBlocks}
+        shouldCollapseCodeBlock={shouldCollapseCodeBlock}
+      />,
     );
   });
 
@@ -76,23 +94,44 @@ function render(content: string, isStreaming = false): HTMLDivElement {
   return container;
 }
 
-function renderHarness(content: string, isStreaming = false) {
+function renderHarness(
+  content: string,
+  {
+    isStreaming = false,
+    collapseCodeBlocks = false,
+    shouldCollapseCodeBlock,
+  }: RenderOptions = {},
+) {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
 
-  const rerender = (nextContent: string, nextIsStreaming = isStreaming) => {
+  const rerender = (
+    nextContent: string,
+    {
+      isStreaming: nextIsStreaming = isStreaming,
+      collapseCodeBlocks: nextCollapseCodeBlocks = collapseCodeBlocks,
+      shouldCollapseCodeBlock: nextShouldCollapseCodeBlock =
+        shouldCollapseCodeBlock,
+    }: RenderOptions = {},
+  ) => {
     act(() => {
       root.render(
         <MarkdownRenderer
           content={nextContent}
           isStreaming={nextIsStreaming}
+          collapseCodeBlocks={nextCollapseCodeBlocks}
+          shouldCollapseCodeBlock={nextShouldCollapseCodeBlock}
         />,
       );
     });
   };
 
-  rerender(content, isStreaming);
+  rerender(content, {
+    isStreaming,
+    collapseCodeBlocks,
+    shouldCollapseCodeBlock,
+  });
 
   mountedRoots.push({ container, root });
   return { container, rerender };
@@ -108,7 +147,7 @@ describe("MarkdownRenderer", () => {
       "后置文本",
     ].join("\n");
 
-    const container = render(content, false);
+    const container = render(content);
 
     expect(container.querySelector(".rendered-html")).not.toBeNull();
     expect(container.textContent).toContain("原始 HTML");
@@ -123,7 +162,7 @@ describe("MarkdownRenderer", () => {
       "结尾文本",
     ].join("\n");
 
-    const container = render(content, true);
+    const container = render(content, { isStreaming: true });
 
     expect(container.querySelector(".rendered-html")).toBeNull();
     expect(container.textContent).toContain("结尾文本");
@@ -139,10 +178,52 @@ describe("MarkdownRenderer", () => {
       "结尾文本",
     ].join("\n");
 
-    const { container, rerender } = renderHarness(content, true);
+    const { container, rerender } = renderHarness(content, {
+      isStreaming: true,
+    });
     expect(container.querySelector(".rendered-html")).toBeNull();
 
-    rerender(content, false);
+    rerender(content, { isStreaming: false });
     expect(container.querySelector(".rendered-html")).not.toBeNull();
+  });
+
+  it("逐块判定返回 false 时应保持对话内联代码渲染", () => {
+    const shouldCollapseCodeBlock = vi.fn(() => false);
+    const content = ["```ts", "const answer = 42;", "```"].join("\n");
+
+    const container = render(content, {
+      collapseCodeBlocks: true,
+      shouldCollapseCodeBlock,
+    });
+
+    expect(shouldCollapseCodeBlock).toHaveBeenCalledWith(
+      "ts",
+      "const answer = 42;",
+    );
+    expect(
+      container.querySelector('[data-testid="artifact-placeholder"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="syntax-highlighter"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("const answer = 42;");
+  });
+
+  it("逐块判定返回 true 时才应渲染 artifact 占位卡", () => {
+    const content = ["```tsx", "export default function Demo() {}", "```"].join(
+      "\n",
+    );
+
+    const container = render(content, {
+      collapseCodeBlocks: true,
+      shouldCollapseCodeBlock: () => true,
+    });
+
+    expect(
+      container.querySelector('[data-testid="artifact-placeholder"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="syntax-highlighter"]'),
+    ).toBeNull();
   });
 });

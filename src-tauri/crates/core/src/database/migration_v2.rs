@@ -11,6 +11,7 @@ use rusqlite::{params, Connection};
 use uuid::Uuid;
 
 use crate::app_paths;
+use crate::workspace::WorkspaceManager;
 
 use super::migration_support::{
     is_migration_completed, mark_migration_completed, run_in_transaction,
@@ -113,18 +114,9 @@ fn get_or_create_default_project<F>(
 where
     F: Fn() -> Result<std::path::PathBuf, String>,
 {
-    // 检查是否已存在默认项目
-    let existing_id: Option<String> = conn
-        .query_row(
-            "SELECT id FROM workspaces WHERE is_default = 1",
-            [],
-            |row| row.get(0),
-        )
-        .ok();
-
-    if let Some(id) = existing_id {
-        tracing::info!("[迁移] 找到现有默认项目: {}", id);
-        return Ok(id);
+    if let Some(workspace) = WorkspaceManager::get_default_from_conn(conn)? {
+        tracing::info!("[迁移] 找到现有默认项目: {}", workspace.id);
+        return Ok(workspace.id);
     }
 
     // 创建新的默认项目
@@ -233,14 +225,7 @@ fn verify_migration(conn: &Connection) -> Result<(), String> {
         ));
     }
 
-    // 验证默认项目存在
-    let default_exists: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM workspaces WHERE is_default = 1)",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap_or(false);
+    let default_exists = WorkspaceManager::get_default_from_conn(conn)?.is_some();
 
     if !default_exists {
         return Err("迁移验证失败: 默认项目不存在".to_string());
@@ -298,12 +283,10 @@ impl MigrationResult {
 ///
 /// 如果默认项目不存在，返回 None
 pub fn get_default_project_id(conn: &Connection) -> Option<String> {
-    conn.query_row(
-        "SELECT id FROM workspaces WHERE is_default = 1",
-        [],
-        |row| row.get(0),
-    )
-    .ok()
+    WorkspaceManager::get_default_from_conn(conn)
+        .ok()
+        .flatten()
+        .map(|workspace| workspace.id)
 }
 
 /// 确保默认项目存在
@@ -320,6 +303,7 @@ pub fn ensure_default_project(conn: &Connection) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::WorkspaceManager;
     use rusqlite::Connection;
 
     /// 创建测试数据库
@@ -395,13 +379,9 @@ mod tests {
         assert!(result.stats.is_some());
 
         // 验证默认项目存在
-        let default_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM workspaces WHERE is_default = 1)",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
+        let default_exists = WorkspaceManager::get_default_from_conn(&conn)
+            .unwrap()
+            .is_some();
 
         assert!(default_exists);
     }
