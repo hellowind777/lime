@@ -60,13 +60,23 @@ export interface UseProjectsReturn {
   getOrCreateDefault: () => Promise<Project>;
 }
 
+interface UseProjectsOptions {
+  /** 是否跳过默认项目目录健康检查 */
+  skipDefaultWorkspaceReadyCheck?: boolean;
+  /** 是否自动在挂载时拉取项目列表 */
+  autoLoad?: boolean;
+}
+
 /**
  * 项目管理 Hook
  */
-export function useProjects(): UseProjectsReturn {
+export function useProjects(
+  options: UseProjectsOptions = {},
+): UseProjectsReturn {
+  const { autoLoad = true, skipDefaultWorkspaceReadyCheck = false } = options;
   const [projects, setProjects] = useState<Project[]>([]);
   const [defaultProject, setDefaultProject] = useState<Project | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<ProjectFilter>({});
 
@@ -81,7 +91,7 @@ export function useProjects(): UseProjectsReturn {
         getDefaultApiProject(),
       ]);
 
-      if (defaultProj?.id) {
+      if (!skipDefaultWorkspaceReadyCheck && defaultProj?.id) {
         const ensureResult = await ensureWorkspaceReady(defaultProj.id);
         if (ensureResult.repaired) {
           recordWorkspaceRepair({
@@ -103,7 +113,7 @@ export function useProjects(): UseProjectsReturn {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [skipDefaultWorkspaceReadyCheck]);
 
   /** 筛选后的项目列表 */
   const filteredProjects = useMemo(() => {
@@ -202,8 +212,11 @@ export function useProjects(): UseProjectsReturn {
 
   // 初始加载
   useEffect(() => {
+    if (!autoLoad) {
+      return;
+    }
     refresh();
-  }, [refresh]);
+  }, [autoLoad, refresh]);
 
   return {
     projects,

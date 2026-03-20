@@ -18,11 +18,13 @@ import { resolveActionPromptKey } from "./agentChatCoreUtils";
 import type { AgentRuntimeAdapter } from "./agentRuntimeAdapter";
 import { markThreadActionItemSubmitted } from "./agentThreadState";
 import { buildActionRequestSubmissionContext } from "../utils/actionRequestA2UI";
+import { buildActionResumeRuntimeStatus } from "../utils/agentRuntimeStatus";
 
 interface UseAgentToolsOptions {
   runtime: AgentRuntimeAdapter;
   sessionIdRef: MutableRefObject<string | null>;
   currentStreamingSessionIdRef: MutableRefObject<string | null>;
+  currentStreamingEventNameRef: MutableRefObject<string | null>;
   messages: Message[];
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setThreadItems: Dispatch<SetStateAction<AgentThreadItem[]>>;
@@ -33,6 +35,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
     runtime,
     sessionIdRef,
     currentStreamingSessionIdRef,
+    currentStreamingEventNameRef,
     messages,
     setMessages,
     setThreadItems,
@@ -107,7 +110,8 @@ export function useAgentTools(options: UseAgentToolsOptions) {
               const resolvedAction = pendingActions.find((item) => {
                 if (item.requestId === persistedAction.requestId) return false;
                 if (item.isFallback) return false;
-                if (item.actionType !== persistedAction.actionType) return false;
+                if (item.actionType !== persistedAction.actionType)
+                  return false;
                 return resolveActionPromptKey(item) === fallbackPromptKey;
               });
 
@@ -145,7 +149,8 @@ export function useAgentTools(options: UseAgentToolsOptions) {
                     ),
                     contentParts: msg.contentParts?.map((part) =>
                       part.type === "action_required" &&
-                      part.actionRequired.requestId === persistedAction.requestId
+                      part.actionRequired.requestId ===
+                        persistedAction.requestId
                         ? {
                             ...part,
                             actionRequired: {
@@ -173,6 +178,10 @@ export function useAgentTools(options: UseAgentToolsOptions) {
           const submissionContext = metadataAction
             ? buildActionRequestSubmissionContext(metadataAction, userData)
             : null;
+          const activeEventName =
+            currentStreamingSessionIdRef.current === activeSessionId
+              ? currentStreamingEventNameRef.current
+              : null;
 
           await runtime.respondToAction({
             sessionId: activeSessionId,
@@ -182,6 +191,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
             response: response.response,
             userData,
             metadata: submissionContext?.requestMetadata,
+            eventName: activeEventName || undefined,
           });
         } else {
           await runtime.respondToAction({
@@ -235,6 +245,13 @@ export function useAgentTools(options: UseAgentToolsOptions) {
                     part.type !== "action_required" ||
                     !acknowledgedRequestIds.has(part.actionRequired.requestId),
                 ),
+            runtimeStatus:
+              shouldPersistSubmittedAction &&
+              msg.actionRequests?.some((item) =>
+                acknowledgedRequestIds.has(item.requestId),
+              )
+                ? buildActionResumeRuntimeStatus()
+                : msg.runtimeStatus,
           })),
         );
         setThreadItems((prev) =>
@@ -256,6 +273,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
     },
     [
       currentStreamingSessionIdRef,
+      currentStreamingEventNameRef,
       messages,
       pendingActions,
       runtime,

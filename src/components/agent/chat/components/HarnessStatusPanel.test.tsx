@@ -1,6 +1,7 @@
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentRuntimeToolInventory } from "@/lib/api/agentRuntime";
 import { HarnessStatusPanel } from "./HarnessStatusPanel";
 import type { HarnessSessionState } from "../utils/harnessState";
 
@@ -65,12 +66,14 @@ function renderPanel(
     root.render(
       <HarnessStatusPanel
         harnessState={createHarnessState()}
-        subAgentRuntime={{
+        compatSubagentRuntime={{
           isRunning: false,
           progress: null,
           events: [],
           result: null,
           error: null,
+          recentActivity: [],
+          hasSignals: false,
         }}
         environment={{
           skillsCount: 2,
@@ -89,6 +92,176 @@ function renderPanel(
   const rendered = { container, root };
   mountedRoots.push(rendered);
   return rendered;
+}
+
+function createToolInventory(): AgentRuntimeToolInventory {
+  return {
+    request: {
+      caller: "assistant",
+      surface: {
+        creator: false,
+        browser_assist: true,
+      },
+    },
+    agent_initialized: true,
+    warnings: ["extension 搜索工具面存在延迟加载项"],
+    mcp_servers: ["lime-browser"],
+    default_allowed_tools: ["tool_search", "WebSearch"],
+    counts: {
+      catalog_total: 3,
+      catalog_current_total: 3,
+      catalog_compat_total: 0,
+      catalog_deprecated_total: 0,
+      default_allowed_total: 2,
+      registry_total: 2,
+      registry_visible_total: 1,
+      registry_catalog_unmapped_total: 0,
+      extension_surface_total: 1,
+      extension_mcp_bridge_total: 1,
+      extension_runtime_total: 0,
+      extension_tool_total: 1,
+      extension_tool_visible_total: 1,
+      mcp_server_total: 1,
+      mcp_tool_total: 1,
+      mcp_tool_visible_total: 1,
+    },
+    catalog_tools: [
+      {
+        name: "bash",
+        profiles: ["core"],
+        capabilities: ["execution"],
+        lifecycle: "current",
+        source: "aster_builtin",
+        permission_plane: "parameter_restricted",
+        workspace_default_allow: false,
+        execution_warning_policy: "shell_command_risk",
+        execution_warning_policy_source: "runtime",
+        execution_restriction_profile: "workspace_shell_command",
+        execution_restriction_profile_source: "runtime",
+        execution_sandbox_profile: "workspace_command",
+        execution_sandbox_profile_source: "runtime",
+      },
+      {
+        name: "write",
+        profiles: ["core"],
+        capabilities: ["filesystem"],
+        lifecycle: "current",
+        source: "aster_builtin",
+        permission_plane: "parameter_restricted",
+        workspace_default_allow: false,
+        execution_warning_policy: "none",
+        execution_warning_policy_source: "persisted",
+        execution_restriction_profile: "workspace_path_required",
+        execution_restriction_profile_source: "persisted",
+        execution_sandbox_profile: "none",
+        execution_sandbox_profile_source: "default",
+      },
+      {
+        name: "tool_search",
+        profiles: ["core"],
+        capabilities: ["discovery"],
+        lifecycle: "current",
+        source: "lime_injected",
+        permission_plane: "session_allowlist",
+        workspace_default_allow: true,
+        execution_warning_policy: "none",
+        execution_warning_policy_source: "default",
+        execution_restriction_profile: "none",
+        execution_restriction_profile_source: "default",
+        execution_sandbox_profile: "none",
+        execution_sandbox_profile_source: "default",
+      },
+    ],
+    registry_tools: [
+      {
+        name: "bash",
+        description: "执行工作区命令",
+        catalog_entry_name: "bash",
+        catalog_source: "aster_builtin",
+        catalog_lifecycle: "current",
+        catalog_permission_plane: "parameter_restricted",
+        catalog_workspace_default_allow: false,
+        catalog_execution_warning_policy: "shell_command_risk",
+        catalog_execution_warning_policy_source: "runtime",
+        catalog_execution_restriction_profile: "workspace_shell_command",
+        catalog_execution_restriction_profile_source: "runtime",
+        catalog_execution_sandbox_profile: "workspace_command",
+        catalog_execution_sandbox_profile_source: "runtime",
+        deferred_loading: false,
+        always_visible: false,
+        allowed_callers: ["assistant"],
+        tags: ["shell"],
+        input_examples_count: 2,
+        caller_allowed: true,
+        visible_in_context: true,
+      },
+      {
+        name: "tool_search",
+        description: "搜索工具目录",
+        catalog_entry_name: "tool_search",
+        catalog_source: "lime_injected",
+        catalog_lifecycle: "current",
+        catalog_permission_plane: "session_allowlist",
+        catalog_workspace_default_allow: true,
+        catalog_execution_warning_policy: "none",
+        catalog_execution_warning_policy_source: "default",
+        catalog_execution_restriction_profile: "none",
+        catalog_execution_restriction_profile_source: "default",
+        catalog_execution_sandbox_profile: "none",
+        catalog_execution_sandbox_profile_source: "default",
+        deferred_loading: true,
+        always_visible: true,
+        allowed_callers: [],
+        tags: ["search"],
+        input_examples_count: 1,
+        caller_allowed: false,
+        visible_in_context: false,
+      },
+    ],
+    extension_surfaces: [
+      {
+        extension_name: "lime-browser",
+        description: "浏览器桥接工具面",
+        source_kind: "mcp_bridge",
+        deferred_loading: true,
+        allowed_caller: "assistant",
+        available_tools: ["navigate", "click"],
+        always_expose_tools: ["navigate"],
+        loaded_tools: ["mcp__lime-browser__navigate"],
+        searchable_tools: [
+          "mcp__lime-browser__navigate",
+          "mcp__lime-browser__click",
+        ],
+      },
+    ],
+    extension_tools: [
+      {
+        name: "mcp__lime-browser__navigate",
+        description: "打开网页",
+        extension_name: "lime-browser",
+        source_kind: "mcp_bridge",
+        deferred_loading: false,
+        allowed_caller: "assistant",
+        status: "loaded",
+        caller_allowed: true,
+        visible_in_context: true,
+      },
+    ],
+    mcp_tools: [
+      {
+        server_name: "lime-browser",
+        name: "mcp__lime-browser__navigate",
+        description: "导航到指定页面",
+        deferred_loading: false,
+        always_visible: true,
+        allowed_callers: ["assistant"],
+        tags: ["browser", "navigation"],
+        input_examples_count: 1,
+        caller_allowed: true,
+        visible_in_context: true,
+      },
+    ],
+  };
 }
 
 beforeEach(() => {
@@ -154,8 +327,26 @@ describe("HarnessStatusPanel", () => {
     expect(document.body.textContent).not.toContain("收起详情");
     expect(panel?.className).toContain("flex");
     expect(panel?.className).toContain("h-full");
+    expect(panel?.children.length).toBe(2);
     expect(scrollArea?.className).toContain("flex-1");
     expect(scrollArea?.className).toContain("min-h-0");
+    expect(panel?.querySelector(".sticky.top-0")).toBeNull();
+  });
+
+  it("弹窗模式应让前置概览跟随滚动区，而不是固定在顶部", () => {
+    const { container } = renderPanel({
+      layout: "dialog",
+      leadContent: <div>通用 Agent 运行概览</div>,
+    });
+    const panel = container.querySelector(
+      '[data-testid="harness-status-panel"]',
+    ) as HTMLDivElement | null;
+    const scrollArea = container.querySelector(
+      '[data-testid="harness-status-panel"] > .relative.overflow-auto',
+    ) as HTMLDivElement | null;
+
+    expect(panel?.children.length).toBe(2);
+    expect(scrollArea?.textContent).toContain("通用 Agent 运行概览");
   });
 
   it("应支持自定义标题说明与前置运行概览内容", () => {
@@ -207,6 +398,70 @@ describe("HarnessStatusPanel", () => {
     expect(document.body.textContent).toContain("当前执行阶段");
     expect(document.body.textContent).toContain("正在建立执行回合");
     expect(document.body.textContent).toContain("等待首个模型事件");
+  });
+
+  it("存在真实 child session 时应优先展示 Team 会话摘要，并将旧 scheduler 降级为兼容轨迹", () => {
+    renderPanel({
+      childSubagentSessions: [
+        {
+          id: "child-1",
+          name: "研究代理",
+          created_at: 1_710_000_000,
+          updated_at: 1_710_000_200,
+          session_type: "sub_agent",
+          runtime_status: "running",
+          latest_turn_status: "running",
+          task_summary: "并行整理竞品与证据链",
+          role_hint: "explorer",
+        },
+        {
+          id: "child-2",
+          name: "实现代理",
+          created_at: 1_710_000_010,
+          updated_at: 1_710_000_220,
+          session_type: "sub_agent",
+          runtime_status: "queued",
+          latest_turn_status: "queued",
+          task_summary: "起草第一版落地方案",
+          role_hint: "executor",
+        },
+      ],
+      compatSubagentRuntime: {
+        isRunning: true,
+        progress: {
+          total: 2,
+          completed: 1,
+          failed: 0,
+          running: 1,
+          pending: 0,
+          skipped: 0,
+          cancelled: false,
+          currentTasks: ["legacy-task-1"],
+          percentage: 50,
+        },
+        events: [{ type: "started", totalTasks: 2 }],
+        result: null,
+        error: null,
+        recentActivity: [
+          {
+            id: "compat:1:started",
+            summary: "开始调度 2 个子任务",
+          },
+        ],
+        hasSignals: true,
+      },
+    });
+
+    expect(document.body.textContent).toContain("Team 运行中");
+    expect(document.body.textContent).toContain("Team 会话");
+    expect(document.body.textContent).toContain("当前 Team 会话");
+    expect(document.body.textContent).toContain("真实 Team 会话");
+    expect(document.body.textContent).toContain("兼容回退");
+    expect(document.body.textContent).toContain("Fallback");
+    expect(document.body.textContent).not.toContain("兼容调度进度");
+    expect(document.body.textContent).not.toContain("兼容调度轨迹");
+    expect(document.body.textContent).toContain("研究代理");
+    expect(document.body.textContent).toContain("实现代理");
   });
 
   it("仅有计划摘要兜底时也应在工作台显示已就绪计划状态", () => {
@@ -735,21 +990,17 @@ describe("HarnessStatusPanel", () => {
     const copyPathButton = Array.from(
       document.body.querySelectorAll("button"),
     ).find((button) => button.textContent?.includes("复制路径"));
-    const revealButton = Array.from(document.body.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("定位文件"),
-    );
+    const revealButton = Array.from(
+      document.body.querySelectorAll("button"),
+    ).find((button) => button.textContent?.includes("定位文件"));
     const openPathButton = Array.from(
       document.body.querySelectorAll("button"),
     ).find((button) => button.textContent?.includes("系统打开"));
 
     await act(async () => {
-      copyPathButton?.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      copyPathButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       revealButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-      openPathButton?.dispatchEvent(
-        new MouseEvent("click", { bubbles: true }),
-      );
+      openPathButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await Promise.resolve();
     });
 
@@ -849,5 +1100,66 @@ describe("HarnessStatusPanel", () => {
     });
 
     expect(onOpenPath).toHaveBeenCalledWith("/tmp/workspace/context/brief.md");
+  });
+
+  it("存在工具库存时应展示工具与权限区块及来源统计", () => {
+    renderPanel({
+      toolInventory: createToolInventory(),
+    });
+
+    expect(document.body.textContent).toContain("工具与权限");
+    expect(document.body.textContent).toContain("工具库存");
+    expect(document.body.textContent).toContain("运行时覆盖");
+    expect(document.body.textContent).toContain("持久化覆盖");
+    expect(document.body.textContent).toContain("默认策略");
+    expect(document.body.textContent).toContain("Catalog 工具");
+  });
+
+  it("工具库存应支持按来源筛选 catalog 条目", () => {
+    renderPanel({
+      toolInventory: createToolInventory(),
+    });
+
+    const runtimeFilterButton = document.body.querySelector(
+      'button[aria-label="工具库存筛选：运行时覆盖"]',
+    ) as HTMLButtonElement | null;
+
+    act(() => {
+      runtimeFilterButton?.click();
+    });
+
+    const inventorySection = document.body.querySelector(
+      '[data-harness-section="inventory"]',
+    ) as HTMLElement | null;
+
+    expect(inventorySection?.textContent).toContain("Catalog 工具");
+    expect(inventorySection?.textContent).toContain("1 / 3");
+    expect(inventorySection?.textContent).toContain("bash");
+    expect(inventorySection?.textContent).not.toContain("write");
+  });
+
+  it("工具库存加载失败时应展示错误并支持手动刷新", () => {
+    const onRefreshToolInventory = vi.fn();
+
+    renderPanel({
+      toolInventoryLoading: true,
+      toolInventoryError: "读取失败",
+      onRefreshToolInventory,
+    });
+
+    expect(document.body.textContent).toContain(
+      "正在同步当前工具库存与权限策略",
+    );
+    expect(document.body.textContent).toContain("读取失败");
+
+    const refreshButton = document.body.querySelector(
+      'button[aria-label="刷新工具库存"]',
+    ) as HTMLButtonElement | null;
+
+    act(() => {
+      refreshButton?.click();
+    });
+
+    expect(onRefreshToolInventory).toHaveBeenCalledTimes(1);
   });
 });

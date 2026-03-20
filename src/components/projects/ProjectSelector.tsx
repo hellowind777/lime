@@ -35,7 +35,12 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useProjects } from "@/hooks/useProjects";
 import type { ProjectType } from "@/lib/api/project";
-import { USER_PROJECT_TYPES } from "@/lib/api/project";
+import {
+  getDefaultProject,
+  getProject,
+  USER_PROJECT_TYPES,
+} from "@/lib/api/project";
+import { toProjectView } from "@/lib/projectView";
 import type { Project } from "@/types/project";
 import { WorkspaceTypeLabels } from "@/types/workspace";
 import { cn } from "@/lib/utils";
@@ -71,6 +76,25 @@ export interface ProjectSelectorProps {
   density?: "default" | "compact";
   /** 外观表面 */
   chrome?: "default" | "embedded";
+  /** 是否跳过默认项目目录健康检查 */
+  skipDefaultWorkspaceReadyCheck?: boolean;
+  /** 是否延后完整项目列表加载到展开时 */
+  deferProjectListLoad?: boolean;
+}
+
+function isProjectSelectableForWorkspace(
+  project: Project | null | undefined,
+  workspaceType?: string,
+): project is Project {
+  if (!project || project.isArchived) {
+    return false;
+  }
+
+  if (!workspaceType) {
+    return true;
+  }
+
+  return project.isDefault || project.workspaceType === workspaceType;
 }
 
 function resolveDefaultProjectType(workspaceType?: string): ProjectType {
@@ -141,17 +165,23 @@ export function ProjectSelector({
   enableManagement = false,
   density = "default",
   chrome = "default",
+  skipDefaultWorkspaceReadyCheck = false,
+  deferProjectListLoad = false,
 }: ProjectSelectorProps) {
   const {
     projects,
     generalProjects,
     defaultProject,
     loading,
+    refresh,
     create,
     rename,
     remove,
     getOrCreateDefault,
-  } = useProjects();
+  } = useProjects({
+    skipDefaultWorkspaceReadyCheck,
+    autoLoad: !deferProjectListLoad,
+  });
   const [open, setOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -162,6 +192,11 @@ export function ProjectSelector({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [summaryProject, setSummaryProject] = useState<Project | null>(null);
+  const [projectListHydrating, setProjectListHydrating] = useState(false);
+  const [hasLoadedProjectList, setHasLoadedProjectList] = useState(
+    !deferProjectListLoad,
+  );
 
   const projectSource =
     workspaceType === "general" ? generalProjects : projects;
@@ -171,10 +206,20 @@ export function ProjectSelector({
     [projectSource, workspaceType],
   );
 
-  const selectedProject = useMemo(
-    () => resolveSelectedProject(availableProjects, value, defaultProject),
-    [availableProjects, defaultProject, value],
-  );
+  const selectedProject = useMemo(() => {
+    if (!deferProjectListLoad || hasLoadedProjectList) {
+      return resolveSelectedProject(availableProjects, value, defaultProject);
+    }
+
+    return summaryProject;
+  }, [
+    availableProjects,
+    defaultProject,
+    deferProjectListLoad,
+    hasLoadedProjectList,
+    summaryProject,
+    value,
+  ]);
 
   const renameTarget = useMemo(
     () =>
@@ -219,6 +264,69 @@ export function ProjectSelector({
   }, [open]);
 
   useEffect(() => {
+    if (!deferProjectListLoad) {
+      setHasLoadedProjectList(true);
+      setSummaryProject(null);
+      setProjectListHydrating(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadProjectSummary = async () => {
+      try {
+        const selectedProjectSummaryRaw = value ? await getProject(value) : null;
+        const selectedProjectSummary = selectedProjectSummaryRaw
+          ? toProjectView(selectedProjectSummaryRaw)
+          : null;
+        const resolvedSelectedProject = isProjectSelectableForWorkspace(
+          selectedProjectSummary,
+          workspaceType,
+        )
+          ? selectedProjectSummary
+          : null;
+        const fallbackDefaultProjectRaw = !resolvedSelectedProject
+          ? await getDefaultProject()
+          : null;
+        const fallbackDefaultProject = fallbackDefaultProjectRaw
+          ? toProjectView(fallbackDefaultProjectRaw)
+          : null;
+        const resolvedProject = resolvedSelectedProject
+          ? resolvedSelectedProject
+          : isProjectSelectableForWorkspace(fallbackDefaultProject, workspaceType)
+            ? fallbackDefaultProject
+            : null;
+
+        if (cancelled) {
+          return;
+        }
+
+        setSummaryProject(resolvedProject);
+        if (!value && resolvedProject?.id) {
+          onChange(resolvedProject.id);
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        console.error("加载项目摘要失败:", error);
+        setSummaryProject(null);
+      }
+    };
+
+    void loadProjectSummary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deferProjectListLoad, onChange, value, workspaceType]);
+
+  useEffect(() => {
+    if (deferProjectListLoad && !hasLoadedProjectList) {
+      return;
+    }
+
     if (loading) {
       return;
     }
@@ -258,7 +366,33 @@ export function ProjectSelector({
     return () => {
       cancelled = true;
     };
-  }, [availableProjects, defaultProject, getOrCreateDefault, loading, onChange, value]);
+  }, [
+    availableProjects,
+    defaultProject,
+    deferProjectListLoad,
+    getOrCreateDefault,
+    hasLoadedProjectList,
+    loading,
+    onChange,
+    value,
+  ]);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+
+    if (!nextOpen || !deferProjectListLoad || hasLoadedProjectList || loading) {
+      return;
+    }
+
+    setProjectListHydrating(true);
+    void refresh()
+      .then(() => {
+        setHasLoadedProjectList(true);
+      })
+      .finally(() => {
+        setProjectListHydrating(false);
+      });
+  };
 
   const handleSelect = (projectId: string) => {
     if (projectId !== value) {
@@ -378,10 +512,11 @@ export function ProjectSelector({
   const headerPaddingClass = compact ? "px-4 py-3" : "px-4 py-4";
   const bodyPaddingClass = compact ? "px-4 py-3" : "px-4 py-4";
   const managementPaddingClass = compact ? "px-4 py-3" : "px-4 py-4";
+  const displayLoading = loading || projectListHydrating;
 
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -394,7 +529,7 @@ export function ProjectSelector({
                   : "h-11 min-w-[220px] max-w-[320px] justify-between gap-3 rounded-2xl border-slate-200/80 bg-white/92 px-3 py-0 text-left shadow-sm shadow-slate-950/5 transition-[border-color,box-shadow,background-color] hover:border-slate-300/80 hover:bg-white hover:shadow-md hover:shadow-slate-950/8",
               className,
             )}
-            disabled={disabled || loading}
+            disabled={disabled || displayLoading}
             title={
               selectedProject
                 ? `${selectedProject.name}\n${selectedProject.rootPath}`
@@ -502,7 +637,11 @@ export function ProjectSelector({
             <div className={bodyPaddingClass}>
               <ScrollArea className={cn(compact ? "max-h-[280px]" : "max-h-[320px]")}>
                 <div className={cn("pr-2", compact ? "space-y-2" : "space-y-3")}>
-                  {filteredProjects.length === 0 ? (
+                  {displayLoading ? (
+                    <div className="rounded-[22px] border border-dashed border-slate-300/80 bg-white/80 px-4 py-8 text-center text-sm text-slate-500">
+                      加载中...
+                    </div>
+                  ) : filteredProjects.length === 0 ? (
                     <div className="rounded-[22px] border border-dashed border-slate-300/80 bg-white/80 px-4 py-8 text-center text-sm text-slate-500">
                       未找到匹配项目
                     </div>

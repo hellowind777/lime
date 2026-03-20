@@ -91,6 +91,7 @@ afterEach(() => {
 function renderHarness(props: {
   content: string;
   isStreaming?: boolean;
+  thinkingContent?: string;
   contentParts?: ContentPart[];
   renderA2UIInline?: boolean;
   runtimeStatus?: AgentRuntimeStatus;
@@ -269,6 +270,29 @@ describe("StreamingRenderer", () => {
     expect(container.textContent).toContain("等待首个事件");
   });
 
+  it("思考内容进入流式阶段后应自动展开", () => {
+    const { container, rerender } = renderHarness({
+      content: "",
+      thinkingContent: "第一步：分析问题",
+      isStreaming: false,
+    });
+
+    const initialDetails = container.querySelector("details");
+    expect(initialDetails).toBeTruthy();
+    expect((initialDetails as HTMLDetailsElement).open).toBe(false);
+
+    rerender({
+      content: "",
+      thinkingContent: "第一步：分析问题\n第二步：调用工具",
+      isStreaming: true,
+    });
+
+    const streamingDetails = container.querySelector("details");
+    expect(streamingDetails).toBeTruthy();
+    expect((streamingDetails as HTMLDetailsElement).open).toBe(true);
+    expect(container.textContent).toContain("第二步：调用工具");
+  });
+
   it("提升为输入区 A2UI 的待处理问答不应继续渲染内联 DecisionPanel", () => {
     const { container } = renderHarness({
       content: "",
@@ -291,7 +315,9 @@ describe("StreamingRenderer", () => {
       onPermissionResponse: vi.fn(),
     });
 
-    expect(container.querySelectorAll('[data-testid="decision-panel"]')).toHaveLength(1);
+    expect(
+      container.querySelectorAll('[data-testid="decision-panel"]'),
+    ).toHaveLength(1);
   });
 
   it("已排队的 ask_user 应继续以内联只读 A2UI 卡片回显", () => {
@@ -316,8 +342,12 @@ describe("StreamingRenderer", () => {
       onPermissionResponse: vi.fn(),
     });
 
-    expect(container.querySelectorAll('[data-testid="a2ui-card"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="decision-panel"]')).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="a2ui-card"]'),
+    ).toHaveLength(1);
+    expect(
+      container.querySelector('[data-testid="decision-panel"]'),
+    ).toBeNull();
   });
 
   it("交错内容中的已提交问答应渲染为只读 A2UI 卡片", () => {
@@ -343,7 +373,11 @@ describe("StreamingRenderer", () => {
       ],
     });
 
-    expect(container.querySelectorAll('[data-testid="a2ui-card"]')).toHaveLength(1);
-    expect(container.querySelector('[data-testid="decision-panel"]')).toBeNull();
+    expect(
+      container.querySelectorAll('[data-testid="a2ui-card"]'),
+    ).toHaveLength(1);
+    expect(
+      container.querySelector('[data-testid="decision-panel"]'),
+    ).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ const {
   mockUseArtifactAutoPreviewSync,
   mockUseThemeContextWorkspace,
   mockUseTopicBranchBoard,
+  mockUseTeamWorkspaceRuntime,
   mockGetProject,
   mockGetDefaultProject,
   mockGetOrCreateDefaultProject,
@@ -46,6 +47,7 @@ const {
   mockUseArtifactAutoPreviewSync: vi.fn(),
   mockUseThemeContextWorkspace: vi.fn(),
   mockUseTopicBranchBoard: vi.fn(),
+  mockUseTeamWorkspaceRuntime: vi.fn(),
   mockGetProject: vi.fn(),
   mockGetDefaultProject: vi.fn(),
   mockGetOrCreateDefaultProject: vi.fn(),
@@ -145,6 +147,7 @@ vi.mock("./hooks", () => ({
   useArtifactAutoPreviewSync: mockUseArtifactAutoPreviewSync,
   useThemeContextWorkspace: mockUseThemeContextWorkspace,
   useTopicBranchBoard: mockUseTopicBranchBoard,
+  useTeamWorkspaceRuntime: mockUseTeamWorkspaceRuntime,
 }));
 
 vi.mock("./hooks/useSessionFiles", () => ({
@@ -393,6 +396,28 @@ vi.mock("./components/MessageList", () => ({
   MessageList: (props: Record<string, unknown>) => mockMessageList(props),
 }));
 
+vi.mock("./components/TeamWorkspaceDock", () => ({
+  TeamWorkspaceDock: ({
+    placement,
+    withBottomOverlay,
+    shellVisible,
+    childSubagentSessions,
+  }: {
+    placement?: "floating" | "inline";
+    withBottomOverlay?: boolean;
+    shellVisible?: boolean;
+    childSubagentSessions?: Array<{ id: string }>;
+  }) => (
+    <div
+      data-testid="team-workspace-dock"
+      data-placement={placement || "floating"}
+      data-with-bottom-overlay={withBottomOverlay ? "true" : "false"}
+      data-shell-visible={shellVisible ? "true" : "false"}
+      data-child-count={String(childSubagentSessions?.length ?? 0)}
+    />
+  ),
+}));
+
 vi.mock("./components/Inputbar", () => ({
   Inputbar: (props: Record<string, unknown>) => mockInputbar(props),
 }));
@@ -415,11 +440,7 @@ vi.mock("@/components/content-creator/canvas/CanvasFactory", () => ({
 }));
 
 vi.mock("@/components/general-chat/bridge", () => ({
-  CanvasPanel: ({
-    toolbarActions,
-  }: {
-    toolbarActions?: ReactNode;
-  }) => (
+  CanvasPanel: ({ toolbarActions }: { toolbarActions?: ReactNode }) => (
     <div data-testid="general-canvas">
       <div data-testid="general-canvas-toolbar">{toolbarActions}</div>
     </div>
@@ -504,8 +525,7 @@ vi.mock("@/lib/workspace/navigation", () => ({
   buildClawAgentParams: vi.fn((overrides?: Record<string, unknown>) => ({
     ...(overrides || {}),
     agentEntry: "claw",
-    theme:
-      typeof overrides?.theme === "string" ? overrides.theme : "general",
+    theme: typeof overrides?.theme === "string" ? overrides.theme : "general",
     lockTheme: false,
     immersiveHome:
       typeof overrides?.immersiveHome === "boolean"
@@ -570,7 +590,9 @@ let sharedSendMessageMock: ReturnType<typeof vi.fn>;
 let sharedTriggerAIGuideMock: ReturnType<typeof vi.fn>;
 
 function buildMockProviderModel(
-  overrides: Partial<Awaited<ReturnType<typeof providerModelsModule.loadProviderModels>>[number]> = {},
+  overrides: Partial<
+    Awaited<ReturnType<typeof providerModelsModule.loadProviderModels>>[number]
+  > = {},
 ) {
   return {
     id: "mock-model",
@@ -698,6 +720,7 @@ async function flushEffects(times = 6) {
   for (let i = 0; i < times; i += 1) {
     await act(async () => {
       await Promise.resolve();
+      await vi.dynamicImportSettled();
     });
   }
 }
@@ -921,7 +944,10 @@ beforeEach(() => {
     error: undefined,
     attempts: [],
   });
-  vi.spyOn(configuredProvidersModule, "loadConfiguredProviders").mockResolvedValue([
+  vi.spyOn(
+    configuredProvidersModule,
+    "loadConfiguredProviders",
+  ).mockResolvedValue([
     {
       key: "kiro",
       label: "Kiro",
@@ -951,6 +977,11 @@ beforeEach(() => {
       },
     ],
     setTopicStatus: vi.fn(),
+  });
+  mockUseTeamWorkspaceRuntime.mockReturnValue({
+    liveRuntimeBySessionId: {},
+    liveActivityBySessionId: {},
+    activityRefreshVersionBySessionId: {},
   });
   mockCanvasWorkbenchLayoutState.renderPreview = false;
 
@@ -1048,6 +1079,8 @@ describe("AgentChatPage 话题切换项目恢复", () => {
     const container = renderPage();
     await flushEffects();
 
+    clickButton(container, "toggle-history");
+    await flushEffects();
     clickButton(container, "switch-topic");
     await flushEffects();
 
@@ -1071,6 +1104,8 @@ describe("AgentChatPage 话题切换项目恢复", () => {
     const container = renderPage({ projectId: "locked-project" });
     await flushEffects();
 
+    clickButton(container, "toggle-history");
+    await flushEffects();
     clickButton(container, "switch-topic");
     await flushEffects();
 
@@ -1093,6 +1128,8 @@ describe("AgentChatPage 话题切换项目恢复", () => {
     const container = renderPage();
     await flushEffects();
 
+    clickButton(container, "toggle-history");
+    await flushEffects();
     clickButton(container, "switch-topic");
     await flushEffects();
 
@@ -1142,7 +1179,7 @@ describe("AgentChatPage 话题切换项目恢复", () => {
 });
 
 describe("AgentChatPage 侧栏显示控制", () => {
-  it("有消息时默认显示侧栏且不应被自动收起", async () => {
+  it("Claw 模式有消息时默认收起侧栏，且切换项目不应意外展开", async () => {
     mockUseAgentChatUnified.mockImplementation(
       ({ workspaceId }: { workspaceId: string }) => {
         observedWorkspaceIds.push(workspaceId);
@@ -1180,11 +1217,20 @@ describe("AgentChatPage 侧栏显示控制", () => {
     const container = renderPage();
     await flushEffects();
 
-    expect(
-      container.querySelector('[data-testid="chat-sidebar"]'),
-    ).not.toBeNull();
+    expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
 
     clickButton(container, "set-project");
+    await flushEffects();
+    expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
+  });
+
+  it("Claw 模式可通过顶栏手动展开侧栏", async () => {
+    const container = renderPage();
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
+
+    clickButton(container, "toggle-history");
     await flushEffects();
     expect(
       container.querySelector('[data-testid="chat-sidebar"]'),
@@ -1246,81 +1292,12 @@ describe("AgentChatPage 侧栏显示控制", () => {
 
     expect(
       container.querySelector('[data-testid="claw-empty-state"]'),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(container.querySelector('[data-testid="empty-state"]')).toBeNull();
-  });
-
-  it("新建任务模式在首条消息进入后应立即展示聊天区", async () => {
-    mockUseAgentChatUnified.mockImplementation(
-      ({ workspaceId }: { workspaceId: string }) => {
-        observedWorkspaceIds.push(workspaceId);
-        return {
-          providerType: "kiro",
-          setProviderType: vi.fn(),
-          model: "mock-model",
-          setModel: vi.fn(),
-          executionStrategy: "auto",
-          setExecutionStrategy: vi.fn(),
-          messages: [
-            {
-              id: "msg-user-1",
-              role: "user",
-              content: "帮我规划一个发布任务",
-              timestamp: new Date(),
-            },
-          ],
-          isSending: true,
-          sendMessage: sharedSendMessageMock,
-          stopSending: vi.fn(async () => undefined),
-          clearMessages: vi.fn(),
-          deleteMessage: vi.fn(),
-          editMessage: vi.fn(),
-          handlePermissionResponse: vi.fn(),
-          triggerAIGuide: sharedTriggerAIGuideMock,
-          topics: [
-            {
-              id: "topic-a",
-              title: "任务 A",
-              updatedAt: Date.now(),
-            },
-          ],
-          sessionId: "session-1",
-          switchTopic: sharedSwitchTopicMock,
-          deleteTopic: vi.fn(),
-          renameTopic: vi.fn(),
-          pendingActions: [],
-          workspacePathMissing: false,
-          fixWorkspacePathAndRetry: vi.fn(),
-          dismissWorkspacePathError: vi.fn(),
-        };
-      },
-    );
-
-    const container = renderPage({
-      agentEntry: "new-task",
-      projectId: "project-entry",
-    });
-    await flushEffects();
-
     expect(
       container.querySelector('[data-testid="message-list"]'),
     ).not.toBeNull();
-    expect(container.querySelector('[data-testid="empty-state"]')).toBeNull();
-  });
-
-  it("新建任务模式发送首条消息后不应自动切换页面", async () => {
-    const onNavigate = vi.fn();
-
-    renderPage({
-      agentEntry: "new-task",
-      initialUserPrompt: "帮我规划一个发布任务",
-      onNavigate,
-      projectId: "project-entry",
-    });
-    await flushEffects();
-
-    expect(sharedSendMessageMock).toHaveBeenCalled();
-    expect(onNavigate).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="inputbar"]')).not.toBeNull();
   });
 });
 
@@ -1355,9 +1332,9 @@ describe("AgentChatPage 通用工作台", () => {
 
     expect(
       (
-        container.querySelector('[data-testid="chat-navbar"]') as
-          | HTMLDivElement
-          | null
+        container.querySelector(
+          '[data-testid="chat-navbar"]',
+        ) as HTMLDivElement | null
       )?.dataset.canvasOpen,
     ).toBe("true");
     expect(
@@ -1368,18 +1345,18 @@ describe("AgentChatPage 通用工作台", () => {
 
     act(() => {
       (
-        container.querySelector('[data-testid="toggle-canvas"]') as
-          | HTMLButtonElement
-          | null
+        container.querySelector(
+          '[data-testid="toggle-canvas"]',
+        ) as HTMLButtonElement | null
       )?.click();
     });
     await flushEffects();
 
     expect(
       (
-        container.querySelector('[data-testid="chat-navbar"]') as
-          | HTMLDivElement
-          | null
+        container.querySelector(
+          '[data-testid="chat-navbar"]',
+        ) as HTMLDivElement | null
       )?.dataset.canvasOpen,
     ).toBe("false");
     expect(
@@ -1453,11 +1430,9 @@ describe("AgentChatPage 通用工作台", () => {
     await flushEffects(4);
 
     const getWorkbenchProps = () =>
-      (mockCanvasWorkbenchLayout.mock.calls.at(-1)?.[0] || null) as
-        | {
-            onLayoutModeChange?: (mode: "split" | "stacked") => void;
-          }
-        | null;
+      (mockCanvasWorkbenchLayout.mock.calls.at(-1)?.[0] || null) as {
+        onLayoutModeChange?: (mode: "split" | "stacked") => void;
+      } | null;
 
     expect(
       container.querySelector('[data-testid="chat-sidebar"]'),
@@ -1501,7 +1476,7 @@ describe("AgentChatPage 通用工作台", () => {
     });
     await flushEffects(10);
 
-    expect(mockSkillsGetAll).toHaveBeenCalledWith("lime");
+    expect(mockSkillsGetLocal).toHaveBeenCalledWith("lime");
 
     clickButton(container, "toggle-harness");
     await flushEffects();
@@ -1611,8 +1586,12 @@ describe("AgentChatPage 通用工作台", () => {
     expect(
       container.querySelector('[data-testid="canvas-workbench-layout-mock"]'),
     ).toBeNull();
-    expect(container.querySelector('[data-testid="artifact-renderer"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="artifact-toolbar"]')).toBeNull();
+    expect(
+      container.querySelector('[data-testid="artifact-renderer"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="artifact-toolbar"]'),
+    ).toBeNull();
     expect(mockCanvasWorkbenchLayout).not.toHaveBeenCalled();
   });
 
@@ -1856,18 +1835,20 @@ describe("AgentChatPage 通用工作台", () => {
     await flushEffects(10);
 
     const prompt = "帮我把这篇文章发布到微信公众号后台";
-    const emptyStateProps = mockEmptyState.mock.calls.at(-1)?.[0] as
+    const inputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
       | {
           onSend?: (
-            value: string,
-            executionStrategy?: "react" | "code_orchestrated" | "auto",
             images?: unknown[],
+            webSearch?: boolean,
+            thinking?: boolean,
+            textOverride?: string,
+            executionStrategy?: "react" | "code_orchestrated" | "auto",
           ) => void | Promise<void>;
         }
       | undefined;
 
     await act(async () => {
-      await emptyStateProps?.onSend?.(prompt, "auto", []);
+      await inputbarProps?.onSend?.([], false, false, prompt, "auto");
     });
     await flushEffects(12);
 
@@ -1917,18 +1898,20 @@ describe("AgentChatPage 通用工作台", () => {
     await flushEffects(10);
 
     const prompt = "帮我把这篇文章发布到微信公众号后台";
-    const emptyStateProps = mockEmptyState.mock.calls.at(-1)?.[0] as
+    const inputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
       | {
           onSend?: (
-            value: string,
-            executionStrategy?: "react" | "code_orchestrated" | "auto",
             images?: unknown[],
+            webSearch?: boolean,
+            thinking?: boolean,
+            textOverride?: string,
+            executionStrategy?: "react" | "code_orchestrated" | "auto",
           ) => void | Promise<void>;
         }
       | undefined;
 
     await act(async () => {
-      await emptyStateProps?.onSend?.(prompt, "auto", []);
+      await inputbarProps?.onSend?.([], false, false, prompt, "auto");
     });
     await flushEffects(12);
 
@@ -2111,7 +2094,7 @@ describe("AgentChatPage 自动引导", () => {
   it("社媒空文稿应预填引导词且不自动发送", async () => {
     mockIsContentCreationTheme.mockReturnValue(true);
 
-    const container = renderPage({
+    renderPage({
       projectId: "project-social",
       contentId: "content-social",
       theme: "social-media",
@@ -2121,7 +2104,10 @@ describe("AgentChatPage 自动引导", () => {
 
     expect(sharedTriggerAIGuideMock).not.toHaveBeenCalled();
     expect(sharedSendMessageMock).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("社媒内容创作教练");
+    const latestInputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
+      | { input?: string }
+      | undefined;
+    expect(latestInputbarProps?.input || "").toContain("社媒内容创作教练");
   });
 
   it("非社媒空文稿应维持原始自动引导调用", async () => {
@@ -2283,6 +2269,71 @@ describe("AgentChatPage 自动引导", () => {
       }),
     );
     expect(onInitialUserPromptConsumed).toHaveBeenCalledTimes(1);
+  });
+
+  it("首条意图被父层消费后，发送中仍应保留 bootstrap 预览，避免空白对话框", async () => {
+    mockUseAgentChatUnified.mockImplementation(
+      ({ workspaceId }: { workspaceId: string }) => {
+        observedWorkspaceIds.push(workspaceId);
+        return {
+          providerType: "kiro",
+          setProviderType: vi.fn(),
+          model: "mock-model",
+          setModel: vi.fn(),
+          executionStrategy: "auto",
+          setExecutionStrategy: vi.fn(),
+          messages: [],
+          isSending: true,
+          sendMessage: sharedSendMessageMock,
+          stopSending: vi.fn(async () => undefined),
+          clearMessages: vi.fn(),
+          deleteMessage: vi.fn(),
+          editMessage: vi.fn(),
+          handlePermissionResponse: vi.fn(),
+          triggerAIGuide: sharedTriggerAIGuideMock,
+          topics: [],
+          sessionId: "session-bootstrap",
+          switchTopic: sharedSwitchTopicMock,
+          deleteTopic: vi.fn(),
+          renameTopic: vi.fn(),
+        };
+      },
+    );
+
+    const harness = mountPage({
+      projectId: "project-bootstrap-preview",
+      contentId: "content-bootstrap-preview",
+      theme: "social-media",
+      lockTheme: true,
+      initialUserPrompt: "请直接开始处理这个任务",
+    });
+
+    await flushEffects(10);
+
+    harness.rerender({
+      initialUserPrompt: undefined,
+    });
+    await flushEffects(10);
+
+    const latestMessageListProps = mockMessageList.mock.calls.at(-1)?.[0] as
+      | {
+          messages?: Array<{
+            role?: string;
+            content?: string;
+          }>;
+        }
+      | undefined;
+
+    expect(latestMessageListProps?.messages).toEqual([
+      expect.objectContaining({
+        role: "user",
+        content: "请直接开始处理这个任务",
+      }),
+      expect.objectContaining({
+        role: "assistant",
+        content: "正在开始处理任务…",
+      }),
+    ]);
   });
 
   it("主题工作台启用时应优先展示画布，不再回退到旧聊天预留页", async () => {
@@ -2526,21 +2577,25 @@ describe("AgentChatPage 自动引导", () => {
     });
     await flushEffects(10);
 
-    const latestEmptyStateProps = mockEmptyState.mock.calls.at(-1)?.[0] as
+    const latestInputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
       | {
           onSend?: (
-            value: string,
-            executionStrategy?: "react" | "code_orchestrated" | "auto",
             images?: unknown[],
+            webSearch?: boolean,
+            thinking?: boolean,
+            textOverride?: string,
+            executionStrategy?: "react" | "code_orchestrated" | "auto",
           ) => Promise<boolean | void> | boolean | void;
         }
       | undefined;
 
     await act(async () => {
-      await latestEmptyStateProps?.onSend?.(
+      await latestInputbarProps?.onSend?.(
+        [{ data: "aGVsbG8=", mediaType: "image/png" }],
+        false,
+        false,
         "请看图",
         "auto",
-        [{ data: "aGVsbG8=", mediaType: "image/png" }],
       );
     });
 

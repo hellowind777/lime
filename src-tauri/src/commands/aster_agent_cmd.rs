@@ -8,14 +8,32 @@ use crate::agent::aster_state::{ProviderConfig, SessionConfigBuilder};
 use crate::agent::runtime_queue_service::{
     clear_runtime_queue as clear_runtime_queue_service,
     list_runtime_queue_snapshots as list_runtime_queue_snapshots_service,
+    promote_runtime_queued_turn as promote_runtime_queued_turn_service,
     remove_runtime_queued_turn as remove_runtime_queued_turn_service,
     resume_persisted_runtime_queues_on_startup as resume_persisted_runtime_queues_on_startup_service,
     resume_runtime_queue_if_needed as resume_runtime_queue_if_needed_service,
     submit_runtime_turn as submit_runtime_turn_service, RuntimeQueueExecutor,
 };
 use crate::agent::{
-    AsterAgentState, AsterAgentWrapper, LimeScheduler, QueuedTurnSnapshot, QueuedTurnTask,
-    SessionDetail, SessionInfo, SubAgentRole, TauriAgentEvent,
+    AsterAgentState, AsterAgentWrapper, QueuedTurnSnapshot, QueuedTurnTask, SessionDetail,
+    SessionInfo, SubAgentRole, TauriAgentEvent,
+};
+use crate::agent_tools::catalog::{
+    browser_runtime_tool_prefix, build_mcp_extension_surface, creator_tool_names,
+    WorkspaceToolSurface, LIME_CREATE_BROADCAST_TASK_TOOL_NAME, LIME_CREATE_COVER_TASK_TOOL_NAME,
+    LIME_CREATE_IMAGE_TASK_TOOL_NAME, LIME_CREATE_RESOURCE_SEARCH_TASK_TOOL_NAME,
+    LIME_CREATE_TYPESETTING_TASK_TOOL_NAME, LIME_CREATE_URL_PARSE_TASK_TOOL_NAME,
+    LIME_CREATE_VIDEO_TASK_TOOL_NAME, SOCIAL_IMAGE_TOOL_NAME, TOOL_SEARCH_TOOL_NAME,
+};
+#[cfg(test)]
+use crate::agent_tools::execution::build_workspace_shell_allow_pattern;
+use crate::agent_tools::execution::{
+    build_workspace_execution_permissions, should_auto_approve_tool_warnings,
+    ToolExecutionResolverInput, WorkspaceExecutionPermissionInput,
+};
+use crate::agent_tools::inventory::{
+    build_tool_inventory, resolve_extension_tool_runtime_status, AgentToolInventoryBuildInput,
+    ExtensionToolInventorySeed,
 };
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::commands::webview_cmd::{
@@ -36,20 +54,25 @@ use crate::services::web_search_runtime_service::apply_web_search_runtime_env;
 use crate::services::workspace_health_service::ensure_workspace_ready_with_auto_relocate;
 use crate::workspace::WorkspaceManager;
 use crate::LogState;
-use aster::agents::extension::{Envs, ExtensionConfig};
-use aster::agents::subagent_scheduler::{SchedulerExecutionResult, SubAgentTask};
+use aster::agents::extension::ExtensionConfig;
+use aster::agents::subagent_scheduler::SubAgentTask;
 use aster::agents::{Agent, AgentEvent};
 use aster::chrome_mcp::get_chrome_mcp_tools;
 use aster::conversation::message::{Message, MessageContent};
 use aster::permission::{
-    ConditionOperator, ConditionType, ParameterRestriction, PermissionCondition, PermissionScope,
-    RestrictionType, ToolPermission, ToolPermissionManager,
+    ConditionOperator, ConditionType, PermissionCondition, PermissionScope, ToolPermission,
+    ToolPermissionManager,
 };
 use aster::permission::{Permission, PermissionConfirmation, PrincipalType};
 use aster::sandbox::{
     detect_best_sandbox, execute_in_sandbox, ResourceLimits, SandboxConfig as ProcessSandboxConfig,
 };
-use aster::session::TurnContextOverride;
+use aster::session::extension_data::{ExtensionData, ExtensionState};
+use aster::session::{
+    list_subagent_child_sessions, require_shared_thread_runtime_store,
+    resolve_subagent_session_metadata, SessionManager, SessionType, SubagentSessionMetadata,
+    TurnContextOverride,
+};
 use aster::tools::task_output_tool::TaskOutputInput;
 use aster::tools::{
     BashTool, KillShellTool, PermissionBehavior, PermissionCheckResult, TaskManager,
@@ -58,6 +81,8 @@ use aster::tools::{
 };
 use async_trait::async_trait;
 use futures::{FutureExt, StreamExt};
+use lime_agent::event_converter::{TauriMessage, TauriMessageContent};
+use lime_agent::mcp_bridge::McpBridgeClient;
 #[cfg(test)]
 use lime_agent::request_tool_policy::REQUEST_TOOL_POLICY_MARKER;
 use lime_agent::request_tool_policy::{
@@ -65,8 +90,13 @@ use lime_agent::request_tool_policy::{
     stream_message_reply_with_policy, ReplyAttemptError, RequestToolPolicy, RequestToolPolicyMode,
 };
 use lime_agent::{
-    durable_memory_permission_pattern, is_virtual_memory_path, message_suggests_news_expansion,
-    resolve_virtual_memory_path, virtual_memory_relative_path, TauriRuntimeStatus,
+    build_subagent_customization_prompt, builtin_profile_descriptor_by_id,
+    builtin_team_preset_descriptor_by_id, builtin_team_preset_label_by_id, is_virtual_memory_path,
+    list_subagent_cascade_session_ids, load_subagent_runtime_status,
+    message_suggests_news_expansion, read_subagent_control_state, resolve_virtual_memory_path,
+    summarize_builtin_skill, virtual_memory_relative_path, write_subagent_control_state,
+    SubagentControlState, SubagentCustomizationState, SubagentRuntimeStatus,
+    SubagentRuntimeStatusKind, SubagentSkillPromptBlock, SubagentSkillSummary, TauriRuntimeStatus,
     DURABLE_MEMORY_VIRTUAL_ROOT,
 };
 use lime_services::api_key_provider_service::ApiKeyProviderService;
@@ -75,7 +105,7 @@ use lime_services::video_generation_service::{
     CreateVideoGenerationRequest, VideoGenerationService,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -100,19 +130,13 @@ const WORKSPACE_SANDBOX_NOTIFY_ENV_KEYS: &[&str] = &[
 ];
 const WORKSPACE_SANDBOX_FALLBACK_WARNING_CODE: &str = "workspace_sandbox_fallback";
 const WORKSPACE_PATH_AUTO_CREATED_WARNING_CODE: &str = "workspace_path_auto_created";
-const SOCIAL_IMAGE_TOOL_NAME: &str = "social_generate_cover_image";
+const DEFAULT_TEAM_MAX_ACTIVE_SUBAGENTS: usize = 3;
 const SOCIAL_IMAGE_DEFAULT_MODEL: &str = "gemini-3-pro-image-preview";
 const SOCIAL_IMAGE_DEFAULT_SIZE: &str = "1024x1024";
 const SOCIAL_IMAGE_DEFAULT_RESPONSE_FORMAT: &str = "url";
-const LIME_CREATE_VIDEO_TASK_TOOL_NAME: &str = "lime_create_video_generation_task";
-const LIME_CREATE_BROADCAST_TASK_TOOL_NAME: &str = "lime_create_broadcast_generation_task";
-const LIME_CREATE_COVER_TASK_TOOL_NAME: &str = "lime_create_cover_generation_task";
-const LIME_CREATE_RESOURCE_SEARCH_TASK_TOOL_NAME: &str = "lime_create_modal_resource_search_task";
-const LIME_CREATE_IMAGE_TASK_TOOL_NAME: &str = "lime_create_image_generation_task";
-const LIME_CREATE_URL_PARSE_TASK_TOOL_NAME: &str = "lime_create_url_parse_task";
-const LIME_CREATE_TYPESETTING_TASK_TOOL_NAME: &str = "lime_create_typesetting_task";
 const AUTO_CONTINUE_PROMPT_MARKER: &str = "【自动续写策略】";
 const ELICITATION_CONTEXT_PROMPT_MARKER: &str = "【已收集的补充信息】";
+const TEAM_PREFERENCE_PROMPT_MARKER: &str = "【Team 协作偏好】";
 const LIME_TOOL_METADATA_BEGIN: &str = "[Lime 工具元数据开始]";
 const LIME_TOOL_METADATA_END: &str = "[Lime 工具元数据结束]";
 const FORCE_REACT_HINT_ENV_KEYS: &[&str] =
@@ -266,6 +290,19 @@ pub struct ConfigureFromPoolRequest {
     pub model_name: String,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRuntimeToolInventoryRequest {
+    #[serde(default)]
+    pub creator: bool,
+    #[serde(default)]
+    pub browser_assist: bool,
+    #[serde(default)]
+    pub caller: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
+}
+
 /// 初始化 Aster Agent
 #[tauri::command]
 pub async fn aster_agent_init(
@@ -275,7 +312,6 @@ pub async fn aster_agent_init(
     tracing::info!("[AsterAgent] 初始化 Agent");
 
     state.init_agent_with_db(&db).await?;
-    ensure_browser_mcp_tools_registered(state.inner()).await?;
     ensure_tool_search_tool_registered(state.inner()).await?;
 
     let provider_config = state.get_provider_config().await;
@@ -305,17 +341,31 @@ pub async fn aster_agent_configure_provider(
         request.model_name
     );
 
+    let provider_selector = request
+        .provider_id
+        .clone()
+        .or_else(|| Some(request.provider_name.clone()));
     let config = ProviderConfig {
         provider_name: request.provider_name,
+        provider_selector,
         model_name: request.model_name,
         api_key: request.api_key,
         base_url: request.base_url,
         credential_uuid: None,
+        force_responses_api: false,
     };
 
     state
         .configure_provider(config.clone(), &session_id, &db)
         .await?;
+    persist_session_provider_routing(
+        &session_id,
+        config
+            .provider_selector
+            .as_deref()
+            .unwrap_or(&config.provider_name),
+    )
+    .await?;
 
     Ok(AsterAgentStatus {
         initialized: true,
@@ -350,6 +400,7 @@ pub async fn aster_agent_configure_from_pool(
             &session_id,
         )
         .await?;
+    persist_session_provider_routing(&session_id, &request.provider_type).await?;
 
     Ok(AsterAgentStatus {
         initialized: true,
@@ -535,6 +586,14 @@ pub struct AgentRuntimeRemoveQueuedTurnRequest {
     pub queued_turn_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AgentRuntimePromoteQueuedTurnRequest {
+    #[serde(alias = "sessionId")]
+    pub session_id: String,
+    #[serde(alias = "queuedTurnId")]
+    pub queued_turn_id: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentRuntimeSessionDetail {
     pub id: String,
@@ -550,6 +609,10 @@ pub struct AgentRuntimeSessionDetail {
     pub todo_items: Vec<lime_agent::SessionTodoItem>,
     #[serde(default)]
     pub queued_turns: Vec<QueuedTurnSnapshot>,
+    #[serde(default)]
+    pub child_subagent_sessions: Vec<lime_agent::ChildSubagentSession>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_parent_context: Option<lime_agent::SubagentParentContext>,
 }
 
 impl AgentRuntimeSessionDetail {
@@ -566,8 +629,102 @@ impl AgentRuntimeSessionDetail {
             items: detail.items,
             todo_items: detail.todo_items,
             queued_turns,
+            child_subagent_sessions: detail.child_subagent_sessions,
+            subagent_parent_context: detail.subagent_parent_context,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRuntimeSpawnSubagentRequest {
+    #[serde(alias = "parentSessionId")]
+    pub parent_session_id: String,
+    pub message: String,
+    #[serde(default, alias = "agentType")]
+    pub agent_type: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default, alias = "reasoningEffort")]
+    pub reasoning_effort: Option<String>,
+    #[serde(default, alias = "forkContext")]
+    pub fork_context: bool,
+    #[serde(default, alias = "profileId")]
+    pub profile_id: Option<String>,
+    #[serde(default, alias = "profileName")]
+    pub profile_name: Option<String>,
+    #[serde(default, alias = "roleKey")]
+    pub role_key: Option<String>,
+    #[serde(default, alias = "skillIds")]
+    pub skill_ids: Vec<String>,
+    #[serde(default, alias = "skillDirectories")]
+    pub skill_directories: Vec<String>,
+    #[serde(default, alias = "teamPresetId")]
+    pub team_preset_id: Option<String>,
+    #[serde(default)]
+    pub theme: Option<String>,
+    #[serde(default, alias = "systemOverlay")]
+    pub system_overlay: Option<String>,
+    #[serde(default, alias = "outputContract")]
+    pub output_contract: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuntimeSpawnSubagentResponse {
+    #[serde(alias = "agentId")]
+    pub agent_id: String,
+    #[serde(default)]
+    pub nickname: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRuntimeSendSubagentInputRequest {
+    pub id: String,
+    pub message: String,
+    #[serde(default)]
+    pub interrupt: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuntimeSendSubagentInputResponse {
+    #[serde(alias = "submissionId")]
+    pub submission_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRuntimeWaitSubagentsRequest {
+    pub ids: Vec<String>,
+    #[serde(default, alias = "timeoutMs")]
+    pub timeout_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuntimeWaitSubagentsResponse {
+    pub status: HashMap<String, SubagentRuntimeStatus>,
+    pub timed_out: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRuntimeResumeSubagentRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuntimeResumeSubagentResponse {
+    pub status: SubagentRuntimeStatus,
+    pub cascade_session_ids: Vec<String>,
+    pub changed_session_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentRuntimeCloseSubagentRequest {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentRuntimeCloseSubagentResponse {
+    pub previous_status: SubagentRuntimeStatus,
+    pub cascade_session_ids: Vec<String>,
+    pub changed_session_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -593,6 +750,8 @@ pub struct AgentRuntimeRespondActionRequest {
     pub user_data: Option<serde_json::Value>,
     #[serde(default)]
     pub metadata: Option<serde_json::Value>,
+    #[serde(default, alias = "eventName")]
+    pub event_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -826,6 +985,157 @@ fn merge_system_prompt_with_elicitation_context(
     }
 }
 
+fn build_team_preference_system_prompt(
+    request_metadata: Option<&serde_json::Value>,
+) -> Option<String> {
+    let subagent_mode_enabled = extract_harness_bool(
+        request_metadata,
+        &["subagent_mode_enabled", "subagentModeEnabled"],
+    )
+    .unwrap_or(false);
+    let preferred_team_preset_id = extract_harness_string(
+        request_metadata,
+        &["preferred_team_preset_id", "preferredTeamPresetId"],
+    );
+    let selected_team_source = extract_harness_string(
+        request_metadata,
+        &["selected_team_source", "selectedTeamSource"],
+    );
+    let selected_team_label = extract_harness_string(
+        request_metadata,
+        &["selected_team_label", "selectedTeamLabel"],
+    );
+    let selected_team_summary = extract_harness_string(
+        request_metadata,
+        &["selected_team_summary", "selectedTeamSummary"],
+    );
+    let selected_team_roles = extract_harness_array(
+        request_metadata,
+        &["selected_team_roles", "selectedTeamRoles"],
+    );
+
+    if !subagent_mode_enabled {
+        return None;
+    }
+
+    let mut lines = vec![TEAM_PREFERENCE_PROMPT_MARKER.to_string()];
+    if subagent_mode_enabled {
+        lines.push(
+            "- 当前 GUI 已开启 Team 模式，但只有在任务确实适合拆分、并行或隔离上下文时才进入 team。"
+                .to_string(),
+        );
+    }
+
+    if let Some(team_preset_id) = preferred_team_preset_id.as_deref() {
+        let preset_label =
+            builtin_team_preset_label_by_id(team_preset_id).unwrap_or(team_preset_id);
+        lines.push(format!(
+            "- 用户偏好的 Team Preset：{preset_label} ({team_preset_id})。"
+        ));
+        lines.push(
+            "- 当你判断当前任务适合多代理时，优先沿用该 preset 的 profile / skill 组合去调用 spawn_agent。"
+                .to_string(),
+        );
+    }
+
+    if let Some(team_label) = selected_team_label.as_deref() {
+        let source_suffix = selected_team_source
+            .as_deref()
+            .map(|source| format!(" / 来源：{source}"))
+            .unwrap_or_default();
+        lines.push(format!(
+            "- 当前 GUI 已选 Team：{team_label}{source_suffix}。"
+        ));
+    }
+
+    if let Some(team_summary) = selected_team_summary.as_deref() {
+        lines.push(format!("- Team 摘要：{team_summary}"));
+    }
+
+    if let Some(role_items) = selected_team_roles {
+        let rendered_roles = role_items
+            .iter()
+            .filter_map(|value| {
+                let object = value.as_object()?;
+                let label = object
+                    .get("label")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())?;
+                let summary = object
+                    .get("summary")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("负责当前分工。");
+                let profile_suffix = object
+                    .get("profile_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!(" / profile: {value}"))
+                    .unwrap_or_default();
+                let skill_suffix = object
+                    .get("skill_ids")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|items| !items.is_empty())
+                    .map(|items| format!(" / skills: {}", items.join(", ")))
+                    .unwrap_or_default();
+
+                Some(format!(
+                    "  - {label}：{summary}{profile_suffix}{skill_suffix}"
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        if !rendered_roles.is_empty() {
+            lines.push("- 当前 Team 角色参考：".to_string());
+            lines.extend(rendered_roles);
+        }
+    }
+
+    lines.push(
+        "- spawn_agent 支持这些结构化字段：teamPresetId、profileId、profileName、roleKey、skillIds、skillDirectories、theme、systemOverlay、outputContract。"
+            .to_string(),
+    );
+    lines.push(
+        "- 如果任务简单、强依赖当前上下文或下一步立即阻塞在结果上，不要为了套用 preset 而滥用 team。"
+            .to_string(),
+    );
+
+    Some(lines.join("\n"))
+}
+
+fn merge_system_prompt_with_team_preference(
+    base_prompt: Option<String>,
+    request_metadata: Option<&serde_json::Value>,
+) -> Option<String> {
+    let Some(team_prompt) = build_team_preference_system_prompt(request_metadata) else {
+        return base_prompt;
+    };
+
+    match base_prompt {
+        Some(base) => {
+            if base.contains(TEAM_PREFERENCE_PROMPT_MARKER) {
+                Some(base)
+            } else if base.trim().is_empty() {
+                Some(team_prompt)
+            } else {
+                Some(format!("{base}\n\n{team_prompt}"))
+            }
+        }
+        None => Some(team_prompt),
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct SocialRunArtifactDescriptor {
     artifact_id: String,
@@ -1051,6 +1361,16 @@ fn extract_harness_bool(
     keys.iter()
         .filter_map(|key| harness.get(*key))
         .find_map(serde_json::Value::as_bool)
+}
+
+fn extract_harness_array<'a>(
+    request_metadata: Option<&'a serde_json::Value>,
+    keys: &[&str],
+) -> Option<&'a Vec<serde_json::Value>> {
+    let harness = extract_harness_object(request_metadata)?;
+    keys.iter()
+        .filter_map(|key| harness.get(*key))
+        .find_map(serde_json::Value::as_array)
 }
 
 fn extract_harness_nested_object<'a>(
@@ -1688,6 +2008,18 @@ fn extend_map_with_harness_fields(
         ("runTitle", "run_title"),
         ("content_id", "content_id"),
         ("contentId", "content_id"),
+        ("preferred_team_preset_id", "preferred_team_preset_id"),
+        ("preferredTeamPresetId", "preferred_team_preset_id"),
+        ("selected_team_id", "selected_team_id"),
+        ("selectedTeamId", "selected_team_id"),
+        ("selected_team_source", "selected_team_source"),
+        ("selectedTeamSource", "selected_team_source"),
+        ("selected_team_label", "selected_team_label"),
+        ("selectedTeamLabel", "selected_team_label"),
+        ("selected_team_summary", "selected_team_summary"),
+        ("selectedTeamSummary", "selected_team_summary"),
+        ("selected_team_roles", "selected_team_roles"),
+        ("selectedTeamRoles", "selected_team_roles"),
         ("browser_requirement", "browser_requirement"),
         ("browserRequirement", "browser_requirement"),
         ("browser_requirement_reason", "browser_requirement_reason"),
@@ -2189,6 +2521,12 @@ where
             if let Err(error) = app.emit(event_name, event) {
                 tracing::error!("[AsterAgent] 发送事件失败: {}", error);
             }
+            let app = app.clone();
+            let event_name = event_name.to_string();
+            let event = event.clone();
+            tokio::spawn(async move {
+                maybe_emit_subagent_status_for_runtime_event(&app, &event_name, &event).await;
+            });
         },
     )
     .await
@@ -3123,48 +3461,214 @@ fn build_subagent_task_definition(
     Ok(task)
 }
 
-fn summarize_subagent_execution(
+fn build_subagent_task_runtime_message(
+    input: &SubAgentTaskToolInput,
+    task: &SubAgentTask,
     role: SubAgentRole,
-    execution: &SchedulerExecutionResult,
 ) -> String {
-    let merged_summary = execution
-        .merged_summary
+    let mut sections = Vec::new();
+
+    if let Some(description) = input
+        .description
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
+    {
+        sections.push(format!("任务标题：{description}"));
+    }
+
+    sections.push(format!("子代理角色：{role}"));
+
+    if let Some(task_type) = input
+        .task_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        sections.push(format!("任务类型：{task_type}"));
+    }
+
+    if let Some(allowed_tools) = input
+        .allowed_tools
+        .as_ref()
+        .filter(|items| !items.is_empty())
+    {
+        sections.push(format!(
+            "工具偏好：优先仅使用这些工具：{}",
+            allowed_tools.join(", ")
+        ));
+    }
+
+    if let Some(denied_tools) = input
+        .denied_tools
+        .as_ref()
+        .filter(|items| !items.is_empty())
+    {
+        sections.push(format!("避免使用这些工具：{}", denied_tools.join(", ")));
+    }
+
+    if let Some(max_tokens) = input.max_tokens.filter(|value| *value > 0) {
+        sections.push(format!(
+            "输出控制：请尽量将最终输出控制在 {max_tokens} tokens 内。"
+        ));
+    }
+
+    sections.push(
+        "协作约束：你不是唯一工作线程。请只处理当前明确分配的子任务，不要重复主线程或其他子代理的工作，不要再创建新的子代理。"
+            .to_string(),
+    );
+
+    sections.push("任务说明：".to_string());
+    sections.push(task.prompt.clone());
+
+    sections.join("\n")
+}
+
+fn collect_subagent_task_compat_warnings(input: &SubAgentTaskToolInput) -> Vec<String> {
+    let mut warnings = Vec::new();
+
+    if input
+        .allowed_tools
+        .as_ref()
+        .is_some_and(|items| !items.is_empty())
+    {
+        warnings
+            .push("allowedTools 已降级为对子代理的提示，不再由旧 scheduler 做硬限制".to_string());
+    }
+
+    if input
+        .denied_tools
+        .as_ref()
+        .is_some_and(|items| !items.is_empty())
+    {
+        warnings
+            .push("deniedTools 已降级为对子代理的提示，不再由旧 scheduler 做硬限制".to_string());
+    }
+
+    if input.max_tokens.is_some_and(|value| value > 0) {
+        warnings.push("maxTokens 已降级为输出提示，当前 team runtime 不做强制截断".to_string());
+    }
+
+    warnings
+}
+
+fn extract_tauri_message_text(message: &TauriMessage) -> Option<String> {
+    let parts = message
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            TauriMessageContent::Text { text } => {
+                let trimmed = text.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }
+            TauriMessageContent::ToolResponse {
+                output, success, ..
+            } if *success => {
+                let trimmed = output.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
+}
+
+fn extract_runtime_subagent_result_text(detail: &SessionDetail) -> Option<String> {
+    detail
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant")
+        .and_then(extract_tauri_message_text)
         .or_else(|| {
-            execution.results.iter().find_map(|result| {
-                result
-                    .summary
+            detail.items.iter().rev().find_map(|item| {
+                match &item.payload {
+                lime_core::database::dao::agent_timeline::AgentThreadItemPayload::TurnSummary {
+                    text,
+                }
+                | lime_core::database::dao::agent_timeline::AgentThreadItemPayload::Plan { text }
+                | lime_core::database::dao::agent_timeline::AgentThreadItemPayload::AgentMessage {
+                    text,
+                    ..
+                }
+                | lime_core::database::dao::agent_timeline::AgentThreadItemPayload::Reasoning {
+                    text,
+                    ..
+                } => {
+                    let trimmed = text.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                }
+                lime_core::database::dao::agent_timeline::AgentThreadItemPayload::Error {
+                    message,
+                } => {
+                    let trimmed = message.trim();
+                    (!trimmed.is_empty()).then(|| trimmed.to_string())
+                }
+                lime_core::database::dao::agent_timeline::AgentThreadItemPayload::SubagentActivity {
+                    summary,
+                    ..
+                } => summary
                     .as_deref()
-                    .or(result.output.as_deref())
                     .map(str::trim)
                     .filter(|value| !value.is_empty())
-                    .map(ToString::to_string)
+                    .map(ToString::to_string),
+                _ => None,
+            }
             })
         })
+        .or_else(|| {
+            detail
+                .turns
+                .iter()
+                .rev()
+                .find_map(|turn| turn.error_message.clone())
+                .map(|message| message.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+}
+
+fn summarize_runtime_subagent_execution(
+    role: SubAgentRole,
+    status: &SubagentRuntimeStatus,
+    detail: Option<&SessionDetail>,
+) -> String {
+    let result_text = detail
+        .and_then(extract_runtime_subagent_result_text)
         .unwrap_or_else(|| "未返回摘要".to_string());
 
-    format!(
-        "SubAgent({}) 完成：成功 {}，失败 {}，跳过 {}。{}",
-        role,
-        execution.successful_count,
-        execution.failed_count,
-        execution.skipped_count,
-        merged_summary
-    )
+    match status.kind {
+        SubagentRuntimeStatusKind::Completed => {
+            format!("子代理({role}) 已通过 team runtime 完成任务。\n\n{result_text}")
+        }
+        SubagentRuntimeStatusKind::Failed | SubagentRuntimeStatusKind::Aborted => {
+            format!("子代理({role}) 执行失败。\n\n{result_text}")
+        }
+        SubagentRuntimeStatusKind::Closed => {
+            format!("子代理({role}) 已关闭。\n\n{result_text}")
+        }
+        SubagentRuntimeStatusKind::NotFound => {
+            format!("子代理({role}) 未找到，无法获取结果。")
+        }
+        _ => format!(
+            "子代理({role}) 当前状态为 {:?}。\n\n{result_text}",
+            status.kind
+        ),
+    }
 }
 
 #[derive(Debug, Clone)]
 struct SubAgentTaskTool {
-    db: DbConnection,
-    app_handle: AppHandle,
+    runtime: SubagentControlRuntime,
 }
 
 impl SubAgentTaskTool {
-    fn new(db: DbConnection, app_handle: AppHandle) -> Self {
-        Self { db, app_handle }
+    fn new(runtime: SubagentControlRuntime) -> Self {
+        Self { runtime }
     }
 }
 
@@ -3175,7 +3679,7 @@ impl Tool for SubAgentTaskTool {
     }
 
     fn description(&self) -> &str {
-        "将独立子问题委派给隔离上下文的子代理执行，并返回摘要结果"
+        "兼容入口。仅用于兼容仍输出旧 SubAgentTask schema 的历史提示词或旧技能；内部会退化为串行的 spawn_agent + wait_agent，不适合作为新的多代理并发主路径。新实现优先直接使用 spawn_agent / send_input / wait_agent / resume_agent / close_agent。"
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -3249,41 +3753,563 @@ impl Tool for SubAgentTaskTool {
         let role = parse_subagent_role(input.role.as_deref())?;
         let task = build_subagent_task_definition(&input, role)?;
         let task_id = task.id.clone();
+        let parent_session_id = normalize_required_text(&context.session_id, "session_id")
+            .map_err(ToolError::invalid_params)?;
+        let compat_warnings = collect_subagent_task_compat_warnings(&input);
+        let response = agent_runtime_spawn_subagent_internal(
+            &self.runtime,
+            AgentRuntimeSpawnSubagentRequest {
+                parent_session_id,
+                message: build_subagent_task_runtime_message(&input, &task, role),
+                agent_type: Some(role.to_string()),
+                model: input.model.clone(),
+                reasoning_effort: None,
+                fork_context: false,
+                profile_id: None,
+                profile_name: None,
+                role_key: None,
+                skill_ids: Vec::new(),
+                skill_directories: Vec::new(),
+                team_preset_id: None,
+                theme: None,
+                system_overlay: None,
+                output_contract: None,
+            },
+        )
+        .await
+        .map_err(|error| {
+            ToolError::execution_failed(format!(
+                "SubAgentTask 已切到 team runtime，但创建子代理失败: {error}"
+            ))
+        })?;
 
-        let mut scheduler =
-            LimeScheduler::new(self.db.clone()).with_app_handle(self.app_handle.clone());
-        if !context.session_id.trim().is_empty() {
-            scheduler = scheduler.with_event_session_id(context.session_id.clone());
-        }
-        scheduler.init(None).await;
+        let timeout_ms = input
+            .timeout_secs
+            .unwrap_or(900)
+            .saturating_mul(1000)
+            .min(i64::MAX as u64) as i64;
+        let wait_result = agent_runtime_wait_subagents_internal(
+            &self.runtime,
+            AgentRuntimeWaitSubagentsRequest {
+                ids: vec![response.agent_id.clone()],
+                timeout_ms: Some(timeout_ms),
+            },
+        )
+        .await
+        .map_err(|error| {
+            ToolError::execution_failed(format!(
+                "SubAgentTask 已创建子代理，但等待结果失败: {error}"
+            ))
+        })?;
 
-        let execution = scheduler
-            .execute_with_role(vec![task], None, role)
-            .await
-            .map_err(|err| ToolError::execution_failed(format!("SubAgentTask 执行失败: {err}")))?;
+        let detail =
+            AsterAgentWrapper::get_runtime_session_detail(&self.runtime.db, &response.agent_id)
+                .await
+                .ok();
+        let status = wait_result
+            .status
+            .get(&response.agent_id)
+            .cloned()
+            .unwrap_or(SubagentRuntimeStatus {
+                session_id: response.agent_id.clone(),
+                kind: if wait_result.timed_out {
+                    SubagentRuntimeStatusKind::Running
+                } else {
+                    SubagentRuntimeStatusKind::NotFound
+                },
+                latest_turn_id: None,
+                latest_turn_status: None,
+                queued_turn_count: 0,
+                closed: false,
+            });
 
-        let summary = summarize_subagent_execution(role, &execution);
+        let summary = if wait_result.timed_out {
+            format!(
+                "子代理({role}) 已创建，但在 {} 秒内未完成。可以继续通过 team workspace 跟踪: {}",
+                input.timeout_secs.unwrap_or(900),
+                response.agent_id
+            )
+        } else {
+            summarize_runtime_subagent_execution(role, &status, detail.as_ref())
+        };
         let metadata = serde_json::json!({
             "task_id": task_id,
+            "agent_id": response.agent_id,
+            "nickname": response.nickname,
             "role": role.to_string(),
-            "success": execution.success,
-            "successful_count": execution.successful_count,
-            "failed_count": execution.failed_count,
-            "skipped_count": execution.skipped_count,
-            "merged_summary": execution.merged_summary,
-            "results": execution.results,
-            "total_token_usage": execution.total_token_usage,
+            "status": status,
+            "timed_out": wait_result.timed_out,
+            "compat_mode": "subagent_task->spawn_agent",
+            "compat_warnings": compat_warnings,
         });
 
-        if execution.success {
-            Ok(ToolResult::success(summary)
-                .with_metadata("subagent", metadata)
-                .with_metadata("role", serde_json::json!(role.to_string())))
+        let success = !wait_result.timed_out && status.kind == SubagentRuntimeStatusKind::Completed;
+        let result = if success {
+            ToolResult::success(summary)
         } else {
-            Ok(ToolResult::error(summary)
-                .with_metadata("subagent", metadata)
-                .with_metadata("role", serde_json::json!(role.to_string())))
-        }
+            ToolResult::error(summary)
+        };
+
+        Ok(result
+            .with_metadata("subagent", metadata)
+            .with_metadata("role", serde_json::json!(role.to_string())))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SpawnAgentToolInput {
+    message: String,
+    agent_type: Option<String>,
+    model: Option<String>,
+    reasoning_effort: Option<String>,
+    fork_context: Option<bool>,
+    profile_id: Option<String>,
+    profile_name: Option<String>,
+    role_key: Option<String>,
+    #[serde(default)]
+    skill_ids: Vec<String>,
+    #[serde(default)]
+    skill_directories: Vec<String>,
+    team_preset_id: Option<String>,
+    theme: Option<String>,
+    system_overlay: Option<String>,
+    output_contract: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SpawnAgentTool {
+    runtime: SubagentControlRuntime,
+}
+
+impl SpawnAgentTool {
+    fn new(runtime: SubagentControlRuntime) -> Self {
+        Self { runtime }
+    }
+}
+
+#[async_trait]
+impl Tool for SpawnAgentTool {
+    fn name(&self) -> &str {
+        "spawn_agent"
+    }
+
+    fn description(&self) -> &str {
+        "仅在任务需要拆成多个独立子范围、并行评审/验证，或用户明确要求多代理时使用。先判断当前关键路径：如果下一步立即依赖结果，不要把阻塞工作委派出去；优先把可并行推进的 sidecar 子任务交给子代理，同时主线程继续做不重叠的工作。创建真实子代理会话，并异步开始执行首条任务。不要对简单任务创建子代理；多个子代理必须分工明确，避免修改同一片文件；当前 team runtime 默认不允许子代理继续创建新的子代理。"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "发送给子代理的首条任务消息。应是边界清晰、可独立完成、不会与其他并发子代理写入范围重叠的子任务。"
+                },
+                "agentType": {
+                    "type": "string",
+                    "description": "子代理角色提示，例如 explorer/planner/executor，也可以是 Image #1 这类展示标签"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "可选模型覆盖"
+                },
+                "reasoningEffort": {
+                    "type": "string",
+                    "description": "保留字段，当前仅记录到 metadata"
+                },
+                "forkContext": {
+                    "type": "boolean",
+                    "description": "保留字段，当前仅记录到 metadata"
+                },
+                "profileId": {
+                    "type": "string",
+                    "description": "可选内置 profile id，例如 code-explorer / code-executor / code-verifier"
+                },
+                "profileName": {
+                    "type": "string",
+                    "description": "可选 profile 展示名称，用于 Team Workspace 与子代理 prompt"
+                },
+                "roleKey": {
+                    "type": "string",
+                    "description": "可选角色键，例如 explorer / executor / verifier / researcher"
+                },
+                "skillIds": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "可选 builtin skill id 列表，用于附加子代理技能提示"
+                },
+                "skillDirectories": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "可选本地已安装 skill 目录名；会读取对应 SKILL.md 注入子代理 prompt"
+                },
+                "teamPresetId": {
+                    "type": "string",
+                    "description": "可选 team preset id，例如 code-triage-team / research-team / content-creation-team"
+                },
+                "theme": {
+                    "type": "string",
+                    "description": "可选子代理主题标签，用于 GUI 展示与 prompt 约束"
+                },
+                "systemOverlay": {
+                    "type": "string",
+                    "description": "附加给该子代理的额外系统约束"
+                },
+                "outputContract": {
+                    "type": "string",
+                    "description": "要求子代理遵循的输出契约"
+                }
+            },
+            "required": ["message"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        context: &ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        let input: SpawnAgentToolInput = serde_json::from_value(params)
+            .map_err(|error| ToolError::invalid_params(format!("spawn_agent 参数无效: {error}")))?;
+        let response = agent_runtime_spawn_subagent_internal(
+            &self.runtime,
+            AgentRuntimeSpawnSubagentRequest {
+                parent_session_id: context.session_id.clone(),
+                message: input.message,
+                agent_type: input.agent_type,
+                model: input.model,
+                reasoning_effort: input.reasoning_effort,
+                fork_context: input.fork_context.unwrap_or(false),
+                profile_id: input.profile_id,
+                profile_name: input.profile_name,
+                role_key: input.role_key,
+                skill_ids: input.skill_ids,
+                skill_directories: input.skill_directories,
+                team_preset_id: input.team_preset_id,
+                theme: input.theme,
+                system_overlay: input.system_overlay,
+                output_contract: input.output_contract,
+            },
+        )
+        .await
+        .map_err(ToolError::execution_failed)?;
+
+        Ok(
+            ToolResult::success(format!("子代理已创建: {}", response.agent_id)).with_metadata(
+                "spawn_agent",
+                serde_json::to_value(&response).unwrap_or_default(),
+            ),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SendInputToolInput {
+    id: String,
+    message: String,
+    #[serde(default)]
+    interrupt: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SendInputTool {
+    runtime: SubagentControlRuntime,
+}
+
+impl SendInputTool {
+    fn new(runtime: SubagentControlRuntime) -> Self {
+        Self { runtime }
+    }
+}
+
+#[async_trait]
+impl Tool for SendInputTool {
+    fn name(&self) -> &str {
+        "send_input"
+    }
+
+    fn description(&self) -> &str {
+        "向已存在的子代理追加输入。对强依赖既有上下文的后续任务，优先复用已有子代理而不是重复 spawn；interrupt=true 时会先中断当前执行并清空旧队列。"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "子代理 session id"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "要发送给子代理的输入"
+                },
+                "interrupt": {
+                    "type": "boolean",
+                    "description": "是否先中断当前执行"
+                }
+            },
+            "required": ["id", "message"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        _context: &ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        let input: SendInputToolInput = serde_json::from_value(params)
+            .map_err(|error| ToolError::invalid_params(format!("send_input 参数无效: {error}")))?;
+        let response = agent_runtime_send_subagent_input_internal(
+            &self.runtime,
+            AgentRuntimeSendSubagentInputRequest {
+                id: input.id,
+                message: input.message,
+                interrupt: input.interrupt,
+            },
+        )
+        .await
+        .map_err(ToolError::execution_failed)?;
+
+        Ok(
+            ToolResult::success(format!("子代理输入已提交: {}", response.submission_id))
+                .with_metadata(
+                    "send_input",
+                    serde_json::to_value(&response).unwrap_or_default(),
+                ),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WaitAgentToolInput {
+    ids: Vec<String>,
+    #[serde(default, alias = "timeoutMs")]
+    timeout_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+struct WaitAgentTool {
+    runtime: SubagentControlRuntime,
+}
+
+impl WaitAgentTool {
+    fn new(runtime: SubagentControlRuntime) -> Self {
+        Self { runtime }
+    }
+}
+
+#[async_trait]
+impl Tool for WaitAgentTool {
+    fn name(&self) -> &str {
+        "wait_agent"
+    }
+
+    fn description(&self) -> &str {
+        "等待一个或多个子代理进入最终状态。只有在主线程确实被结果阻塞、下一步必须依赖这些结果时才调用；可以同时等待多个 id，任一子代理先完成就会返回。不要反复机械 wait，优先在等待前继续做不重叠的本地工作；timeout_ms 应与任务规模匹配，避免过短轮询。"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "要等待的子代理 session id 列表"
+                },
+                "timeoutMs": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "最长等待时间（毫秒）"
+                }
+            },
+            "required": ["ids"],
+            "additionalProperties": false
+        })
+    }
+
+    fn options(&self) -> ToolOptions {
+        ToolOptions::new()
+            .with_max_retries(0)
+            .with_base_timeout(Duration::from_secs(310))
+            .with_dynamic_timeout(false)
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        _context: &ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        let input: WaitAgentToolInput = serde_json::from_value(params)
+            .map_err(|error| ToolError::invalid_params(format!("wait_agent 参数无效: {error}")))?;
+        let response = agent_runtime_wait_subagents_internal(
+            &self.runtime,
+            AgentRuntimeWaitSubagentsRequest {
+                ids: input.ids,
+                timeout_ms: input.timeout_ms,
+            },
+        )
+        .await
+        .map_err(ToolError::execution_failed)?;
+        let summary = if response.timed_out {
+            "wait_agent 超时，未观测到最终状态".to_string()
+        } else {
+            format!("已观测到 {} 个子代理进入最终状态", response.status.len())
+        };
+
+        Ok(ToolResult::success(summary).with_metadata(
+            "wait_agent",
+            serde_json::to_value(&response).unwrap_or_default(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ResumeAgentToolInput {
+    id: String,
+}
+
+#[derive(Debug, Clone)]
+struct ResumeAgentTool {
+    runtime: SubagentControlRuntime,
+}
+
+impl ResumeAgentTool {
+    fn new(runtime: SubagentControlRuntime) -> Self {
+        Self { runtime }
+    }
+}
+
+#[async_trait]
+impl Tool for ResumeAgentTool {
+    fn name(&self) -> &str {
+        "resume_agent"
+    }
+
+    fn description(&self) -> &str {
+        "恢复之前关闭的子代理；若子代理未关闭则返回当前状态"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "子代理 session id"
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        _context: &ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        let input: ResumeAgentToolInput = serde_json::from_value(params).map_err(|error| {
+            ToolError::invalid_params(format!("resume_agent 参数无效: {error}"))
+        })?;
+        let response = agent_runtime_resume_subagent_internal(
+            &self.runtime,
+            AgentRuntimeResumeSubagentRequest { id: input.id },
+        )
+        .await
+        .map_err(ToolError::execution_failed)?;
+
+        let changed_count = response.changed_session_ids.len();
+        let success_message = if changed_count > 1 {
+            format!("子代理已恢复，并级联恢复 {changed_count} 个会话")
+        } else if changed_count == 1 {
+            "子代理已恢复".to_string()
+        } else {
+            format!("子代理当前状态: {:?}", response.status.kind)
+        };
+
+        Ok(ToolResult::success(success_message).with_metadata(
+            "resume_agent",
+            serde_json::to_value(&response).unwrap_or_default(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CloseAgentToolInput {
+    id: String,
+}
+
+#[derive(Debug, Clone)]
+struct CloseAgentTool {
+    runtime: SubagentControlRuntime,
+}
+
+impl CloseAgentTool {
+    fn new(runtime: SubagentControlRuntime) -> Self {
+        Self { runtime }
+    }
+}
+
+#[async_trait]
+impl Tool for CloseAgentTool {
+    fn name(&self) -> &str {
+        "close_agent"
+    }
+
+    fn description(&self) -> &str {
+        "关闭子代理并级联关闭其子树；历史保留，可后续恢复"
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "description": "子代理 session id"
+                }
+            },
+            "required": ["id"],
+            "additionalProperties": false
+        })
+    }
+
+    async fn execute(
+        &self,
+        params: serde_json::Value,
+        _context: &ToolContext,
+    ) -> Result<ToolResult, ToolError> {
+        let input: CloseAgentToolInput = serde_json::from_value(params)
+            .map_err(|error| ToolError::invalid_params(format!("close_agent 参数无效: {error}")))?;
+        let response = agent_runtime_close_subagent_internal(
+            &self.runtime,
+            AgentRuntimeCloseSubagentRequest { id: input.id },
+        )
+        .await
+        .map_err(ToolError::execution_failed)?;
+
+        let changed_count = response.changed_session_ids.len();
+        let success_message = if changed_count > 1 {
+            format!(
+                "子代理已关闭，并级联关闭 {changed_count} 个会话；关闭前状态: {:?}",
+                response.previous_status.kind
+            )
+        } else {
+            format!(
+                "子代理已关闭，关闭前状态: {:?}",
+                response.previous_status.kind
+            )
+        };
+
+        Ok(ToolResult::success(success_message).with_metadata(
+            "close_agent",
+            serde_json::to_value(&response).unwrap_or_default(),
+        ))
     }
 }
 
@@ -4477,11 +5503,18 @@ impl Tool for LimeCreateVideoGenerationTaskTool {
 
 struct ToolSearchBridgeTool {
     registry: Arc<tokio::sync::RwLock<aster::tools::ToolRegistry>>,
+    extension_manager: Option<Arc<aster::agents::extension_manager::ExtensionManager>>,
 }
 
 impl ToolSearchBridgeTool {
-    fn new(registry: Arc<tokio::sync::RwLock<aster::tools::ToolRegistry>>) -> Self {
-        Self { registry }
+    fn new(
+        registry: Arc<tokio::sync::RwLock<aster::tools::ToolRegistry>>,
+        extension_manager: Option<Arc<aster::agents::extension_manager::ExtensionManager>>,
+    ) -> Self {
+        Self {
+            registry,
+            extension_manager,
+        }
     }
 
     fn with_input_examples_in_schema(
@@ -4513,6 +5546,7 @@ impl ToolSearchBridgeTool {
         enriched
     }
 
+    #[cfg(test)]
     fn parse_schema_metadata(
         tool_name: &str,
         schema: &serde_json::Value,
@@ -4523,93 +5557,47 @@ impl ToolSearchBridgeTool {
         Vec<String>,            // tags
         Vec<serde_json::Value>, // input_examples
     ) {
-        let extension = schema
-            .get("x-lime")
-            .or_else(|| schema.get("x_lime"))
-            .unwrap_or(schema);
-
-        let deferred_loading = extension
-            .get("deferred_loading")
-            .or_else(|| extension.get("deferredLoading"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let always_visible = extension
-            .get("always_visible")
-            .or_else(|| extension.get("alwaysVisible"))
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let allowed_callers = extension
-            .get("allowed_callers")
-            .or_else(|| extension.get("allowedCallers"))
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .map(|v| v.trim().to_ascii_lowercase())
-                    .filter(|v| !v.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let tags = extension
-            .get("tags")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str())
-                    .map(|v| v.trim().to_ascii_lowercase())
-                    .filter(|v| !v.is_empty())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let input_examples =
-            lime_core::tool_calling::resolve_tool_input_examples(tool_name, schema);
+        let metadata = lime_core::tool_calling::extract_tool_surface_metadata(tool_name, schema);
 
         (
-            deferred_loading,
-            always_visible,
-            allowed_callers,
-            tags,
-            input_examples,
+            metadata.deferred_loading.unwrap_or(false),
+            metadata.always_visible.unwrap_or(false),
+            metadata.allowed_callers.unwrap_or_default(),
+            metadata.tags.unwrap_or_default(),
+            metadata.input_examples,
         )
     }
 
     fn score_match(name: &str, description: &str, tags: &[String], query: &str) -> i32 {
-        if query.is_empty() {
-            return 1;
-        }
-        let name_lc = name.to_ascii_lowercase();
-        let description_lc = description.to_ascii_lowercase();
+        lime_core::tool_calling::score_tool_match(name, description, tags, query)
+    }
 
-        let mut score = 0;
-        if name_lc == query {
-            score += 120;
-        } else if name_lc.starts_with(query) {
-            score += 90;
-        } else if name_lc.contains(query) {
-            score += 70;
-        }
-        if description_lc.contains(query) {
-            score += 40;
-        }
-        for tag in tags {
-            if tag == query {
-                score += 35;
-            } else if tag.contains(query) {
-                score += 20;
-            }
-        }
-        score
+    fn extension_tool_status(
+        extension_configs: &[ExtensionConfig],
+        visible_extension_tools: &HashSet<String>,
+        tool_name: &str,
+    ) -> (&'static str, bool, Option<String>) {
+        let status = resolve_extension_tool_runtime_status(
+            extension_configs,
+            visible_extension_tools,
+            tool_name,
+        );
+        (
+            status.status,
+            status.deferred_loading,
+            status.extension_name,
+        )
     }
 }
 
 #[async_trait]
 impl Tool for ToolSearchBridgeTool {
     fn name(&self) -> &str {
-        "tool_search"
+        TOOL_SEARCH_TOOL_NAME
     }
 
     fn description(&self) -> &str {
-        "搜索当前会话可用工具；默认会过滤 deferred_loading 工具，并按调用方做 allowed_callers 约束。"
+        "统一搜索当前会话工具面：包含原生 registry 工具与 extension/MCP 工具。对 deferred 工具会返回加载提示。"
     }
 
     fn input_schema(&self) -> serde_json::Value {
@@ -4671,15 +5659,22 @@ impl Tool for ToolSearchBridgeTool {
             .into_iter()
             .filter(|d| d.name != self.name())
             .filter_map(|definition| {
-                let (deferred_loading, always_visible, allowed_callers, tags, input_examples) =
-                    Self::parse_schema_metadata(&definition.name, &definition.input_schema);
-                if deferred_loading && !always_visible && !include_deferred {
+                let metadata = lime_core::tool_calling::extract_tool_surface_metadata(
+                    &definition.name,
+                    &definition.input_schema,
+                );
+                if !lime_core::tool_calling::tool_visible_in_context(&metadata, include_deferred) {
                     return None;
                 }
-                if !allowed_callers.is_empty() && !allowed_callers.contains(&caller) {
+                if !lime_core::tool_calling::tool_matches_caller(&metadata, Some(&caller)) {
                     return None;
                 }
 
+                let deferred_loading = metadata.deferred_loading.unwrap_or(false);
+                let always_visible = metadata.always_visible.unwrap_or(false);
+                let allowed_callers = metadata.allowed_callers.unwrap_or_default();
+                let tags = metadata.tags.unwrap_or_default();
+                let input_examples = metadata.input_examples;
                 let score =
                     Self::score_match(&definition.name, &definition.description, &tags, &query);
                 if score <= 0 {
@@ -4692,6 +5687,7 @@ impl Tool for ToolSearchBridgeTool {
                         &input_examples,
                     );
                     serde_json::json!({
+                        "source": "native_registry",
                         "name": definition.name,
                         "description": definition.description,
                         "input_schema": enriched_schema,
@@ -4703,6 +5699,7 @@ impl Tool for ToolSearchBridgeTool {
                     })
                 } else {
                     serde_json::json!({
+                        "source": "native_registry",
                         "name": definition.name,
                         "description": definition.description,
                         "deferred_loading": deferred_loading,
@@ -4715,6 +5712,77 @@ impl Tool for ToolSearchBridgeTool {
                 Some((score, item))
             })
             .collect::<Vec<_>>();
+
+        drop(registry);
+
+        if let Some(extension_manager) = self.extension_manager.as_ref() {
+            let visible_extension_tools = extension_manager
+                .get_prefixed_tools(None)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tool| tool.name.to_string())
+                .collect::<HashSet<_>>();
+            let extension_configs = extension_manager.get_extension_configs().await;
+            let extension_tools = extension_manager
+                .get_prefixed_tools_for_search(None)
+                .await
+                .unwrap_or_default();
+
+            for tool in extension_tools {
+                if tool.name.as_ref() == self.name() {
+                    continue;
+                }
+
+                let tool_name = tool.name.to_string();
+                let description = tool.description.as_deref().unwrap_or("").to_string();
+                let score = Self::score_match(&tool_name, &description, &[], &query);
+                if score <= 0 {
+                    continue;
+                }
+
+                let (status, deferred_loading, extension_name) = Self::extension_tool_status(
+                    &extension_configs,
+                    &visible_extension_tools,
+                    &tool_name,
+                );
+                let input_schema = serde_json::Value::Object((*tool.input_schema).clone());
+                let activation = if deferred_loading {
+                    serde_json::json!({
+                        "tool": "extensionmanager__load_tools",
+                        "arguments": {
+                            "tool_names": [tool_name.clone()]
+                        }
+                    })
+                } else {
+                    serde_json::Value::Null
+                };
+
+                let item = if include_schema {
+                    serde_json::json!({
+                        "source": "extension",
+                        "name": tool_name,
+                        "description": description,
+                        "extension_name": extension_name,
+                        "input_schema": input_schema,
+                        "deferred_loading": deferred_loading,
+                        "status": status,
+                        "activation": activation
+                    })
+                } else {
+                    serde_json::json!({
+                        "source": "extension",
+                        "name": tool_name,
+                        "description": description,
+                        "extension_name": extension_name,
+                        "deferred_loading": deferred_loading,
+                        "status": status,
+                        "activation": activation
+                    })
+                };
+                scored.push((score, item));
+            }
+        }
 
         scored.sort_by(|(a_score, a_item), (b_score, b_item)| {
             b_score.cmp(a_score).then_with(|| {
@@ -4745,7 +5813,7 @@ impl Tool for ToolSearchBridgeTool {
 fn browser_mcp_tool_names() -> Vec<String> {
     let mut names = Vec::new();
     for tool in get_chrome_mcp_tools() {
-        names.push(format!("mcp__lime-browser__{}", tool.name));
+        names.push(format!("{}{}", browser_runtime_tool_prefix(), tool.name));
     }
     names
 }
@@ -4820,11 +5888,15 @@ fn register_creation_task_tools_to_registry(
 fn register_tool_search_tool_to_registry(
     registry: &mut aster::tools::ToolRegistry,
     registry_arc: Arc<tokio::sync::RwLock<aster::tools::ToolRegistry>>,
+    extension_manager: Option<Arc<aster::agents::extension_manager::ExtensionManager>>,
 ) {
-    if registry.contains("tool_search") {
+    if registry.contains(TOOL_SEARCH_TOOL_NAME) {
         return;
     }
-    registry.register(Box::new(ToolSearchBridgeTool::new(registry_arc)));
+    registry.register(Box::new(ToolSearchBridgeTool::new(
+        registry_arc,
+        extension_manager,
+    )));
 }
 
 pub async fn ensure_browser_mcp_tools_registered(state: &AsterAgentState) -> Result<(), String> {
@@ -4834,11 +5906,16 @@ pub async fn ensure_browser_mcp_tools_registered(state: &AsterAgentState) -> Res
         .as_ref()
         .ok_or_else(|| "Agent not initialized".to_string())?;
     let registry_arc = agent.tool_registry().clone();
+    let extension_manager = agent.extension_manager.clone();
     drop(guard);
 
     let mut registry = registry_arc.write().await;
     register_browser_mcp_tools_to_registry(&mut registry);
-    register_tool_search_tool_to_registry(&mut registry, registry_arc.clone());
+    register_tool_search_tool_to_registry(
+        &mut registry,
+        registry_arc.clone(),
+        Some(extension_manager),
+    );
     Ok(())
 }
 
@@ -4890,26 +5967,56 @@ pub async fn ensure_tool_search_tool_registered(state: &AsterAgentState) -> Resu
         .as_ref()
         .ok_or_else(|| "Agent not initialized".to_string())?;
     let registry_arc = agent.tool_registry().clone();
+    let extension_manager = agent.extension_manager.clone();
     drop(guard);
 
     let mut registry = registry_arc.write().await;
-    register_tool_search_tool_to_registry(&mut registry, registry_arc.clone());
+    register_tool_search_tool_to_registry(
+        &mut registry,
+        registry_arc.clone(),
+        Some(extension_manager),
+    );
     Ok(())
 }
 
-fn build_workspace_shell_allow_pattern(
-    escaped_root: &str,
-    allow_extended_shell_commands: bool,
-) -> String {
-    if allow_extended_shell_commands {
-        // Auto 模式放宽命令白名单，交由本地 sandbox 与 BashTool 安全检查兜底。
-        // 这里使用 DOTALL 支持 heredoc 等多行命令（例如 python <<'EOF' ...）。
-        return String::from(r"(?s)^\s*\S.*$");
+fn unregister_named_tools(registry: &mut aster::tools::ToolRegistry, tool_names: &[&str]) {
+    for tool_name in tool_names {
+        registry.unregister(tool_name);
+    }
+}
+
+fn unregister_browser_mcp_tools_from_registry(registry: &mut aster::tools::ToolRegistry) {
+    for tool_name in browser_mcp_tool_names() {
+        registry.unregister(&tool_name);
+    }
+}
+
+fn sync_workspace_mode_native_tool_surface(
+    registry: &mut aster::tools::ToolRegistry,
+    surface: WorkspaceToolSurface,
+    db: DbConnection,
+    api_key_provider_service: Arc<ApiKeyProviderService>,
+    app_handle: AppHandle,
+    config_manager: Arc<GlobalConfigManager>,
+) {
+    if surface.browser_assist {
+        register_browser_mcp_tools_to_registry(registry);
+    } else {
+        unregister_browser_mcp_tools_from_registry(registry);
     }
 
-    format!(
-        r"^\s*(?:cd\s+({escaped_root}|\.|\./|\.\./)|pwd|ls(?:\s+[^;&|]+)?|find\s+({escaped_root}|\.|\./|\.\./)[^;&|]*|rg\b[^;&|]*|grep\b[^;&|]*|cat\s+({escaped_root}|\.|\./|\.\./)[^;&|]*)\s*$"
-    )
+    if surface.creator {
+        register_social_image_tool_to_registry(registry, config_manager);
+        register_creation_task_tools_to_registry(
+            registry,
+            db,
+            api_key_provider_service,
+            app_handle,
+        );
+    } else {
+        let creator_tools = creator_tool_names();
+        unregister_named_tools(registry, &creator_tools);
+    }
 }
 
 /// 为指定工作区生成本地 sandbox 权限模板
@@ -4918,11 +6025,14 @@ async fn apply_workspace_sandbox_permissions(
     config_manager: &GlobalConfigManagerState,
     db: &DbConnection,
     api_key_provider_service: &ApiKeyProviderServiceState,
-    _automation_state: &AutomationServiceState,
+    logs: &LogState,
+    mcp_manager: &McpManagerState,
+    automation_state: &AutomationServiceState,
     app_handle: &AppHandle,
     session_id: &str,
     request_metadata: Option<&serde_json::Value>,
     workspace_root: &str,
+    runtime_chat_mode: RuntimeChatMode,
     execution_strategy: AsterExecutionStrategy,
 ) -> Result<WorkspaceSandboxApplyOutcome, String> {
     let workspace_root = workspace_root.trim();
@@ -4932,11 +6042,23 @@ async fn apply_workspace_sandbox_permissions(
 
     let sandbox_policy = resolve_workspace_sandbox_policy(config_manager);
     let auto_mode = execution_strategy == AsterExecutionStrategy::Auto;
+    let current_config = config_manager.config();
+    let execution_policy_input = ToolExecutionResolverInput {
+        persisted_policy: Some(&current_config.agent.tool_execution),
+        request_metadata,
+    };
+    let tool_surface = WorkspaceToolSurface {
+        creator: runtime_chat_mode == RuntimeChatMode::Creator,
+        browser_assist: is_browser_assist_enabled(request_metadata),
+    };
     let mut sandboxed_bash_tool: Option<WorkspaceSandboxedBashTool> = None;
     let apply_outcome = if !sandbox_policy.enabled {
         WorkspaceSandboxApplyOutcome::DisabledByConfig
     } else {
-        match WorkspaceSandboxedBashTool::new(workspace_root, auto_mode) {
+        match WorkspaceSandboxedBashTool::new(
+            workspace_root,
+            should_auto_approve_tool_warnings("bash", auto_mode, execution_policy_input),
+        ) {
             Ok(tool) => {
                 let sandbox_type = tool.sandbox_type().to_string();
                 sandboxed_bash_tool = Some(tool);
@@ -4956,473 +6078,31 @@ async fn apply_workspace_sandbox_permissions(
         }
     };
 
-    let escaped_root = regex::escape(workspace_root);
-    let virtual_memory_path_pattern = durable_memory_permission_pattern();
-    let workspace_path_pattern =
-        format!(r"^(?:({escaped_root}|\.|\./|\.\./).*$|{virtual_memory_path_pattern})");
-    let workspace_abs_path_pattern = format!(r"^({escaped_root}).*$");
-    let analyze_image_path_pattern = format!(
-        r"^(base64:[A-Za-z0-9+/=]+|file://({escaped_root}).*|({escaped_root}|\.|\./|\.\./).*)$"
-    );
-    let safe_https_url_pattern = String::from(r"^https://[^\s]+$");
-    let mut permissions = vec![
-        ToolPermission {
-            tool: "read".to_string(),
-            allowed: true,
-            priority: 100,
-            conditions: Vec::new(),
-            parameter_restrictions: if auto_mode {
-                Vec::new()
-            } else {
-                vec![ParameterRestriction {
-                    parameter: "path".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(workspace_path_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: true,
-                    description: Some(
-                        "read.path 必须在 workspace、相对路径或 `/memories/...` 内".to_string(),
-                    ),
-                }]
-            },
-            scope: PermissionScope::Session,
-            reason: Some(if auto_mode {
-                "Auto 模式：允许读取任意路径".to_string()
-            } else {
-                "仅允许读取当前 workspace 或 `/memories/` 内容".to_string()
-            }),
-            expires_at: None,
-            metadata: HashMap::new(),
-        },
-        ToolPermission {
-            tool: "write".to_string(),
-            allowed: true,
-            priority: 100,
-            conditions: Vec::new(),
-            parameter_restrictions: if auto_mode {
-                Vec::new()
-            } else {
-                vec![ParameterRestriction {
-                    parameter: "path".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(workspace_path_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: true,
-                    description: Some(
-                        "write.path 必须在 workspace、相对路径或 `/memories/...` 内".to_string(),
-                    ),
-                }]
-            },
-            scope: PermissionScope::Session,
-            reason: Some(if auto_mode {
-                "Auto 模式：允许写入任意路径".to_string()
-            } else {
-                "仅允许写入当前 workspace 或 `/memories/` 内容".to_string()
-            }),
-            expires_at: None,
-            metadata: HashMap::new(),
-        },
-        ToolPermission {
-            tool: "edit".to_string(),
-            allowed: true,
-            priority: 100,
-            conditions: Vec::new(),
-            parameter_restrictions: if auto_mode {
-                Vec::new()
-            } else {
-                vec![ParameterRestriction {
-                    parameter: "path".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(workspace_path_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: true,
-                    description: Some(
-                        "edit.path 必须在 workspace、相对路径或 `/memories/...` 内".to_string(),
-                    ),
-                }]
-            },
-            scope: PermissionScope::Session,
-            reason: Some(if auto_mode {
-                "Auto 模式：允许编辑任意路径".to_string()
-            } else {
-                "仅允许编辑当前 workspace 或 `/memories/` 内容".to_string()
-            }),
-            expires_at: None,
-            metadata: HashMap::new(),
-        },
-        ToolPermission {
-            tool: "glob".to_string(),
-            allowed: true,
-            priority: 100,
-            conditions: Vec::new(),
-            parameter_restrictions: if auto_mode {
-                Vec::new()
-            } else {
-                vec![ParameterRestriction {
-                    parameter: "path".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(workspace_path_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: false,
-                    description: Some(
-                        "glob.path 必须在 workspace、相对路径或 `/memories/...` 内".to_string(),
-                    ),
-                }]
-            },
-            scope: PermissionScope::Session,
-            reason: Some(if auto_mode {
-                "Auto 模式：允许任意路径搜索文件".to_string()
-            } else {
-                "仅允许在当前 workspace 或 `/memories/` 搜索文件".to_string()
-            }),
-            expires_at: None,
-            metadata: HashMap::new(),
-        },
-        ToolPermission {
-            tool: "grep".to_string(),
-            allowed: true,
-            priority: 100,
-            conditions: Vec::new(),
-            parameter_restrictions: if auto_mode {
-                Vec::new()
-            } else {
-                vec![ParameterRestriction {
-                    parameter: "path".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(workspace_path_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: false,
-                    description: Some(
-                        "grep.path 必须在 workspace、相对路径或 `/memories/...` 内".to_string(),
-                    ),
-                }]
-            },
-            scope: PermissionScope::Session,
-            reason: Some(if auto_mode {
-                "Auto 模式：允许任意路径搜索内容".to_string()
-            } else {
-                "仅允许在当前 workspace 或 `/memories/` 搜索内容".to_string()
-            }),
-            expires_at: None,
-            metadata: HashMap::new(),
-        },
-    ];
-
-    let allow_shell_pattern = build_workspace_shell_allow_pattern(&escaped_root, auto_mode);
-    let shell_permission_description = if auto_mode {
-        "Auto 模式：允许任意 bash.command"
-    } else {
-        "bash.command 仅允许 workspace 内安全读操作"
-    };
-    let shell_permission_reason = if auto_mode {
-        "workspace 安全策略：Auto 模式允许任意命令（由本地 sandbox 兜底）"
-    } else {
-        "workspace 安全策略：bash 仅允许 workspace 内安全命令"
-    };
-
-    permissions.push(ToolPermission {
-        tool: "bash".to_string(),
-        allowed: true,
-        priority: 90,
-        conditions: Vec::new(),
-        parameter_restrictions: if auto_mode {
-            Vec::new()
-        } else {
-            vec![
-                ParameterRestriction {
-                    parameter: "command".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(allow_shell_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: false,
-                    description: Some(shell_permission_description.to_string()),
-                },
-                ParameterRestriction {
-                    parameter: "cmd".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(allow_shell_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: false,
-                    description: Some("bash.cmd 兼容参数名，规则与 command 一致".to_string()),
-                },
-            ]
-        },
-        scope: PermissionScope::Session,
-        reason: Some(shell_permission_reason.to_string()),
-        expires_at: None,
-        metadata: HashMap::new(),
-    });
-
-    let task_permission_description = if auto_mode {
-        "Auto 模式：允许任意 Task.command"
-    } else {
-        "Task.command 仅允许 workspace 内安全命令"
-    };
-    let task_permission_reason = if auto_mode {
-        "workspace 安全策略：Auto 模式允许 Task 执行任意命令"
-    } else {
-        "workspace 安全策略：Task 仅允许 workspace 内安全命令"
-    };
-
-    permissions.push(ToolPermission {
-        tool: "Task".to_string(),
-        allowed: true,
-        priority: 88,
-        conditions: Vec::new(),
-        parameter_restrictions: if auto_mode {
-            Vec::new()
-        } else {
-            vec![
-                ParameterRestriction {
-                    parameter: "command".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(allow_shell_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: false,
-                    description: Some(task_permission_description.to_string()),
-                },
-                ParameterRestriction {
-                    parameter: "cmd".to_string(),
-                    restriction_type: RestrictionType::Pattern,
-                    values: None,
-                    pattern: Some(allow_shell_pattern.clone()),
-                    validator: None,
-                    min: None,
-                    max: None,
-                    required: false,
-                    description: Some("Task.cmd 兼容参数名，规则与 command 一致".to_string()),
-                },
-            ]
-        },
-        scope: PermissionScope::Session,
-        reason: Some(task_permission_reason.to_string()),
-        expires_at: None,
-        metadata: HashMap::new(),
-    });
-
-    permissions.push(ToolPermission {
-        tool: "lsp".to_string(),
-        allowed: true,
-        priority: 88,
-        conditions: Vec::new(),
-        parameter_restrictions: if auto_mode {
-            Vec::new()
-        } else {
-            vec![ParameterRestriction {
-                parameter: "path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(workspace_path_pattern.clone()),
-                validator: None,
-                min: None,
-                max: None,
-                required: true,
-                description: Some("lsp.path 必须在 workspace 内或相对路径".to_string()),
-            }]
-        },
-        scope: PermissionScope::Session,
-        reason: Some(if auto_mode {
-            "Auto 模式：允许任意 LSP 路径".to_string()
-        } else {
-            "允许在 workspace 内使用 LSP".to_string()
-        }),
-        expires_at: None,
-        metadata: HashMap::new(),
-    });
-
-    permissions.push(ToolPermission {
-        tool: "NotebookEdit".to_string(),
-        allowed: true,
-        priority: 88,
-        conditions: Vec::new(),
-        parameter_restrictions: if auto_mode {
-            Vec::new()
-        } else {
-            vec![ParameterRestriction {
-                parameter: "notebook_path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(workspace_abs_path_pattern.clone()),
-                validator: None,
-                min: None,
-                max: None,
-                required: true,
-                description: Some(
-                    "NotebookEdit.notebook_path 必须是 workspace 内绝对路径".to_string(),
-                ),
-            }]
-        },
-        scope: PermissionScope::Session,
-        reason: Some(if auto_mode {
-            "Auto 模式：允许编辑任意 Notebook 路径".to_string()
-        } else {
-            "允许编辑 workspace 内 Notebook".to_string()
-        }),
-        expires_at: None,
-        metadata: HashMap::new(),
-    });
-
-    permissions.push(ToolPermission {
-        tool: "analyze_image".to_string(),
-        allowed: true,
-        priority: 88,
-        conditions: Vec::new(),
-        parameter_restrictions: if auto_mode {
-            Vec::new()
-        } else {
-            vec![ParameterRestriction {
-                parameter: "file_path".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(analyze_image_path_pattern),
-                validator: None,
-                min: None,
-                max: None,
-                required: true,
-                description: Some(
-                    "analyze_image.file_path 仅允许 base64、workspace 内绝对路径或相对路径"
-                        .to_string(),
-                ),
-            }]
-        },
-        scope: PermissionScope::Session,
-        reason: Some(if auto_mode {
-            "Auto 模式：允许分析任意图片路径或 base64".to_string()
-        } else {
-            "允许分析 workspace 内图片或 base64 数据".to_string()
-        }),
-        expires_at: None,
-        metadata: HashMap::new(),
-    });
-
-    permissions.push(ToolPermission {
-        tool: "WebFetch".to_string(),
-        allowed: true,
-        priority: 88,
-        conditions: Vec::new(),
-        parameter_restrictions: if auto_mode {
-            Vec::new()
-        } else {
-            vec![ParameterRestriction {
-                parameter: "url".to_string(),
-                restriction_type: RestrictionType::Pattern,
-                values: None,
-                pattern: Some(safe_https_url_pattern),
-                validator: None,
-                min: None,
-                max: None,
-                required: true,
-                description: Some("WebFetch.url 仅允许 https 且禁止内网/本机地址".to_string()),
-            }]
-        },
-        scope: PermissionScope::Session,
-        reason: Some(if auto_mode {
-            "Auto 模式：允许任意 WebFetch URL".to_string()
-        } else {
-            "允许安全的 WebFetch 请求".to_string()
-        }),
-        expires_at: None,
-        metadata: HashMap::new(),
-    });
-
-    if auto_mode {
-        permissions.push(ToolPermission {
-            tool: "*".to_string(),
-            allowed: true,
-            priority: 1000,
-            conditions: Vec::new(),
-            parameter_restrictions: Vec::new(),
-            scope: PermissionScope::Session,
-            reason: Some("Auto 模式：允许所有工具与参数".to_string()),
-            expires_at: None,
-            metadata: HashMap::new(),
+    let mut permissions =
+        build_workspace_execution_permissions(WorkspaceExecutionPermissionInput {
+            surface: tool_surface,
+            workspace_root,
+            auto_mode,
+            execution_policy_input,
         });
-    }
 
-    for tool_name in [
-        "Skill",
-        "SubAgentTask",
-        "TaskOutput",
-        "KillShell",
-        "TodoWrite",
-        "EnterPlanMode",
-        "ExitPlanMode",
-        "WebSearch",
-        "ask",
-        "tool_search",
-        SOCIAL_IMAGE_TOOL_NAME,
-        LIME_CREATE_VIDEO_TASK_TOOL_NAME,
-        LIME_CREATE_BROADCAST_TASK_TOOL_NAME,
-        LIME_CREATE_COVER_TASK_TOOL_NAME,
-        LIME_CREATE_RESOURCE_SEARCH_TASK_TOOL_NAME,
-        LIME_CREATE_IMAGE_TASK_TOOL_NAME,
-        LIME_CREATE_URL_PARSE_TASK_TOOL_NAME,
-        LIME_CREATE_TYPESETTING_TASK_TOOL_NAME,
-    ] {
-        permissions.push(ToolPermission {
-            tool: tool_name.to_string(),
-            allowed: true,
-            priority: 88,
-            conditions: Vec::new(),
-            parameter_restrictions: Vec::new(),
-            scope: PermissionScope::Session,
-            reason: Some(format!("允许默认工具: {tool_name}")),
-            expires_at: None,
-            metadata: HashMap::new(),
-        });
-    }
-
-    for tool_name in browser_mcp_tool_names() {
-        permissions.push(ToolPermission {
-            tool: tool_name,
-            allowed: true,
-            priority: 88,
-            conditions: Vec::new(),
-            parameter_restrictions: Vec::new(),
-            scope: PermissionScope::Session,
-            reason: Some("允许浏览器 MCP 兼容工具".to_string()),
-            expires_at: None,
-            metadata: HashMap::new(),
-        });
+    if tool_surface.browser_assist {
+        for tool_name in browser_mcp_tool_names() {
+            permissions.push(ToolPermission {
+                tool: tool_name,
+                allowed: true,
+                priority: 88,
+                conditions: Vec::new(),
+                parameter_restrictions: Vec::new(),
+                scope: PermissionScope::Session,
+                reason: Some("允许浏览器 MCP 兼容工具".to_string()),
+                expires_at: None,
+                metadata: HashMap::new(),
+            });
+        }
     }
 
     append_browser_assist_session_permissions(&mut permissions, session_id, request_metadata);
-
-    permissions.push(ToolPermission {
-        tool: "*".to_string(),
-        allowed: false,
-        priority: 10,
-        conditions: Vec::new(),
-        parameter_restrictions: Vec::new(),
-        scope: PermissionScope::Session,
-        reason: Some("workspace 安全策略：未显式授权的工具默认拒绝".to_string()),
-        expires_at: None,
-        metadata: HashMap::new(),
-    });
 
     let agent_arc = state.get_agent_arc();
     let guard = agent_arc.read().await;
@@ -5434,13 +6114,6 @@ async fn apply_workspace_sandbox_permissions(
 
     let mut registry = registry_arc.write().await;
     let mut permission_manager = ToolPermissionManager::new(None);
-    if let Some(existing_manager) = registry.permission_manager() {
-        for permission in existing_manager.get_permissions(None) {
-            let scope = permission.scope;
-            permission_manager.add_permission(permission, scope);
-        }
-    }
-
     for permission in permissions {
         permission_manager.add_permission(permission, PermissionScope::Session);
     }
@@ -5448,13 +6121,25 @@ async fn apply_workspace_sandbox_permissions(
 
     let task_manager = shared_task_manager();
     registry.register(Box::new(WorkspaceTaskTool::new(
-        auto_mode,
+        should_auto_approve_tool_warnings("Task", auto_mode, execution_policy_input),
         task_manager.clone(),
     )));
-    registry.register(Box::new(SubAgentTaskTool::new(
-        db.clone(),
+    let subagent_runtime = SubagentControlRuntime::new(
         app_handle.clone(),
-    )));
+        state,
+        db,
+        api_key_provider_service,
+        logs,
+        config_manager,
+        mcp_manager,
+        automation_state,
+    );
+    registry.register(Box::new(SubAgentTaskTool::new(subagent_runtime.clone())));
+    registry.register(Box::new(SpawnAgentTool::new(subagent_runtime.clone())));
+    registry.register(Box::new(SendInputTool::new(subagent_runtime.clone())));
+    registry.register(Box::new(WaitAgentTool::new(subagent_runtime.clone())));
+    registry.register(Box::new(ResumeAgentTool::new(subagent_runtime.clone())));
+    registry.register(Box::new(CloseAgentTool::new(subagent_runtime)));
     registry.register(Box::new(WorkspaceTaskOutputTool::new(task_manager.clone())));
     registry.register(Box::new(KillShellTool::with_task_manager(task_manager)));
 
@@ -5462,16 +6147,14 @@ async fn apply_workspace_sandbox_permissions(
         registry.register(Box::new(workspace_bash_tool));
     }
 
-    register_social_image_tool_to_registry(&mut registry, config_manager.0.clone());
-    register_creation_task_tools_to_registry(
+    sync_workspace_mode_native_tool_surface(
         &mut registry,
+        tool_surface,
         db.clone(),
         api_key_provider_service.0.clone(),
         app_handle.clone(),
+        config_manager.0.clone(),
     );
-
-    // 注册浏览器 MCP 工具
-    register_browser_mcp_tools_to_registry(&mut registry);
     wrap_registry_native_tools_for_durable_memory_fs(&mut registry);
     wrap_registry_native_tools_for_harness_observability(&mut registry);
 
@@ -5521,9 +6204,7 @@ async fn execute_aster_chat_request(
             tracing::warn!("[AsterAgent] session_store 存在: {}", has_store);
         }
     }
-    ensure_browser_mcp_tools_registered(state).await?;
     ensure_tool_search_tool_registered(state).await?;
-    ensure_social_image_tool_registered(state, config_manager).await?;
 
     // 直接使用前端传递的 session_id
     // LimeSessionStore 会在 add_message 时自动创建不存在的 session
@@ -5743,10 +6424,13 @@ async fn execute_aster_chat_request(
             MemoryPromptContext::with_working_dir(Path::new(&workspace_root)),
         );
         let merged_prompt = merge_system_prompt_with_auto_continue(
-            merge_system_prompt_with_elicitation_context(
-                merge_system_prompt_with_request_tool_policy(
-                    merge_system_prompt_with_web_search(prompt_with_memory, &runtime_config),
-                    &request_tool_policy,
+            merge_system_prompt_with_team_preference(
+                merge_system_prompt_with_elicitation_context(
+                    merge_system_prompt_with_request_tool_policy(
+                        merge_system_prompt_with_web_search(prompt_with_memory, &runtime_config),
+                        &request_tool_policy,
+                    ),
+                    request.metadata.as_ref(),
                 ),
                 request.metadata.as_ref(),
             ),
@@ -5794,14 +6478,24 @@ async fn execute_aster_chat_request(
         );
         let config = ProviderConfig {
             provider_name: provider_config.provider_name.clone(),
+            provider_selector: provider_config
+                .provider_id
+                .clone()
+                .or_else(|| Some(provider_config.provider_name.clone())),
             model_name: provider_config.model_name.clone(),
             api_key: provider_config.api_key.clone(),
             base_url: provider_config.base_url.clone(),
             credential_uuid: None,
+            force_responses_api: false,
         };
         // 如果前端提供了 api_key，直接使用；否则从凭证池选择凭证
         if provider_config.api_key.is_some() {
             state.configure_provider(config, session_id, db).await?;
+            let provider_selector = provider_config
+                .provider_id
+                .as_deref()
+                .unwrap_or(&provider_config.provider_name);
+            persist_session_provider_routing(session_id, provider_selector).await?;
         } else {
             // 没有 api_key，使用凭证池（优先 provider_id，其次 provider_name）
             let provider_selector = provider_config
@@ -5816,6 +6510,7 @@ async fn execute_aster_chat_request(
                     session_id,
                 )
                 .await?;
+            persist_session_provider_routing(session_id, provider_selector).await?;
         }
     }
 
@@ -5829,11 +6524,14 @@ async fn execute_aster_chat_request(
         config_manager,
         db,
         api_key_provider_service,
+        logs,
+        mcp_manager,
         automation_state,
         app,
         session_id,
         request.metadata.as_ref(),
         &workspace_root,
+        runtime_chat_mode,
         requested_strategy,
     )
     .await
@@ -6200,6 +6898,7 @@ async fn execute_aster_chat_request(
             if let Err(e) = app.emit(&request.event_name, &done_event) {
                 tracing::error!("[AsterAgent] 发送完成事件失败: {}", e);
             }
+            emit_subagent_status_changed_events(app, session_id).await;
         }
         Err(e) => {
             complete_runtime_status_projection(
@@ -6227,6 +6926,7 @@ async fn execute_aster_chat_request(
             if let Err(emit_err) = app.emit(&request.event_name, &error_event) {
                 tracing::error!("[AsterAgent] 发送错误事件失败: {}", emit_err);
             }
+            emit_subagent_status_changed_events(app, session_id).await;
             state.remove_cancel_token(session_id).await;
             return Err(e);
         }
@@ -6303,6 +7003,1040 @@ fn build_runtime_queue_executor() -> RuntimeQueueExecutor {
             .await
         }
         .boxed()
+    })
+}
+
+const SUBAGENT_RUNTIME_EVENT_PREFIX: &str = "agent_subagent_stream";
+const SUBAGENT_STATUS_EVENT_PREFIX: &str = "agent_subagent_status";
+const SUBAGENT_CONTROL_CLOSE_REASON: &str = "close_agent";
+const DEFAULT_WAIT_AGENT_TIMEOUT_MS: i64 = 30_000;
+const MIN_WAIT_AGENT_TIMEOUT_MS: i64 = 1_000;
+const MAX_WAIT_AGENT_TIMEOUT_MS: i64 = 300_000;
+
+#[derive(Debug, Clone, Serialize)]
+struct SubagentStatusChangedEvent {
+    #[serde(rename = "type")]
+    event_type: &'static str,
+    session_id: String,
+    root_session_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent_session_id: Option<String>,
+    status: SubagentRuntimeStatusKind,
+}
+
+struct SubagentControlRuntime {
+    app_handle: AppHandle,
+    state: AsterAgentState,
+    db: DbConnection,
+    api_key_provider_service: ApiKeyProviderServiceState,
+    logs: LogState,
+    config_manager: GlobalConfigManagerState,
+    mcp_manager: McpManagerState,
+    automation_state: AutomationServiceState,
+}
+
+impl std::fmt::Debug for SubagentControlRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubagentControlRuntime")
+            .field("app_handle", &"<tauri-app-handle>")
+            .field("state", &"<aster-agent-state>")
+            .field("db", &"<db-connection>")
+            .field("api_key_provider_service", &"<api-key-provider-service>")
+            .field("logs", &"<log-state>")
+            .field("config_manager", &"<global-config-manager>")
+            .field("mcp_manager", &"<mcp-manager>")
+            .field("automation_state", &"<automation-state>")
+            .finish()
+    }
+}
+
+impl Clone for SubagentControlRuntime {
+    fn clone(&self) -> Self {
+        Self {
+            app_handle: self.app_handle.clone(),
+            state: self.state.clone(),
+            db: self.db.clone(),
+            api_key_provider_service: ApiKeyProviderServiceState(
+                self.api_key_provider_service.0.clone(),
+            ),
+            logs: self.logs.clone(),
+            config_manager: GlobalConfigManagerState(self.config_manager.0.clone()),
+            mcp_manager: self.mcp_manager.clone(),
+            automation_state: self.automation_state.clone(),
+        }
+    }
+}
+
+impl SubagentControlRuntime {
+    fn new(
+        app_handle: AppHandle,
+        state: &AsterAgentState,
+        db: &DbConnection,
+        api_key_provider_service: &ApiKeyProviderServiceState,
+        logs: &LogState,
+        config_manager: &GlobalConfigManagerState,
+        mcp_manager: &McpManagerState,
+        automation_state: &AutomationServiceState,
+    ) -> Self {
+        Self {
+            app_handle,
+            state: state.clone(),
+            db: db.clone(),
+            api_key_provider_service: ApiKeyProviderServiceState(
+                api_key_provider_service.0.clone(),
+            ),
+            logs: logs.clone(),
+            config_manager: GlobalConfigManagerState(config_manager.0.clone()),
+            mcp_manager: mcp_manager.clone(),
+            automation_state: automation_state.clone(),
+        }
+    }
+
+    async fn ensure_initialized(&self) -> Result<(), String> {
+        self.state.init_agent_with_db(&self.db).await
+    }
+}
+
+fn normalize_required_text(value: &str, field_name: &str) -> Result<String, String> {
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty() {
+        Err(format!("{field_name} 不能为空"))
+    } else {
+        Ok(trimmed)
+    }
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    let trimmed = value?.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+fn normalize_whitespace(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let count = value.chars().count();
+    if count <= max_chars {
+        return value.to_string();
+    }
+    if max_chars <= 3 {
+        return value.chars().take(max_chars).collect();
+    }
+    let truncated = value.chars().take(max_chars - 3).collect::<String>();
+    format!("{truncated}...")
+}
+
+fn build_subagent_task_summary(message: &str) -> Option<String> {
+    let normalized = normalize_whitespace(message);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(truncate_chars(&normalized, 120))
+    }
+}
+
+fn normalize_optional_vec(values: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+
+    for value in values {
+        let Some(item) = normalize_optional_text(Some(value.clone())) else {
+            continue;
+        };
+        if seen.insert(item.clone()) {
+            normalized.push(item);
+        }
+    }
+
+    normalized
+}
+
+fn build_subagent_session_name(
+    message: &str,
+    agent_type: Option<&str>,
+    profile_name: Option<&str>,
+) -> String {
+    normalize_optional_text(agent_type.map(ToString::to_string))
+        .or_else(|| normalize_optional_text(profile_name.map(ToString::to_string)))
+        .or_else(|| build_subagent_task_summary(message))
+        .unwrap_or_else(|| "子代理".to_string())
+}
+
+fn resolve_subagent_role_hint(
+    request: &AgentRuntimeSpawnSubagentRequest,
+    customization: Option<&SubagentCustomizationState>,
+) -> Option<String> {
+    normalize_optional_text(request.agent_type.clone())
+        .or_else(|| customization.and_then(|state| state.profile_name.clone()))
+        .or_else(|| customization.and_then(|state| state.role_key.clone()))
+}
+
+fn build_local_subagent_skill_payload(
+    directory: &str,
+) -> Result<(SubagentSkillSummary, SubagentSkillPromptBlock), String> {
+    let inspection = crate::commands::skill_cmd::inspect_local_skill_for_app(
+        "lime".to_string(),
+        directory.to_string(),
+    )
+    .map_err(|error| format!("读取本地 skill 失败 `{directory}`: {error}"))?;
+    let name = inspection
+        .metadata
+        .get("name")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(directory)
+        .to_string();
+    let description = inspection
+        .metadata
+        .get("description")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let title = format!("local skill · {name} ({directory})");
+
+    Ok((
+        SubagentSkillSummary {
+            id: format!("local:{directory}"),
+            name,
+            description,
+            source: Some("local".to_string()),
+            directory: Some(directory.to_string()),
+        },
+        SubagentSkillPromptBlock {
+            title,
+            content: inspection.content,
+        },
+    ))
+}
+
+fn build_subagent_customization_state(
+    request: &AgentRuntimeSpawnSubagentRequest,
+) -> Result<Option<SubagentCustomizationState>, String> {
+    let profile_id = normalize_optional_text(request.profile_id.clone());
+    let profile = profile_id
+        .as_deref()
+        .and_then(builtin_profile_descriptor_by_id);
+    let team_preset_id = normalize_optional_text(request.team_preset_id.clone());
+    let team_preset = team_preset_id
+        .as_deref()
+        .and_then(builtin_team_preset_descriptor_by_id);
+    let mut skill_ids = profile
+        .map(|descriptor| {
+            descriptor
+                .skill_ids
+                .iter()
+                .map(|skill_id| (*skill_id).to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    skill_ids.extend(normalize_optional_vec(&request.skill_ids));
+    let skill_ids = normalize_optional_vec(&skill_ids);
+    let skill_directories = normalize_optional_vec(&request.skill_directories);
+
+    let mut skills = skill_ids
+        .iter()
+        .map(|skill_id| {
+            summarize_builtin_skill(skill_id).unwrap_or(SubagentSkillSummary {
+                id: skill_id.clone(),
+                name: skill_id.clone(),
+                description: None,
+                source: Some("requested".to_string()),
+                directory: None,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for directory in &skill_directories {
+        let (summary, _) = build_local_subagent_skill_payload(directory)?;
+        skills.push(summary);
+    }
+
+    let state = SubagentCustomizationState {
+        profile_id,
+        profile_name: normalize_optional_text(request.profile_name.clone())
+            .or_else(|| profile.map(|descriptor| descriptor.name.to_string())),
+        role_key: normalize_optional_text(request.role_key.clone())
+            .or_else(|| profile.map(|descriptor| descriptor.role_key.to_string())),
+        team_preset_id,
+        theme: normalize_optional_text(request.theme.clone())
+            .or_else(|| profile.map(|descriptor| descriptor.theme.to_string()))
+            .or_else(|| team_preset.map(|descriptor| descriptor.theme.to_string())),
+        output_contract: normalize_optional_text(request.output_contract.clone())
+            .or_else(|| profile.map(|descriptor| descriptor.output_contract.to_string())),
+        system_overlay: normalize_optional_text(request.system_overlay.clone())
+            .or_else(|| profile.map(|descriptor| descriptor.system_overlay.to_string())),
+        skill_ids,
+        skills,
+    };
+
+    if state.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(state))
+    }
+}
+
+fn build_subagent_customization_system_prompt(
+    customization: Option<&SubagentCustomizationState>,
+) -> Result<Option<String>, String> {
+    let Some(customization) = customization else {
+        return Ok(None);
+    };
+
+    let mut local_skill_blocks = Vec::new();
+    for skill in &customization.skills {
+        let Some(directory) = skill.directory.as_deref() else {
+            continue;
+        };
+        let (_, block) = build_local_subagent_skill_payload(directory)?;
+        local_skill_blocks.push(block);
+    }
+
+    Ok(build_subagent_customization_prompt(
+        customization,
+        &local_skill_blocks,
+    ))
+}
+
+#[derive(Debug, Clone)]
+struct PreparedRuntimeSubagentSession {
+    session: aster::session::Session,
+    customization: Option<SubagentCustomizationState>,
+    system_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct SessionProviderRoutingState {
+    provider_selector: String,
+}
+
+impl ExtensionState for SessionProviderRoutingState {
+    const EXTENSION_NAME: &'static str = "lime_provider_routing";
+    const VERSION: &'static str = "v0";
+}
+
+impl SessionProviderRoutingState {
+    fn new(provider_selector: impl Into<String>) -> Option<Self> {
+        normalize_optional_text(Some(provider_selector.into()))
+            .map(|provider_selector| Self { provider_selector })
+    }
+
+    fn from_extension_data(extension_data: &ExtensionData) -> Option<Self> {
+        <Self as ExtensionState>::from_extension_data(extension_data)
+    }
+
+    fn from_session(session: &aster::session::Session) -> Option<Self> {
+        Self::from_extension_data(&session.extension_data)
+    }
+
+    fn to_extension_data(&self, extension_data: &mut ExtensionData) -> Result<(), String> {
+        <Self as ExtensionState>::to_extension_data(self, extension_data)
+            .map_err(|error| error.to_string())
+    }
+
+    fn into_updated_extension_data(
+        self,
+        session: &aster::session::Session,
+    ) -> Result<ExtensionData, String> {
+        let mut extension_data = session.extension_data.clone();
+        self.to_extension_data(&mut extension_data)?;
+        Ok(extension_data)
+    }
+}
+
+async fn persist_session_provider_routing(
+    session_id: &str,
+    provider_selector: &str,
+) -> Result<(), String> {
+    let Some(state) = SessionProviderRoutingState::new(provider_selector.to_string()) else {
+        return Ok(());
+    };
+    let session = SessionManager::get_session(session_id, false)
+        .await
+        .map_err(|error| format!("读取会话 provider 路由上下文失败: {error}"))?;
+    let extension_data = state.into_updated_extension_data(&session)?;
+    SessionManager::update_session(session_id)
+        .extension_data(extension_data)
+        .apply()
+        .await
+        .map_err(|error| format!("持久化会话 provider 路由上下文失败: {error}"))?;
+    Ok(())
+}
+
+fn resolve_session_provider_selector(session: &aster::session::Session) -> Option<String> {
+    SessionProviderRoutingState::from_session(session).map(|state| state.provider_selector)
+}
+
+fn build_subagent_runtime_event_name(session_id: &str) -> String {
+    format!("{SUBAGENT_RUNTIME_EVENT_PREFIX}:{session_id}")
+}
+
+fn build_subagent_status_event_name(session_id: &str) -> String {
+    format!("{SUBAGENT_STATUS_EVENT_PREFIX}:{session_id}")
+}
+
+fn parse_subagent_runtime_event_session_id(event_name: &str) -> Option<&str> {
+    event_name
+        .strip_prefix(SUBAGENT_RUNTIME_EVENT_PREFIX)
+        .and_then(|rest| rest.strip_prefix(':'))
+}
+
+fn should_emit_subagent_status_for_runtime_event(event: &TauriAgentEvent) -> bool {
+    matches!(
+        event,
+        TauriAgentEvent::ThreadStarted { .. }
+            | TauriAgentEvent::TurnStarted { .. }
+            | TauriAgentEvent::TurnCompleted { .. }
+            | TauriAgentEvent::TurnFailed { .. }
+            | TauriAgentEvent::QueueAdded { .. }
+            | TauriAgentEvent::QueueRemoved { .. }
+            | TauriAgentEvent::QueueStarted { .. }
+            | TauriAgentEvent::QueueCleared { .. }
+    )
+}
+
+async fn list_subagent_status_scope_session_ids(session_id: &str) -> Vec<String> {
+    let mut scope_ids = Vec::new();
+    let mut seen = HashSet::new();
+    let mut current_session_id = session_id.to_string();
+
+    while seen.insert(current_session_id.clone()) {
+        scope_ids.push(current_session_id.clone());
+
+        let session = match SessionManager::get_session(&current_session_id, false).await {
+            Ok(session) => session,
+            Err(error) => {
+                tracing::warn!(
+                    "[AsterAgent][Subagent] 解析 team 事件 scope 失败: session_id={}, error={}",
+                    current_session_id,
+                    error
+                );
+                break;
+            }
+        };
+        let Some(metadata) = resolve_subagent_session_metadata(&session.extension_data) else {
+            break;
+        };
+        let Some(parent_session_id) = normalize_optional_text(Some(metadata.parent_session_id))
+        else {
+            break;
+        };
+        current_session_id = parent_session_id;
+    }
+
+    scope_ids
+}
+
+async fn emit_subagent_status_changed_events(app: &AppHandle, session_id: &str) {
+    let status = match load_subagent_runtime_status(session_id).await {
+        Ok(status) => status,
+        Err(error) => {
+            tracing::warn!(
+                "[AsterAgent][Subagent] 读取 team runtime 状态失败: session_id={}, error={}",
+                session_id,
+                error
+            );
+            return;
+        }
+    };
+    let scope_ids = list_subagent_status_scope_session_ids(session_id).await;
+    let root_session_id = scope_ids
+        .last()
+        .cloned()
+        .unwrap_or_else(|| session_id.to_string());
+    let event = SubagentStatusChangedEvent {
+        event_type: "subagent_status_changed",
+        session_id: session_id.to_string(),
+        root_session_id,
+        parent_session_id: scope_ids.get(1).cloned(),
+        status: status.kind,
+    };
+
+    for scope_session_id in scope_ids {
+        if let Err(error) = app.emit(&build_subagent_status_event_name(&scope_session_id), &event) {
+            tracing::warn!(
+                "[AsterAgent][Subagent] 发送 team 状态事件失败: scope_session_id={}, session_id={}, error={}",
+                scope_session_id,
+                session_id,
+                error
+            );
+        }
+    }
+}
+
+async fn maybe_emit_subagent_status_for_runtime_event(
+    app: &AppHandle,
+    event_name: &str,
+    event: &TauriAgentEvent,
+) {
+    let Some(session_id) = parse_subagent_runtime_event_session_id(event_name) else {
+        return;
+    };
+    if !should_emit_subagent_status_for_runtime_event(event) {
+        return;
+    }
+    emit_subagent_status_changed_events(app, session_id).await;
+}
+
+fn resolve_action_scope_turn_id(parent_session_id: &str) -> Option<String> {
+    let scope = aster::session_context::current_action_scope()?;
+    if scope.session_id.as_deref() != Some(parent_session_id) {
+        return None;
+    }
+    normalize_optional_text(scope.turn_id)
+}
+
+fn resolve_workspace_id_for_working_dir(
+    db: &DbConnection,
+    working_dir: &Path,
+) -> Result<String, String> {
+    let manager = WorkspaceManager::new(db.clone());
+    manager
+        .get_by_path(working_dir)
+        .map_err(|error| format!("解析 workspace 失败: {error}"))?
+        .map(|workspace| workspace.id)
+        .ok_or_else(|| {
+            format!(
+                "无法根据 working_dir 解析 workspace: {}",
+                working_dir.to_string_lossy()
+            )
+        })
+}
+
+fn normalize_wait_timeout_ms(timeout_ms: Option<i64>) -> Result<i64, String> {
+    match timeout_ms.unwrap_or(DEFAULT_WAIT_AGENT_TIMEOUT_MS) {
+        value if value <= 0 => Err("timeout_ms 必须大于 0".to_string()),
+        value => Ok(value.clamp(MIN_WAIT_AGENT_TIMEOUT_MS, MAX_WAIT_AGENT_TIMEOUT_MS)),
+    }
+}
+
+async fn count_active_team_subagents(parent_session_id: &str) -> Result<usize, String> {
+    let child_sessions = list_subagent_child_sessions(parent_session_id)
+        .await
+        .map_err(|error| format!("读取 team child sessions 失败: {error}"))?;
+    let mut active_count = 0usize;
+
+    for child_session in child_sessions {
+        let status = load_subagent_runtime_status(&child_session.id).await?;
+        if subagent_counts_toward_team_limit(status.kind) {
+            active_count += 1;
+        }
+    }
+
+    Ok(active_count)
+}
+
+fn subagent_counts_toward_team_limit(status: SubagentRuntimeStatusKind) -> bool {
+    !matches!(
+        status,
+        SubagentRuntimeStatusKind::Closed | SubagentRuntimeStatusKind::NotFound
+    )
+}
+
+async fn enforce_team_spawn_limits(parent_session_id: &str) -> Result<(), String> {
+    let parent_session = SessionManager::get_session(parent_session_id, false)
+        .await
+        .map_err(|error| format!("读取父会话失败: {error}"))?;
+
+    if parent_session.session_type == SessionType::SubAgent {
+        return Err(
+            "当前子代理不允许继续创建新的子代理。请返回父会话，由主线程统一编排 team。".to_string(),
+        );
+    }
+
+    let active_count = count_active_team_subagents(parent_session_id).await?;
+    if active_count >= DEFAULT_TEAM_MAX_ACTIVE_SUBAGENTS {
+        return Err(format!(
+            "team 当前最多允许 {} 个活跃子代理并发执行；请先 close_agent 关闭已完成子代理，或复用已有子代理。",
+            DEFAULT_TEAM_MAX_ACTIVE_SUBAGENTS
+        ));
+    }
+
+    Ok(())
+}
+
+fn merge_stashed_queued_turns(
+    existing: Vec<aster::session::QueuedTurnRuntime>,
+    current: Vec<aster::session::QueuedTurnRuntime>,
+) -> Vec<aster::session::QueuedTurnRuntime> {
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+    for queued_turn in existing.into_iter().chain(current.into_iter()) {
+        if seen.insert(queued_turn.queued_turn_id.clone()) {
+            merged.push(queued_turn);
+        }
+    }
+    merged.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.queued_turn_id.cmp(&right.queued_turn_id))
+    });
+    merged
+}
+
+async fn restore_stashed_subagent_queue(
+    queued_turns: Vec<aster::session::QueuedTurnRuntime>,
+) -> Result<(), String> {
+    if queued_turns.is_empty() {
+        return Ok(());
+    }
+
+    let store = require_shared_thread_runtime_store()
+        .map_err(|error| format!("读取 shared runtime store 失败: {error}"))?;
+    for queued_turn in queued_turns {
+        store
+            .enqueue_turn(queued_turn)
+            .await
+            .map_err(|error| format!("恢复 subagent queued turn 失败: {error}"))?;
+    }
+    Ok(())
+}
+
+async fn inherit_subagent_provider(
+    runtime: &SubagentControlRuntime,
+    parent_session_id: &str,
+    child_session_id: &str,
+    model_override: Option<&str>,
+) -> Result<(), String> {
+    let parent_session = SessionManager::get_session(parent_session_id, false)
+        .await
+        .map_err(|error| format!("读取父会话 provider 信息失败: {error}"))?;
+    let parent_provider_selector = resolve_session_provider_selector(&parent_session)
+        .or_else(|| normalize_optional_text(parent_session.provider_name.clone()));
+
+    if let Some(mut provider_config) = runtime.state.get_provider_config().await {
+        if let Some(model_name) = normalize_optional_text(model_override.map(ToString::to_string)) {
+            provider_config.model_name = model_name;
+        }
+        if provider_config.provider_selector.is_none() {
+            provider_config.provider_selector = parent_provider_selector.clone();
+        }
+        runtime
+            .state
+            .configure_provider(provider_config, child_session_id, &runtime.db)
+            .await?;
+        if let Some(provider_selector) = parent_provider_selector {
+            persist_session_provider_routing(child_session_id, &provider_selector).await?;
+        }
+        return Ok(());
+    }
+
+    let provider_selector = parent_provider_selector
+        .ok_or_else(|| "当前 provider 未配置，且父会话缺少 provider_name".to_string())?;
+    let model_name = normalize_optional_text(model_override.map(ToString::to_string))
+        .or_else(|| {
+            parent_session
+                .model_config
+                .as_ref()
+                .and_then(|config| normalize_optional_text(Some(config.model_name.clone())))
+        })
+        .ok_or_else(|| "当前 provider 未配置，且父会话缺少 model_name".to_string())?;
+
+    runtime
+        .state
+        .configure_provider_from_pool(
+            &runtime.db,
+            &provider_selector,
+            &model_name,
+            child_session_id,
+        )
+        .await
+        .map(|_| ())?;
+    persist_session_provider_routing(child_session_id, &provider_selector).await?;
+    Ok(())
+}
+
+async fn create_runtime_subagent_session(
+    runtime: &SubagentControlRuntime,
+    request: &AgentRuntimeSpawnSubagentRequest,
+) -> Result<PreparedRuntimeSubagentSession, String> {
+    let parent_session_id =
+        normalize_required_text(&request.parent_session_id, "parent_session_id")?;
+    let message = normalize_required_text(&request.message, "message")?;
+    enforce_team_spawn_limits(&parent_session_id).await?;
+    let parent_session = SessionManager::get_session(&parent_session_id, false)
+        .await
+        .map_err(|error| format!("读取父会话失败: {error}"))?;
+    let customization = build_subagent_customization_state(request)?;
+    let system_prompt = build_subagent_customization_system_prompt(customization.as_ref())?;
+    let profile_name = customization
+        .as_ref()
+        .and_then(|state| state.profile_name.as_deref());
+    let role_hint = resolve_subagent_role_hint(request, customization.as_ref());
+
+    let session = SessionManager::create_session(
+        parent_session.working_dir.clone(),
+        build_subagent_session_name(&message, request.agent_type.as_deref(), profile_name),
+        SessionType::SubAgent,
+    )
+    .await
+    .map_err(|error| format!("创建 subagent session 失败: {error}"))?;
+
+    if let Some(parent_metadata) =
+        AsterAgentWrapper::get_persisted_session_metadata_sync(&runtime.db, &parent_session_id)?
+    {
+        if let Some(execution_strategy) =
+            normalize_optional_text(parent_metadata.execution_strategy)
+        {
+            AsterAgentWrapper::update_session_execution_strategy_sync(
+                &runtime.db,
+                &session.id,
+                &execution_strategy,
+            )?;
+        }
+    }
+
+    let mut metadata = SubagentSessionMetadata::new(parent_session_id.clone())
+        .with_task_summary(build_subagent_task_summary(&message))
+        .with_role_hint(role_hint.clone())
+        .with_created_from_turn_id(resolve_action_scope_turn_id(&parent_session_id));
+    metadata.origin_tool = "spawn_agent".to_string();
+    let mut extension_data = session.extension_data.clone();
+    metadata
+        .to_extension_data(&mut extension_data)
+        .map_err(|error| format!("持久化 subagent metadata 失败: {error}"))?;
+    if let Some(customization_state) = customization.as_ref() {
+        customization_state
+            .to_extension_data(&mut extension_data)
+            .map_err(|error| format!("持久化 subagent customization 失败: {error}"))?;
+    }
+    SessionManager::update_session(&session.id)
+        .extension_data(extension_data)
+        .apply()
+        .await
+        .map_err(|error| format!("写入 subagent session metadata 失败: {error}"))?;
+
+    inherit_subagent_provider(
+        runtime,
+        &parent_session_id,
+        &session.id,
+        request.model.as_deref(),
+    )
+    .await?;
+
+    Ok(PreparedRuntimeSubagentSession {
+        session,
+        customization,
+        system_prompt,
+    })
+}
+
+fn spawn_subagent_turn_in_background(
+    runtime: SubagentControlRuntime,
+    request: AsterChatRequest,
+) -> Result<String, String> {
+    let queued_task = build_queued_turn_task(request)?;
+    let submission_id = queued_task.queued_turn_id.clone();
+    tokio::spawn(async move {
+        if let Err(error) = submit_runtime_turn_service(
+            runtime.app_handle.clone(),
+            &runtime.state,
+            &runtime.db,
+            &runtime.api_key_provider_service,
+            &runtime.logs,
+            &runtime.config_manager,
+            &runtime.mcp_manager,
+            &runtime.automation_state,
+            queued_task,
+            false,
+            build_runtime_queue_executor(),
+        )
+        .await
+        {
+            tracing::warn!("[AsterAgent][Subagent] 后台启动子代理失败: {}", error);
+        }
+    });
+    Ok(submission_id)
+}
+
+async fn agent_runtime_spawn_subagent_internal(
+    runtime: &SubagentControlRuntime,
+    request: AgentRuntimeSpawnSubagentRequest,
+) -> Result<AgentRuntimeSpawnSubagentResponse, String> {
+    runtime.ensure_initialized().await?;
+    let PreparedRuntimeSubagentSession {
+        session: child_session,
+        customization,
+        system_prompt,
+    } = create_runtime_subagent_session(runtime, &request).await?;
+    let child_session_id = child_session.id.clone();
+    let workspace_id =
+        resolve_workspace_id_for_working_dir(&runtime.db, child_session.working_dir.as_path())?;
+    let _ = spawn_subagent_turn_in_background(
+        runtime.clone(),
+        AsterChatRequest {
+            message: normalize_required_text(&request.message, "message")?,
+            session_id: child_session_id.clone(),
+            event_name: build_subagent_runtime_event_name(&child_session_id),
+            images: None,
+            provider_config: None,
+            project_id: None,
+            workspace_id,
+            web_search: None,
+            search_mode: None,
+            execution_strategy: None,
+            auto_continue: None,
+            system_prompt,
+            metadata: Some(serde_json::json!({
+                "subagent": {
+                    "parent_session_id": request.parent_session_id,
+                    "agent_type": request.agent_type,
+                    "reasoning_effort": request.reasoning_effort,
+                    "fork_context": request.fork_context,
+                    "origin_tool": "spawn_agent",
+                    "profile_id": customization.as_ref().and_then(|state| state.profile_id.clone()),
+                    "profile_name": customization.as_ref().and_then(|state| state.profile_name.clone()),
+                    "role_key": customization.as_ref().and_then(|state| state.role_key.clone()),
+                    "team_preset_id": customization.as_ref().and_then(|state| state.team_preset_id.clone()),
+                    "theme": customization.as_ref().and_then(|state| state.theme.clone()),
+                    "output_contract": customization.as_ref().and_then(|state| state.output_contract.clone()),
+                    "skill_ids": customization.as_ref().map(|state| state.skill_ids.clone()).unwrap_or_default(),
+                    "skills": customization.as_ref().map(|state| state.skills.clone()).unwrap_or_default(),
+                }
+            })),
+            turn_id: None,
+            queue_if_busy: Some(false),
+            queued_turn_id: None,
+        },
+    )?;
+    emit_subagent_status_changed_events(&runtime.app_handle, &child_session_id).await;
+
+    Ok(AgentRuntimeSpawnSubagentResponse {
+        agent_id: child_session_id,
+        nickname: normalize_optional_text(Some(child_session.name)),
+    })
+}
+
+async fn agent_runtime_send_subagent_input_internal(
+    runtime: &SubagentControlRuntime,
+    request: AgentRuntimeSendSubagentInputRequest,
+) -> Result<AgentRuntimeSendSubagentInputResponse, String> {
+    runtime.ensure_initialized().await?;
+    let session_id = normalize_required_text(&request.id, "id")?;
+    let message = normalize_required_text(&request.message, "message")?;
+    let status = load_subagent_runtime_status(&session_id).await?;
+    match status.kind {
+        SubagentRuntimeStatusKind::NotFound => {
+            return Err(format!("子代理不存在: {session_id}"));
+        }
+        SubagentRuntimeStatusKind::Closed => {
+            return Err(format!("子代理已关闭，请先恢复: {session_id}"));
+        }
+        _ => {}
+    }
+
+    let (session, _) = read_subagent_control_state(&session_id).await?;
+    let customization = SubagentCustomizationState::from_session(&session);
+    let system_prompt = build_subagent_customization_system_prompt(customization.as_ref())?;
+    if request.interrupt {
+        let _ = runtime.state.cancel_session(&session_id).await;
+        let _ = clear_runtime_queue_service(&runtime.app_handle, &session_id).await?;
+    }
+
+    let workspace_id =
+        resolve_workspace_id_for_working_dir(&runtime.db, session.working_dir.as_path())?;
+    let queued_task = build_queued_turn_task(AsterChatRequest {
+        message,
+        session_id: session_id.clone(),
+        event_name: build_subagent_runtime_event_name(&session_id),
+        images: None,
+        provider_config: None,
+        project_id: None,
+        workspace_id,
+        web_search: None,
+        search_mode: None,
+        execution_strategy: None,
+        auto_continue: None,
+        system_prompt,
+        metadata: Some(serde_json::json!({
+            "subagent": {
+                "origin_tool": "send_input",
+                "interrupt": request.interrupt,
+                "profile_id": customization.as_ref().and_then(|state| state.profile_id.clone()),
+                "profile_name": customization.as_ref().and_then(|state| state.profile_name.clone()),
+                "role_key": customization.as_ref().and_then(|state| state.role_key.clone()),
+                "team_preset_id": customization.as_ref().and_then(|state| state.team_preset_id.clone()),
+                "theme": customization.as_ref().and_then(|state| state.theme.clone()),
+                "output_contract": customization.as_ref().and_then(|state| state.output_contract.clone()),
+                "skill_ids": customization.as_ref().map(|state| state.skill_ids.clone()).unwrap_or_default(),
+                "skills": customization.as_ref().map(|state| state.skills.clone()).unwrap_or_default(),
+            }
+        })),
+        turn_id: None,
+        queue_if_busy: Some(true),
+        queued_turn_id: None,
+    })?;
+    let submission_id = queued_task.queued_turn_id.clone();
+    submit_runtime_turn_service(
+        runtime.app_handle.clone(),
+        &runtime.state,
+        &runtime.db,
+        &runtime.api_key_provider_service,
+        &runtime.logs,
+        &runtime.config_manager,
+        &runtime.mcp_manager,
+        &runtime.automation_state,
+        queued_task,
+        true,
+        build_runtime_queue_executor(),
+    )
+    .await?;
+    emit_subagent_status_changed_events(&runtime.app_handle, &session_id).await;
+
+    Ok(AgentRuntimeSendSubagentInputResponse { submission_id })
+}
+
+async fn agent_runtime_wait_subagents_internal(
+    runtime: &SubagentControlRuntime,
+    request: AgentRuntimeWaitSubagentsRequest,
+) -> Result<AgentRuntimeWaitSubagentsResponse, String> {
+    runtime.ensure_initialized().await?;
+    let ids = request
+        .ids
+        .into_iter()
+        .map(|id| normalize_required_text(&id, "ids"))
+        .collect::<Result<Vec<_>, _>>()?;
+    if ids.is_empty() {
+        return Err("ids 不能为空".to_string());
+    }
+
+    let timeout_ms = normalize_wait_timeout_ms(request.timeout_ms)?;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms as u64);
+    loop {
+        let mut final_statuses = HashMap::new();
+        for id in &ids {
+            let status = load_subagent_runtime_status(id).await?;
+            if status.kind.is_final() {
+                final_statuses.insert(id.clone(), status);
+            }
+        }
+        if !final_statuses.is_empty() {
+            return Ok(AgentRuntimeWaitSubagentsResponse {
+                status: final_statuses,
+                timed_out: false,
+            });
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(AgentRuntimeWaitSubagentsResponse {
+                status: HashMap::new(),
+                timed_out: true,
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn agent_runtime_resume_subagent_internal(
+    runtime: &SubagentControlRuntime,
+    request: AgentRuntimeResumeSubagentRequest,
+) -> Result<AgentRuntimeResumeSubagentResponse, String> {
+    runtime.ensure_initialized().await?;
+    let session_id = normalize_required_text(&request.id, "id")?;
+    let current_status = load_subagent_runtime_status(&session_id).await?;
+    if current_status.kind == SubagentRuntimeStatusKind::NotFound
+        || current_status.kind != SubagentRuntimeStatusKind::Closed
+    {
+        return Ok(AgentRuntimeResumeSubagentResponse {
+            status: current_status,
+            cascade_session_ids: Vec::new(),
+            changed_session_ids: Vec::new(),
+        });
+    }
+
+    let target_ids = list_subagent_cascade_session_ids(&session_id).await?;
+    let cascade_session_ids = target_ids.clone();
+    let mut changed_ids = Vec::new();
+    for target_id in target_ids {
+        let (session, control_state) = read_subagent_control_state(&target_id).await?;
+        if !control_state.closed {
+            continue;
+        }
+
+        let stashed_queued_turns = control_state.stashed_queued_turns.clone();
+        let mut next_state = control_state.opened();
+        next_state.stashed_queued_turns.clear();
+        write_subagent_control_state(&session, &next_state).await?;
+        restore_stashed_subagent_queue(stashed_queued_turns.clone()).await?;
+        if !stashed_queued_turns.is_empty() {
+            let _ = resume_runtime_queue_if_needed_service(
+                runtime.app_handle.clone(),
+                &runtime.state,
+                &runtime.db,
+                &runtime.api_key_provider_service,
+                &runtime.logs,
+                &runtime.config_manager,
+                &runtime.mcp_manager,
+                &runtime.automation_state,
+                target_id.clone(),
+                build_runtime_queue_executor(),
+            )
+            .await?;
+        }
+        changed_ids.push(target_id);
+    }
+
+    for changed_id in &changed_ids {
+        emit_subagent_status_changed_events(&runtime.app_handle, &changed_id).await;
+    }
+
+    Ok(AgentRuntimeResumeSubagentResponse {
+        status: load_subagent_runtime_status(&session_id).await?,
+        cascade_session_ids,
+        changed_session_ids: changed_ids,
+    })
+}
+
+async fn agent_runtime_close_subagent_internal(
+    runtime: &SubagentControlRuntime,
+    request: AgentRuntimeCloseSubagentRequest,
+) -> Result<AgentRuntimeCloseSubagentResponse, String> {
+    runtime.ensure_initialized().await?;
+    let session_id = normalize_required_text(&request.id, "id")?;
+    let previous_status = load_subagent_runtime_status(&session_id).await?;
+    if matches!(
+        previous_status.kind,
+        SubagentRuntimeStatusKind::NotFound | SubagentRuntimeStatusKind::Closed
+    ) {
+        return Ok(AgentRuntimeCloseSubagentResponse {
+            previous_status,
+            cascade_session_ids: Vec::new(),
+            changed_session_ids: Vec::new(),
+        });
+    }
+
+    let target_ids = list_subagent_cascade_session_ids(&session_id).await?;
+    let cascade_session_ids = target_ids.clone();
+    let mut changed_ids = Vec::new();
+    for target_id in target_ids {
+        let (session, control_state) = read_subagent_control_state(&target_id).await?;
+        if control_state.closed {
+            continue;
+        }
+
+        let _ = runtime.state.cancel_session(&target_id).await;
+        let cleared_queued_turns = clear_runtime_queue_service(&runtime.app_handle, &target_id)
+            .await
+            .unwrap_or_default();
+        let next_state = SubagentControlState::closed(
+            Some(SUBAGENT_CONTROL_CLOSE_REASON.to_string()),
+            merge_stashed_queued_turns(control_state.stashed_queued_turns, cleared_queued_turns),
+        );
+        write_subagent_control_state(&session, &next_state).await?;
+        changed_ids.push(target_id);
+    }
+
+    for changed_id in &changed_ids {
+        emit_subagent_status_changed_events(&runtime.app_handle, &changed_id).await;
+    }
+
+    Ok(AgentRuntimeCloseSubagentResponse {
+        previous_status,
+        cascade_session_ids,
+        changed_session_ids: changed_ids,
     })
 }
 
@@ -6539,6 +8273,114 @@ pub async fn agent_runtime_get_session(
     ))
 }
 
+/// 统一运行时：获取工具库存快照。
+#[tauri::command]
+pub async fn agent_runtime_get_tool_inventory(
+    state: State<'_, AsterAgentState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    request: Option<AgentRuntimeToolInventoryRequest>,
+) -> Result<crate::agent_tools::inventory::AgentToolInventorySnapshot, String> {
+    let request = request.unwrap_or_default();
+    let caller = lime_core::tool_calling::normalize_tool_caller(request.caller.as_deref())
+        .unwrap_or_else(|| "assistant".to_string());
+    let surface = match (request.creator, request.browser_assist) {
+        (true, true) => WorkspaceToolSurface::creator_with_browser_assist(),
+        (true, false) => WorkspaceToolSurface::creator(),
+        (false, true) => WorkspaceToolSurface::browser_assist(),
+        (false, false) => WorkspaceToolSurface::core(),
+    };
+
+    let mut warnings = Vec::new();
+
+    let (mcp_server_names, mcp_tools) = {
+        let manager = mcp_manager.lock().await;
+        let server_names = manager.get_running_servers().await;
+        let tools = match manager.list_tools().await {
+            Ok(tools) => tools,
+            Err(error) => {
+                warnings.push(format!("读取 MCP 工具列表失败: {error}"));
+                Vec::new()
+            }
+        };
+        (server_names, tools)
+    };
+
+    let agent_arc = state.get_agent_arc();
+    let guard = agent_arc.read().await;
+    let Some(agent) = guard.as_ref() else {
+        return Ok(build_tool_inventory(AgentToolInventoryBuildInput {
+            surface,
+            caller,
+            agent_initialized: false,
+            warnings: {
+                warnings.push(
+                    "Aster Agent 尚未初始化，runtime registry / extension 快照为空".to_string(),
+                );
+                warnings
+            },
+            persisted_execution_policy: Some(config_manager.config().agent.tool_execution),
+            request_metadata: request.metadata.clone(),
+            mcp_server_names,
+            mcp_tools,
+            registry_definitions: Vec::new(),
+            extension_configs: Vec::new(),
+            visible_extension_tools: Vec::new(),
+            searchable_extension_tools: Vec::new(),
+        }));
+    };
+
+    let registry_arc = agent.tool_registry().clone();
+    let registry = registry_arc.read().await;
+    let registry_definitions = registry.get_definitions();
+    drop(registry);
+
+    let extension_configs = agent.get_extension_configs().await;
+    let extension_manager = agent.extension_manager.clone();
+    let visible_extension_tools = match extension_manager.get_prefixed_tools(None).await {
+        Ok(tools) => tools
+            .into_iter()
+            .map(|tool| ExtensionToolInventorySeed {
+                name: tool.name.to_string(),
+                description: tool.description.clone().unwrap_or_default().to_string(),
+            })
+            .collect(),
+        Err(error) => {
+            warnings.push(format!("读取已加载 extension tools 失败: {error}"));
+            Vec::new()
+        }
+    };
+    let searchable_extension_tools =
+        match extension_manager.get_prefixed_tools_for_search(None).await {
+            Ok(tools) => tools
+                .into_iter()
+                .map(|tool| ExtensionToolInventorySeed {
+                    name: tool.name.to_string(),
+                    description: tool.description.clone().unwrap_or_default().to_string(),
+                })
+                .collect(),
+            Err(error) => {
+                warnings.push(format!("读取 extension 搜索工具面失败: {error}"));
+                Vec::new()
+            }
+        };
+
+    Ok(build_tool_inventory(AgentToolInventoryBuildInput {
+        surface,
+        caller,
+        agent_initialized: true,
+        warnings,
+        persisted_execution_policy: Some(config_manager.config().agent.tool_execution),
+        request_metadata: request.metadata.clone(),
+        mcp_server_names,
+        mcp_tools,
+        registry_definitions,
+        extension_configs,
+        visible_extension_tools,
+        searchable_extension_tools,
+    }))
+}
+
 /// 统一运行时：移除单个排队 turn。
 #[tauri::command]
 pub async fn agent_runtime_remove_queued_turn(
@@ -6552,6 +8394,188 @@ pub async fn agent_runtime_remove_queued_turn(
     }
 
     remove_runtime_queued_turn_service(&app, &session_id, &queued_turn_id).await
+}
+
+/// 统一运行时：将指定排队 turn 提前到下一条执行。
+#[tauri::command]
+pub async fn agent_runtime_promote_queued_turn(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    request: AgentRuntimePromoteQueuedTurnRequest,
+) -> Result<bool, String> {
+    let session_id = request.session_id.trim().to_string();
+    let queued_turn_id = request.queued_turn_id.trim().to_string();
+    if session_id.is_empty() || queued_turn_id.is_empty() {
+        return Ok(false);
+    }
+
+    let promoted = promote_runtime_queued_turn_service(&session_id, &queued_turn_id).await?;
+    if !promoted {
+        return Ok(false);
+    }
+
+    let _ = state.cancel_session(&session_id).await;
+    let _ = resume_runtime_queue_if_needed_service(
+        app,
+        state.inner(),
+        db.inner(),
+        api_key_provider_service.inner(),
+        logs.inner(),
+        config_manager.inner(),
+        mcp_manager.inner(),
+        automation_state.inner(),
+        session_id,
+        build_runtime_queue_executor(),
+    )
+    .await?;
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn agent_runtime_spawn_subagent(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    request: AgentRuntimeSpawnSubagentRequest,
+) -> Result<AgentRuntimeSpawnSubagentResponse, String> {
+    agent_runtime_spawn_subagent_internal(
+        &SubagentControlRuntime::new(
+            app,
+            state.inner(),
+            db.inner(),
+            api_key_provider_service.inner(),
+            logs.inner(),
+            config_manager.inner(),
+            mcp_manager.inner(),
+            automation_state.inner(),
+        ),
+        request,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn agent_runtime_send_subagent_input(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    request: AgentRuntimeSendSubagentInputRequest,
+) -> Result<AgentRuntimeSendSubagentInputResponse, String> {
+    agent_runtime_send_subagent_input_internal(
+        &SubagentControlRuntime::new(
+            app,
+            state.inner(),
+            db.inner(),
+            api_key_provider_service.inner(),
+            logs.inner(),
+            config_manager.inner(),
+            mcp_manager.inner(),
+            automation_state.inner(),
+        ),
+        request,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn agent_runtime_wait_subagents(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    request: AgentRuntimeWaitSubagentsRequest,
+) -> Result<AgentRuntimeWaitSubagentsResponse, String> {
+    agent_runtime_wait_subagents_internal(
+        &SubagentControlRuntime::new(
+            app,
+            state.inner(),
+            db.inner(),
+            api_key_provider_service.inner(),
+            logs.inner(),
+            config_manager.inner(),
+            mcp_manager.inner(),
+            automation_state.inner(),
+        ),
+        request,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn agent_runtime_resume_subagent(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    request: AgentRuntimeResumeSubagentRequest,
+) -> Result<AgentRuntimeResumeSubagentResponse, String> {
+    agent_runtime_resume_subagent_internal(
+        &SubagentControlRuntime::new(
+            app,
+            state.inner(),
+            db.inner(),
+            api_key_provider_service.inner(),
+            logs.inner(),
+            config_manager.inner(),
+            mcp_manager.inner(),
+            automation_state.inner(),
+        ),
+        request,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn agent_runtime_close_subagent(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    request: AgentRuntimeCloseSubagentRequest,
+) -> Result<AgentRuntimeCloseSubagentResponse, String> {
+    agent_runtime_close_subagent_internal(
+        &SubagentControlRuntime::new(
+            app,
+            state.inner(),
+            db.inner(),
+            api_key_provider_service.inner(),
+            logs.inner(),
+            config_manager.inner(),
+            mcp_manager.inner(),
+            automation_state.inner(),
+        ),
+        request,
+    )
+    .await
 }
 
 fn rename_runtime_session_internal(
@@ -6675,6 +8699,36 @@ fn validate_elicitation_submission(session_id: &str, request_id: &str) -> Result
     Ok(trimmed_session_id)
 }
 
+fn build_action_resume_runtime_status() -> TauriRuntimeStatus {
+    TauriRuntimeStatus {
+        phase: "routing".to_string(),
+        title: "已提交补充信息，继续执行中".to_string(),
+        detail: "补充信息已回填到当前执行链路，正在恢复后续步骤。".to_string(),
+        checkpoints: vec![
+            "补充信息已确认".to_string(),
+            "已唤醒当前执行链路".to_string(),
+            "等待下一条执行事件".to_string(),
+        ],
+    }
+}
+
+fn emit_action_resume_runtime_status(app: &AppHandle, event_name: &str) {
+    if event_name.trim().is_empty() {
+        return;
+    }
+
+    let event = TauriAgentEvent::RuntimeStatus {
+        status: build_action_resume_runtime_status(),
+    };
+    if let Err(error) = app.emit(event_name, &event) {
+        tracing::warn!(
+            "[AsterAgent] 发送 action resume runtime_status 失败: event_name={}, error={}",
+            event_name,
+            error
+        );
+    }
+}
+
 fn build_runtime_action_user_data(request: &AgentRuntimeRespondActionRequest) -> serde_json::Value {
     if let Some(user_data) = request.user_data.clone() {
         return user_data;
@@ -6698,6 +8752,7 @@ fn build_runtime_action_user_data(request: &AgentRuntimeRespondActionRequest) ->
 /// 统一运行时：响应工具确认 / ask / elicitation。
 #[tauri::command]
 pub async fn agent_runtime_respond_action(
+    app: AppHandle,
     state: State<'_, AsterAgentState>,
     request: AgentRuntimeRespondActionRequest,
 ) -> Result<(), String> {
@@ -6715,6 +8770,7 @@ pub async fn agent_runtime_respond_action(
         }
         AgentRuntimeActionType::AskUser | AgentRuntimeActionType::Elicitation => {
             let user_data = build_runtime_action_user_data(&request);
+            let resume_event_name = normalize_optional_text(request.event_name.clone());
             submit_runtime_elicitation_response_internal(
                 state.inner(),
                 request.session_id.clone(),
@@ -6725,6 +8781,11 @@ pub async fn agent_runtime_respond_action(
                 },
             )
             .await
+            .map(|_| {
+                if let Some(event_name) = resume_event_name.as_deref() {
+                    emit_action_resume_runtime_status(&app, event_name);
+                }
+            })
         }
     }
 }
@@ -6865,6 +8926,32 @@ mod tests {
                 std::env::remove_var(lime_agent::LIME_DURABLE_MEMORY_ROOT_ENV);
             }
             std::env::remove_var(lime_agent::LEGACY_DURABLE_MEMORY_ROOT_ENV);
+        }
+    }
+
+    fn builtin_extension_config(
+        name: &str,
+        available_tools: Vec<&str>,
+        deferred_loading: bool,
+        always_expose_tools: Vec<&str>,
+        allowed_caller: Option<&str>,
+    ) -> ExtensionConfig {
+        ExtensionConfig::Builtin {
+            name: name.to_string(),
+            display_name: Some(name.to_string()),
+            description: format!("{name} tools"),
+            timeout: None,
+            bundled: Some(false),
+            available_tools: available_tools
+                .into_iter()
+                .map(|item| item.to_string())
+                .collect(),
+            deferred_loading,
+            always_expose_tools: always_expose_tools
+                .into_iter()
+                .map(|item| item.to_string())
+                .collect(),
+            allowed_caller: allowed_caller.map(ToString::to_string),
         }
     }
 
@@ -7363,6 +9450,7 @@ mod tests {
             response: Some("{\"answer\":\"A\"}".to_string()),
             user_data: Some(serde_json::json!({ "answer": "B" })),
             metadata: None,
+            event_name: None,
         };
 
         assert_eq!(
@@ -7381,12 +9469,65 @@ mod tests {
             response: Some("{\"answer\":\"A\"}".to_string()),
             user_data: None,
             metadata: None,
+            event_name: None,
         };
 
         assert_eq!(
             build_runtime_action_user_data(&request),
             serde_json::json!({ "answer": "A" })
         );
+    }
+
+    #[test]
+    fn test_build_runtime_action_user_data_returns_empty_string_when_not_confirmed() {
+        let request = AgentRuntimeRespondActionRequest {
+            session_id: "session-1".to_string(),
+            request_id: "req-2".to_string(),
+            action_type: AgentRuntimeActionType::AskUser,
+            confirmed: false,
+            response: Some("{\"answer\":\"A\"}".to_string()),
+            user_data: None,
+            metadata: None,
+            event_name: None,
+        };
+
+        assert_eq!(
+            build_runtime_action_user_data(&request),
+            serde_json::Value::String(String::new())
+        );
+    }
+
+    #[test]
+    fn test_agent_runtime_respond_action_request_deserializes_event_name_alias() {
+        let request: AgentRuntimeRespondActionRequest = serde_json::from_value(serde_json::json!({
+            "sessionId": "session-1",
+            "requestId": "req-1",
+            "actionType": "ask_user",
+            "confirmed": true,
+            "eventName": "aster_stream_session-1"
+        }))
+        .expect("request should deserialize");
+
+        assert_eq!(request.session_id, "session-1");
+        assert_eq!(request.request_id, "req-1");
+        assert_eq!(request.action_type, AgentRuntimeActionType::AskUser);
+        assert_eq!(
+            request.event_name.as_deref(),
+            Some("aster_stream_session-1")
+        );
+    }
+
+    #[test]
+    fn test_agent_runtime_promote_queued_turn_request_deserializes_aliases() {
+        let request: AgentRuntimePromoteQueuedTurnRequest =
+            serde_json::from_value(serde_json::json!({
+                "sessionId": "session-1",
+                "queuedTurnId": "queued-2"
+            }))
+            .expect("request should deserialize");
+
+        assert_eq!(request.session_id, "session-1");
+        assert_eq!(request.queued_turn_id, "queued-2");
     }
 
     #[test]
@@ -7735,6 +9876,15 @@ mod tests {
     }
 
     #[test]
+    fn test_build_action_resume_runtime_status_contains_resume_copy() {
+        let status = build_action_resume_runtime_status();
+        assert_eq!(status.phase, "routing");
+        assert_eq!(status.title, "已提交补充信息，继续执行中");
+        assert!(status.detail.contains("恢复后续步骤"));
+        assert_eq!(status.checkpoints.len(), 3);
+    }
+
+    #[test]
     fn test_normalize_workspace_tool_permission_behavior_auto_mode_allows_warning() {
         let permission = PermissionCheckResult::ask("需要确认");
         let normalized = normalize_workspace_tool_permission_behavior(permission, true);
@@ -7773,6 +9923,151 @@ mod tests {
         assert!(regex.is_match("python -m pip install playwright"));
         assert!(regex.is_match("npm install && npm run build"));
         assert!(regex.is_match("python3 <<'EOF'\nprint('hello')\nEOF"));
+    }
+
+    #[test]
+    fn test_workspace_default_allowed_tool_names_include_subagent_controls() {
+        let tool_names = crate::agent_tools::catalog::workspace_default_allowed_tool_names(
+            WorkspaceToolSurface::core(),
+        );
+
+        for tool_name in [
+            "spawn_agent",
+            "send_input",
+            "wait_agent",
+            "resume_agent",
+            "close_agent",
+        ] {
+            assert!(
+                tool_names.contains(&tool_name),
+                "缺少默认授权工具: {tool_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_team_preference_system_prompt_requires_subagent_mode() {
+        let prompt = build_team_preference_system_prompt(Some(&serde_json::json!({
+            "harness": {
+                "subagent_mode_enabled": true,
+                "preferred_team_preset_id": "code-triage-team",
+            }
+        })))
+        .expect("team prompt should exist");
+
+        assert!(prompt.contains(TEAM_PREFERENCE_PROMPT_MARKER));
+        assert!(prompt.contains("代码排障团队"));
+        assert!(prompt.contains("spawn_agent"));
+
+        let disabled = build_team_preference_system_prompt(Some(&serde_json::json!({
+            "harness": {
+                "subagent_mode_enabled": false,
+                "preferred_team_preset_id": "code-triage-team",
+            }
+        })));
+        assert!(disabled.is_none());
+    }
+
+    #[test]
+    fn test_build_team_preference_system_prompt_renders_selected_team_details() {
+        let prompt = build_team_preference_system_prompt(Some(&serde_json::json!({
+            "harness": {
+                "subagent_mode_enabled": true,
+                "selected_team_source": "custom",
+                "selected_team_label": "前端联调团队",
+                "selected_team_summary": "分析、实现、验证三段式推进。",
+                "selected_team_roles": [
+                    {
+                        "label": "分析",
+                        "summary": "负责定位问题与影响范围。",
+                        "profile_id": "code-explorer",
+                        "skill_ids": ["repo-exploration"]
+                    },
+                    {
+                        "label": "执行",
+                        "summary": "负责提交实现与说明改动点。"
+                    }
+                ]
+            }
+        })))
+        .expect("team prompt should exist");
+
+        assert!(prompt.contains("前端联调团队"));
+        assert!(prompt.contains("来源：custom"));
+        assert!(prompt.contains("分析、实现、验证三段式推进。"));
+        assert!(prompt.contains("分析：负责定位问题与影响范围。"));
+        assert!(prompt.contains("profile: code-explorer"));
+        assert!(prompt.contains("skills: repo-exploration"));
+    }
+
+    #[test]
+    fn test_build_subagent_customization_state_applies_profile_defaults() {
+        let customization = build_subagent_customization_state(&AgentRuntimeSpawnSubagentRequest {
+            parent_session_id: "parent-1".to_string(),
+            message: "定位当前 team runtime 差异".to_string(),
+            agent_type: Some("Image #1".to_string()),
+            model: None,
+            reasoning_effort: None,
+            fork_context: false,
+            profile_id: Some("code-explorer".to_string()),
+            profile_name: None,
+            role_key: None,
+            skill_ids: vec!["verification-report".to_string()],
+            skill_directories: Vec::new(),
+            team_preset_id: Some("code-triage-team".to_string()),
+            theme: None,
+            system_overlay: None,
+            output_contract: None,
+        })
+        .expect("build customization state")
+        .expect("customization should exist");
+
+        assert_eq!(customization.profile_name.as_deref(), Some("代码分析员"));
+        assert_eq!(customization.role_key.as_deref(), Some("explorer"));
+        assert_eq!(
+            customization.team_preset_id.as_deref(),
+            Some("code-triage-team")
+        );
+        assert_eq!(customization.theme.as_deref(), Some("engineering"));
+        assert!(customization
+            .skill_ids
+            .contains(&"repo-exploration".to_string()));
+        assert!(customization
+            .skill_ids
+            .contains(&"source-grounding".to_string()));
+        assert!(customization
+            .skill_ids
+            .contains(&"verification-report".to_string()));
+    }
+
+    #[test]
+    fn test_build_subagent_customization_system_prompt_renders_builtin_configuration() {
+        let prompt =
+            build_subagent_customization_system_prompt(Some(&SubagentCustomizationState {
+                profile_id: Some("code-explorer".to_string()),
+                profile_name: Some("代码分析员".to_string()),
+                role_key: Some("explorer".to_string()),
+                team_preset_id: Some("code-triage-team".to_string()),
+                theme: Some("engineering".to_string()),
+                output_contract: Some("输出问题定位、证据与影响面。".to_string()),
+                system_overlay: Some("先读事实源，再给结论。".to_string()),
+                skill_ids: vec!["repo-exploration".to_string()],
+                skills: vec![SubagentSkillSummary {
+                    id: "repo-exploration".to_string(),
+                    name: "仓库探索".to_string(),
+                    description: Some("优先读事实源".to_string()),
+                    source: Some("builtin".to_string()),
+                    directory: None,
+                }],
+            }))
+            .expect("prompt build should succeed")
+            .expect("prompt should exist");
+
+        assert!(prompt.contains("【Subagent 定制配置】"));
+        assert!(prompt.contains("代码分析员"));
+        assert!(prompt.contains("代码排障团队"));
+        assert!(prompt.contains("仓库探索"));
+        assert!(prompt.contains("输出问题定位、证据与影响面。"));
     }
 
     #[test]
@@ -7984,6 +10279,150 @@ mod tests {
     }
 
     #[test]
+    fn test_build_subagent_task_runtime_message_includes_soft_constraints() {
+        let input = SubAgentTaskToolInput {
+            prompt: "探索 team workspace 最佳实践".to_string(),
+            task_type: Some("explore".to_string()),
+            description: Some("探索 team workspace".to_string()),
+            role: Some("explorer".to_string()),
+            timeout_secs: None,
+            model: None,
+            return_summary: None,
+            allowed_tools: Some(vec!["read_file".to_string()]),
+            denied_tools: Some(vec!["write_file".to_string()]),
+            max_tokens: Some(1200),
+        };
+
+        let task = build_subagent_task_definition(&input, SubAgentRole::Explorer).unwrap();
+        let message = build_subagent_task_runtime_message(&input, &task, SubAgentRole::Explorer);
+
+        assert!(message.contains("任务标题：探索 team workspace"));
+        assert!(message.contains("子代理角色：explorer"));
+        assert!(message.contains("工具偏好：优先仅使用这些工具：read_file"));
+        assert!(message.contains("避免使用这些工具：write_file"));
+        assert!(message.contains("输出控制：请尽量将最终输出控制在 1200 tokens 内。"));
+        assert!(message.contains("不要再创建新的子代理"));
+        assert!(message.contains("任务说明："));
+        assert!(message.contains("探索 team workspace 最佳实践"));
+    }
+
+    #[test]
+    fn test_collect_subagent_task_compat_warnings_marks_soft_constraints() {
+        let input = SubAgentTaskToolInput {
+            prompt: "探索".to_string(),
+            task_type: None,
+            description: None,
+            role: None,
+            timeout_secs: None,
+            model: None,
+            return_summary: None,
+            allowed_tools: Some(vec!["read_file".to_string()]),
+            denied_tools: Some(vec!["write_file".to_string()]),
+            max_tokens: Some(512),
+        };
+
+        let warnings = collect_subagent_task_compat_warnings(&input);
+        assert_eq!(warnings.len(), 3);
+        assert!(warnings.iter().any(|item| item.contains("allowedTools")));
+        assert!(warnings.iter().any(|item| item.contains("deniedTools")));
+        assert!(warnings.iter().any(|item| item.contains("maxTokens")));
+    }
+
+    #[test]
+    fn test_subagent_counts_toward_team_limit_matches_controlled_lifecycle() {
+        assert!(subagent_counts_toward_team_limit(
+            SubagentRuntimeStatusKind::Idle
+        ));
+        assert!(subagent_counts_toward_team_limit(
+            SubagentRuntimeStatusKind::Queued
+        ));
+        assert!(subagent_counts_toward_team_limit(
+            SubagentRuntimeStatusKind::Running
+        ));
+        assert!(subagent_counts_toward_team_limit(
+            SubagentRuntimeStatusKind::Completed
+        ));
+        assert!(subagent_counts_toward_team_limit(
+            SubagentRuntimeStatusKind::Failed
+        ));
+        assert!(!subagent_counts_toward_team_limit(
+            SubagentRuntimeStatusKind::Closed
+        ));
+        assert!(!subagent_counts_toward_team_limit(
+            SubagentRuntimeStatusKind::NotFound
+        ));
+    }
+
+    #[test]
+    fn test_extract_runtime_subagent_result_text_prefers_assistant_output() {
+        let detail = SessionDetail {
+            id: "child-1".to_string(),
+            name: "子代理".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            thread_id: "thread-1".to_string(),
+            model: None,
+            working_dir: None,
+            workspace_id: None,
+            messages: vec![TauriMessage {
+                id: None,
+                role: "assistant".to_string(),
+                content: vec![TauriMessageContent::Text {
+                    text: "子代理最终结论".to_string(),
+                }],
+                timestamp: 0,
+            }],
+            execution_strategy: None,
+            turns: vec![],
+            items: vec![],
+            todo_items: vec![],
+            child_subagent_sessions: vec![],
+            subagent_parent_context: None,
+        };
+
+        assert_eq!(
+            extract_runtime_subagent_result_text(&detail).as_deref(),
+            Some("子代理最终结论")
+        );
+    }
+
+    #[test]
+    fn test_extract_runtime_subagent_result_text_falls_back_to_turn_error() {
+        let detail = SessionDetail {
+            id: "child-2".to_string(),
+            name: "子代理".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            thread_id: "thread-2".to_string(),
+            model: None,
+            working_dir: None,
+            workspace_id: None,
+            messages: vec![],
+            execution_strategy: None,
+            turns: vec![lime_core::database::dao::agent_timeline::AgentThreadTurn {
+                id: "turn-1".to_string(),
+                thread_id: "thread-2".to_string(),
+                prompt_text: "测试".to_string(),
+                status: lime_core::database::dao::agent_timeline::AgentThreadTurnStatus::Failed,
+                started_at: "2026-03-20T10:00:00Z".to_string(),
+                completed_at: Some("2026-03-20T10:00:01Z".to_string()),
+                error_message: Some("Provider 错误: Authentication failed".to_string()),
+                created_at: "2026-03-20T10:00:00Z".to_string(),
+                updated_at: "2026-03-20T10:00:01Z".to_string(),
+            }],
+            items: vec![],
+            todo_items: vec![],
+            child_subagent_sessions: vec![],
+            subagent_parent_context: None,
+        };
+
+        assert_eq!(
+            extract_runtime_subagent_result_text(&detail).as_deref(),
+            Some("Provider 错误: Authentication failed")
+        );
+    }
+
+    #[test]
     fn test_tool_search_parse_schema_metadata() {
         let schema = serde_json::json!({
             "x-lime": {
@@ -8036,6 +10475,53 @@ mod tests {
             "web_fetch",
         );
         assert!(exact > partial);
+    }
+
+    #[test]
+    fn test_tool_search_extension_tool_status_marks_default_visible_and_loaded_tools() {
+        let configs = vec![builtin_extension_config(
+            "docs",
+            vec!["search_docs", "read_docs"],
+            true,
+            vec!["search_docs"],
+            Some("assistant"),
+        )];
+        let visible_tool_names = HashSet::from(["docs__read_docs".to_string()]);
+
+        let visible = ToolSearchBridgeTool::extension_tool_status(
+            &configs,
+            &visible_tool_names,
+            "docs__search_docs",
+        );
+        assert_eq!(visible, ("visible", false, Some("docs".to_string())));
+
+        let loaded = ToolSearchBridgeTool::extension_tool_status(
+            &configs,
+            &visible_tool_names,
+            "docs__read_docs",
+        );
+        assert_eq!(loaded, ("loaded", false, Some("docs".to_string())));
+    }
+
+    #[test]
+    fn test_tool_search_extension_tool_status_prefers_longest_extension_name() {
+        let configs = vec![
+            builtin_extension_config("docs", vec!["search"], true, vec![], Some("assistant")),
+            builtin_extension_config(
+                "docs__admin",
+                vec!["search"],
+                true,
+                vec![],
+                Some("code_execution"),
+            ),
+        ];
+
+        let status = ToolSearchBridgeTool::extension_tool_status(
+            &configs,
+            &HashSet::new(),
+            "docs__admin__search",
+        );
+        assert_eq!(status, ("deferred", true, Some("docs__admin".to_string())));
     }
 
     #[test]
@@ -8144,7 +10630,7 @@ mod tests {
             )));
         }
 
-        let tool = ToolSearchBridgeTool::new(registry.clone());
+        let tool = ToolSearchBridgeTool::new(registry.clone(), None);
         let context = ToolContext::new(PathBuf::from("."));
 
         let hidden_result = tool
@@ -8197,11 +10683,8 @@ mod tests {
 
 /// 将 Lime 已运行的 MCP servers 注入到 Aster Agent 作为 extensions
 ///
-/// 获取 McpClientManager 中所有已运行的 server 配置，
-/// 转换为 Aster 的 ExtensionConfig::Stdio 并注册到 Agent。
-///
-/// 关键：将当前进程的 PATH 等环境变量合并到 MCP server 的 env 中，
-/// 确保 Aster 启动的子进程能找到 npx/uvx 等命令。
+/// 复用 Lime 已建立的 MCP RunningService，避免 Aster 再次启动独立子进程。
+/// 同时根据 Lime 的工具元数据推导 deferred loading / always expose surface。
 ///
 /// 返回 (成功数, 失败数)
 async fn inject_mcp_extensions(
@@ -8226,6 +10709,23 @@ async fn inject_mcp_extensions(
         }
     };
 
+    let all_tools = match manager.list_tools().await {
+        Ok(tools) => tools,
+        Err(error) => {
+            tracing::warn!("[AsterAgent] 读取 MCP 工具列表失败，跳过注入: {}", error);
+            return (0, running_servers.len());
+        }
+    };
+    let mut tools_by_server: HashMap<String, Vec<crate::mcp::McpToolDefinition>> = HashMap::new();
+    for tool in all_tools {
+        tools_by_server
+            .entry(tool.server_name.clone())
+            .or_default()
+            .push(tool);
+    }
+
+    let clients_handle = manager.clients();
+    let clients = clients_handle.read().await;
     let mut success_count = 0usize;
     let mut fail_count = 0usize;
 
@@ -8238,66 +10738,71 @@ async fn inject_mcp_extensions(
             continue;
         }
 
-        if let Some(config) = manager.get_client_config(server_name).await {
-            // 合并当前进程的关键环境变量到 MCP server 的 env 中
-            // 确保子进程能找到 npx/uvx/node 等命令
-            let mut merged_env = config.env.clone();
-            for key in &["PATH", "HOME", "USER", "SHELL", "NODE_PATH", "NVM_DIR"] {
-                if !merged_env.contains_key(*key) {
-                    if let Ok(val) = std::env::var(key) {
-                        merged_env.insert(key.to_string(), val);
-                    }
-                }
-            }
-
-            tracing::info!(
-                "[AsterAgent] 注入 MCP extension '{}': cmd='{}', args={:?}, env_keys={:?}",
-                server_name,
-                config.command,
-                config.args,
-                merged_env.keys().collect::<Vec<_>>()
-            );
-
-            // 增加超时时间：npx 首次下载可能需要较长时间
-            let timeout = std::cmp::max(config.timeout, 60);
-
-            let extension = ExtensionConfig::Stdio {
-                name: server_name.clone(),
-                description: format!("MCP Server: {server_name}"),
-                cmd: config.command.clone(),
-                args: config.args.clone(),
-                envs: Envs::new(merged_env),
-                env_keys: vec![],
-                timeout: Some(timeout),
-                bundled: Some(false),
-                available_tools: vec![],
-                deferred_loading: false,
-                always_expose_tools: Vec::new(),
-                allowed_caller: None,
-            };
-
-            match agent.add_extension(extension).await {
-                Ok(_) => {
-                    tracing::info!("[AsterAgent] 成功注入 MCP extension: {}", server_name);
-                    success_count += 1;
-                }
-                Err(e) => {
-                    tracing::error!(
-                        "[AsterAgent] 注入 MCP extension '{}' 失败: {}。\
-                        cmd='{}', args={:?}。请检查命令是否在 PATH 中可用。",
-                        server_name,
-                        e,
-                        config.command,
-                        config.args
-                    );
-                    fail_count += 1;
-                }
-            }
-        } else {
-            tracing::warn!("[AsterAgent] 无法获取 MCP server '{}' 的配置", server_name);
+        let Some(wrapper) = clients.get(server_name) else {
+            tracing::warn!("[AsterAgent] MCP server '{}' 无连接包装器", server_name);
             fail_count += 1;
-        }
+            continue;
+        };
+
+        let Some(running_service) = wrapper.running_service_arc() else {
+            tracing::warn!("[AsterAgent] MCP server '{}' 无运行中 service", server_name);
+            fail_count += 1;
+            continue;
+        };
+
+        let server_tools = tools_by_server
+            .get(server_name)
+            .cloned()
+            .unwrap_or_default();
+        let surface = build_mcp_extension_surface(
+            server_name,
+            format!("Lime MCP Bridge: {server_name}"),
+            &server_tools,
+        );
+
+        let extension = ExtensionConfig::Builtin {
+            name: server_name.clone(),
+            display_name: Some(server_name.clone()),
+            description: surface.description.clone(),
+            timeout: None,
+            bundled: Some(false),
+            available_tools: surface.available_tools.clone(),
+            deferred_loading: surface.deferred_loading,
+            always_expose_tools: surface.always_expose_tools.clone(),
+            allowed_caller: surface.allowed_caller.clone(),
+        };
+
+        let bridge_client = McpBridgeClient::new(
+            server_name.clone(),
+            running_service.clone(),
+            wrapper.handler(),
+            running_service.peer_info().cloned(),
+        );
+        let client: Arc<tokio::sync::Mutex<Box<dyn aster::agents::mcp_client::McpClientTrait>>> =
+            Arc::new(tokio::sync::Mutex::new(Box::new(bridge_client)));
+
+        agent
+            .extension_manager
+            .add_client(
+                server_name.clone(),
+                extension,
+                client,
+                running_service.peer_info().cloned(),
+                None,
+            )
+            .await;
+
+        tracing::info!(
+            "[AsterAgent] 已桥接 MCP extension: name={}, tool_count={}, deferred={}, always_expose={}",
+            server_name,
+            surface.available_tools.len(),
+            surface.deferred_loading,
+            surface.always_expose_tools.len()
+        );
+        success_count += 1;
     }
+
+    drop(clients);
 
     if fail_count > 0 {
         tracing::warn!(

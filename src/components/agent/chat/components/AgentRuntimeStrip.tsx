@@ -1,20 +1,21 @@
 import React, { useMemo } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import type { SchedulerEvent, SchedulerProgress } from "@/lib/api/subAgentScheduler";
+import type { AsterSubagentSessionInfo } from "@/lib/api/agentRuntime";
 
 import type { ChatToolPreferences } from "../utils/chatToolPreferences";
+import type { CompatSubagentRuntimeSnapshot } from "../utils/compatSubagentRuntime";
 import type { HarnessSessionState } from "../utils/harnessState";
 
 interface AgentRuntimeStripProps {
   activeTheme?: string;
   toolPreferences: ChatToolPreferences;
   harnessState: HarnessSessionState;
-  subAgentRuntime: {
-    isRunning: boolean;
-    progress: SchedulerProgress | null;
-    events: SchedulerEvent[];
-  };
+  childSubagentSessions?: AsterSubagentSessionInfo[];
+  compatSubagentRuntime: Pick<
+    CompatSubagentRuntimeSnapshot,
+    "isRunning" | "progress"
+  >;
   variant?: "standalone" | "embedded";
   isSending?: boolean;
   runtimeStatusTitle?: string | null;
@@ -42,7 +43,8 @@ export const AgentRuntimeStrip: React.FC<AgentRuntimeStripProps> = ({
   activeTheme,
   toolPreferences,
   harnessState,
-  subAgentRuntime,
+  compatSubagentRuntime,
+  childSubagentSessions = [],
   variant = "standalone",
   isSending = false,
   runtimeStatusTitle = null,
@@ -67,6 +69,19 @@ export const AgentRuntimeStrip: React.FC<AgentRuntimeStripProps> = ({
 
   const statusItems = useMemo<StatusItem[]>(() => {
     const nextItems: StatusItem[] = [];
+    const runningTeamSessions = childSubagentSessions.filter(
+      (session) => session.runtime_status === "running",
+    ).length;
+    const queuedTeamSessions = childSubagentSessions.filter(
+      (session) => session.runtime_status === "queued",
+    ).length;
+    const activeTeamSessions = runningTeamSessions + queuedTeamSessions;
+    const completedTeamSessions = childSubagentSessions.filter(
+      (session) =>
+        session.runtime_status === "completed" ||
+        session.runtime_status === "failed" ||
+        session.runtime_status === "aborted",
+    ).length;
 
     if (isSending) {
       nextItems.push({
@@ -100,12 +115,30 @@ export const AgentRuntimeStrip: React.FC<AgentRuntimeStripProps> = ({
       });
     }
 
-    if (subAgentRuntime.isRunning) {
+    if (activeTeamSessions > 0) {
+      nextItems.push({
+        key: "team_running",
+        label:
+          queuedTeamSessions > 0
+            ? `Team 运行中 ${activeTeamSessions}/${childSubagentSessions.length} · 排队 ${queuedTeamSessions}`
+            : `Team 运行中 ${activeTeamSessions}/${childSubagentSessions.length}`,
+        tone: "secondary",
+      });
+    } else if (childSubagentSessions.length > 0) {
+      nextItems.push({
+        key: "team_sessions",
+        label:
+          completedTeamSessions > 0
+            ? `Team 会话 ${childSubagentSessions.length} · 已收敛 ${completedTeamSessions}`
+            : `Team 会话 ${childSubagentSessions.length}`,
+        tone: "outline",
+      });
+    } else if (compatSubagentRuntime.isRunning) {
       const progressLabel =
-        subAgentRuntime.progress &&
-        typeof subAgentRuntime.progress.completed === "number" &&
-        typeof subAgentRuntime.progress.total === "number"
-          ? `子代理运行中 ${subAgentRuntime.progress.completed}/${subAgentRuntime.progress.total}`
+        compatSubagentRuntime.progress &&
+        typeof compatSubagentRuntime.progress.completed === "number" &&
+        typeof compatSubagentRuntime.progress.total === "number"
+          ? `子代理运行中 ${compatSubagentRuntime.progress.completed}/${compatSubagentRuntime.progress.total}`
           : "子代理运行中";
       nextItems.push({
         key: "subagent_running",
@@ -138,11 +171,12 @@ export const AgentRuntimeStrip: React.FC<AgentRuntimeStripProps> = ({
 
     return nextItems;
   }, [
+    childSubagentSessions,
+    compatSubagentRuntime.isRunning,
+    compatSubagentRuntime.progress,
     harnessState,
     isSending,
     runtimeStatusTitle,
-    subAgentRuntime.isRunning,
-    subAgentRuntime.progress,
   ]);
 
   return (

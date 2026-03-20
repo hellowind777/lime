@@ -752,10 +752,7 @@ mod gemini_api_key_tests {
 
     #[test]
     fn test_gemini_api_key_provider_new() {
-        let provider = GeminiApiKeyProvider::new();
-        // Just verify it can be created
-        assert!(true);
-        let _ = provider;
+        let _provider = GeminiApiKeyProvider::new();
     }
 }
 

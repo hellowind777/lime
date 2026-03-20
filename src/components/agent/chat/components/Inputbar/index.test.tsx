@@ -16,6 +16,7 @@ const mockInputbarCore = vi.fn(
     activeTools?: Record<string, boolean>;
     onSend?: () => void;
     rightExtra?: React.ReactNode;
+    leftExtra?: React.ReactNode;
     topExtra?: React.ReactNode;
     placeholder?: string;
     toolMode?: "default" | "attach-only";
@@ -39,6 +40,7 @@ const mockInputbarCore = vi.fn(
       >
         发送
       </button>
+      <div data-testid="left-extra">{props.leftExtra}</div>
       <div data-testid="right-extra">{props.rightExtra}</div>
       <div data-testid="top-extra">{props.topExtra}</div>
     </div>
@@ -51,6 +53,7 @@ vi.mock("./components/InputbarCore", () => ({
     activeTools?: Record<string, boolean>;
     onSend?: () => void;
     rightExtra?: React.ReactNode;
+    leftExtra?: React.ReactNode;
     topExtra?: React.ReactNode;
     placeholder?: string;
     toolMode?: "default" | "attach-only";
@@ -79,6 +82,10 @@ vi.mock("./hooks/useActiveSkill", () => ({
 
 vi.mock("./components/SkillBadge", () => ({
   SkillBadge: () => <div data-testid="skill-badge" />,
+}));
+
+vi.mock("./components/TeamSelector", () => ({
+  TeamSelector: () => <div data-testid="team-selector-stub" />,
 }));
 
 vi.mock("../ChatModelSelector", () => ({
@@ -257,6 +264,82 @@ describe("Inputbar", () => {
       task: false,
       subagent: false,
     });
+  });
+
+  it("通用聊天态复杂任务应显示 Team 建议并支持开启多代理", async () => {
+    const onToolStatesChange = vi.fn();
+    const container = renderInputbar({
+      input: "请拆分这个多代理调试任务，分别分析、实现、验证，再由主线程汇总结论。",
+      activeTheme: "general",
+      toolStates: {
+        webSearch: false,
+        thinking: false,
+        task: false,
+        subagent: false,
+      },
+      onToolStatesChange,
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("当前任务更适合 Team 协作");
+
+    const enableTeamButton = Array.from(
+      container.querySelectorAll("button"),
+    ).find((button) => button.textContent?.includes("启用 Team"));
+
+    expect(enableTeamButton).toBeTruthy();
+
+    act(() => {
+      enableTeamButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onToolStatesChange).toHaveBeenCalledWith({
+      webSearch: false,
+      thinking: false,
+      task: false,
+      subagent: true,
+    });
+  });
+
+  it("仅在 Team mode 开启时显示 TeamSelector", async () => {
+    const container = renderInputbar({
+      activeTheme: "general",
+      toolStates: {
+        webSearch: false,
+        thinking: false,
+        task: false,
+        subagent: false,
+      },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('[data-testid="team-selector-stub"]'),
+    ).toBeNull();
+
+    const enabledContainer = renderInputbar({
+      activeTheme: "general",
+      toolStates: {
+        webSearch: false,
+        thinking: false,
+        task: false,
+        subagent: true,
+      },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(
+      enabledContainer.querySelector('[data-testid="team-selector-stub"]'),
+    ).toBeTruthy();
   });
 
   it("社媒主题默认应自动注入 social_post_with_cover skill", async () => {

@@ -73,3 +73,12 @@ export function buildContextRuntimeStatus(
     checkpoints,
   };
 }
+
+export function buildActionResumeRuntimeStatus(): AgentRuntimeStatus {
+  return {
+    phase: "routing",
+    title: "已提交补充信息，继续执行中",
+    detail: "补充信息已回填到当前执行链路，正在恢复后续步骤。",
+    checkpoints: ["补充信息已确认", "已唤醒当前执行链路", "等待下一条执行事件"],
+  };
+}

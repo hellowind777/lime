@@ -31,6 +31,7 @@ import {
 import {
   buildRecommendationPrompt,
   getContextualRecommendations,
+  isTeamRuntimeRecommendation,
 } from "../utils/contextualRecommendations";
 import { EmptyStateComposerPanel } from "./EmptyStateComposerPanel";
 import { EmptyStateHero } from "./EmptyStateHero";
@@ -49,6 +50,7 @@ import { useActiveSkill } from "./Inputbar/hooks/useActiveSkill";
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
 import type { MessageImage } from "../types";
+import type { TeamDefinition } from "../utils/teamDefinitions";
 import { isGeneralResearchTheme } from "../utils/generalAgentPrompt";
 import {
   getClipboardImageCandidates,
@@ -60,8 +62,34 @@ import capabilitySkillsPlaceholder from "@/assets/claw-home/capability-skills-pl
 import capabilityAutomationsPlaceholder from "@/assets/claw-home/capability-automations-placeholder.svg";
 import capabilityAgentTeamsPlaceholder from "@/assets/claw-home/capability-agent-teams-placeholder.svg";
 import capabilityBrowserAssistPlaceholder from "@/assets/claw-home/capability-browser-assist-placeholder.svg";
+import type { ModelSelectorProps } from "@/components/input-kit";
 
 const SOCIAL_ARTICLE_SKILL_KEY = "social_post_with_cover";
+const CONFIG_LOAD_IDLE_TIMEOUT_MS = 1_500;
+const CONFIG_LOAD_FALLBACK_DELAY_MS = 180;
+
+function scheduleDeferredConfigLoad(task: () => void): () => void {
+  if (typeof window === "undefined") {
+    task();
+    return () => undefined;
+  }
+
+  if (typeof window.requestIdleCallback === "function") {
+    const idleId = window.requestIdleCallback(() => task(), {
+      timeout: CONFIG_LOAD_IDLE_TIMEOUT_MS,
+    });
+    return () => {
+      if (typeof window.cancelIdleCallback === "function") {
+        window.cancelIdleCallback(idleId);
+      }
+    };
+  }
+
+  const timeoutId = window.setTimeout(task, CONFIG_LOAD_FALLBACK_DELAY_MS);
+  return () => {
+    window.clearTimeout(timeoutId);
+  };
+}
 
 const backgroundOrbDrift = keyframes`
   0%, 100% {
@@ -171,6 +199,9 @@ interface EmptyStateProps {
   onTaskEnabledChange?: (enabled: boolean) => void;
   subagentEnabled?: boolean;
   onSubagentEnabledChange?: (enabled: boolean) => void;
+  selectedTeam?: TeamDefinition | null;
+  onSelectTeam?: (team: TeamDefinition | null) => void;
+  onEnableSuggestedTeam?: (suggestedPresetId?: string) => void;
   hasCanvasContent?: boolean;
   hasContentId?: boolean;
   selectedText?: string;
@@ -196,6 +227,14 @@ interface EmptyStateProps {
   onProjectChange?: (projectId: string) => void;
   /** 打开设置 */
   onOpenSettings?: () => void;
+  /** 是否跳过首页项目选择器的默认项目目录检查 */
+  skipProjectSelectorWorkspaceReadyCheck?: boolean;
+  /** 是否延后首页项目列表加载到展开时 */
+  deferProjectSelectorListLoad?: boolean;
+  /** 模型选择器后台预加载策略 */
+  modelSelectorBackgroundPreload?: ModelSelectorProps["backgroundPreload"];
+  /** 配置读取策略 */
+  configLoadStrategy?: "immediate" | "idle";
 }
 
 const ENTRY_THEME_ID = "social-media";
@@ -269,8 +308,7 @@ const THEME_WORKBENCH_COPY: Record<
 > = {
   general: {
     title: "青柠一下，灵感即来",
-    description:
-      "从一句想法，到成稿、成图、成片、成事。",
+    description: "从一句想法，到成稿、成图、成片、成事。",
     supportingDescription:
       "Claw 工作台会围绕一个目标持续对话、检索网页、补充素材，并把结果沉淀到右侧画布，而不是只停留在一次性提问。",
   },
@@ -349,6 +387,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   onTaskEnabledChange,
   subagentEnabled = false,
   onSubagentEnabledChange,
+  selectedTeam = null,
+  onSelectTeam,
+  onEnableSuggestedTeam,
   hasCanvasContent = false,
   hasContentId = false,
   selectedText = "",
@@ -363,6 +404,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   projectId = null,
   onProjectChange,
   onOpenSettings,
+  skipProjectSelectorWorkspaceReadyCheck = false,
+  deferProjectSelectorListLoad = false,
+  modelSelectorBackgroundPreload = "immediate",
+  configLoadStrategy = "immediate",
 }) => {
   const { activeSkill, setActiveSkill, clearActiveSkill, wrapTextWithSkill } =
     useActiveSkill();
@@ -392,11 +437,27 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         console.error("加载主题配置失败:", e);
       }
     };
-    loadConfigPreferences();
+    let cancelPendingLoad: () => void = () => undefined;
+
+    if (configLoadStrategy === "idle") {
+      cancelPendingLoad = scheduleDeferredConfigLoad(() => {
+        void loadConfigPreferences();
+      });
+    } else {
+      void loadConfigPreferences();
+    }
 
     // 监听配置变更事件
     const handleConfigChange = () => {
-      loadConfigPreferences();
+      if (configLoadStrategy === "idle") {
+        cancelPendingLoad();
+        cancelPendingLoad = scheduleDeferredConfigLoad(() => {
+          void loadConfigPreferences();
+        });
+        return;
+      }
+
+      void loadConfigPreferences();
     };
     window.addEventListener("theme-config-changed", handleConfigChange);
     window.addEventListener(
@@ -410,8 +471,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         "chat-appearance-config-changed",
         handleConfigChange,
       );
+      cancelPendingLoad();
     };
-  }, []);
+  }, [configLoadStrategy]);
 
   // 过滤后的主题列表
   const categories = ALL_CATEGORIES.filter((cat) =>
@@ -495,6 +557,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       hasCanvasContent,
       hasContentId,
       selectedText: recommendationSelectedText,
+      subagentEnabled,
     });
   }, [
     activeTheme,
@@ -505,6 +568,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     hasCanvasContent,
     hasContentId,
     recommendationSelectedText,
+    subagentEnabled,
   ]);
 
   const selectedTextPreview = useMemo(() => {
@@ -683,6 +747,13 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     shortLabel: string,
     fullPrompt: string,
   ) => {
+    const looksLikeTeamRuntimePrompt =
+      activeTheme === "general" &&
+      isTeamRuntimeRecommendation(shortLabel, fullPrompt);
+    if (looksLikeTeamRuntimePrompt) {
+      onSubagentEnabledChange?.(true);
+    }
+
     const promptWithSelection = buildRecommendationPrompt(
       fullPrompt,
       selectedText,
@@ -963,8 +1034,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     [activeTheme, currentRecommendations],
   );
 
-  const quickStartPresets = useMemo(
-    () => [
+  const quickStartPresets = useMemo(() => {
+    const presets = [
       {
         key: "generate-image",
         label: "生成配图",
@@ -1014,9 +1085,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         prompt:
           "请先进入研究模式，帮我围绕当前主题做信息收集、观点归纳、风险点识别和结论总结。",
       },
-    ],
-    [],
-  );
+    ];
+
+    return presets;
+  }, []);
 
   const composerPanel = (
     <EmptyStateComposerPanel
@@ -1033,6 +1105,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       executionStrategyLabel={executionStrategyLabel}
       setExecutionStrategy={setExecutionStrategy}
       onManageProviders={onManageProviders}
+      modelSelectorBackgroundPreload={modelSelectorBackgroundPreload}
       isGeneralTheme={isGeneralTheme}
       isEntryTheme={isEntryTheme}
       entryTaskType={entryTaskType}
@@ -1073,6 +1146,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       onTaskEnabledChange={onTaskEnabledChange}
       subagentEnabled={subagentEnabled}
       onSubagentEnabledChange={onSubagentEnabledChange}
+      selectedTeam={selectedTeam}
+      onSelectTeam={onSelectTeam}
+      onEnableSuggestedTeam={onEnableSuggestedTeam}
       webSearchEnabled={webSearchEnabled}
       onWebSearchEnabledChange={onWebSearchEnabledChange}
       pendingImages={pendingImages}
@@ -1097,44 +1173,47 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     />
   );
 
-  const headerControls =
-    onProjectChange ? (
-      <div className="flex w-full justify-start sm:w-auto sm:justify-end">
-        <div className="inline-flex max-w-full items-center rounded-[24px] border border-white/85 bg-white/84 p-1 shadow-sm shadow-slate-950/5 backdrop-blur-sm">
-          <ProjectSelector
-            value={projectId ?? null}
-            onChange={onProjectChange}
-            workspaceType={activeTheme}
-            placeholder="选择项目"
-            dropdownSide="bottom"
-            dropdownAlign="end"
-            enableManagement={activeTheme === "general"}
-            density="compact"
-            chrome="embedded"
-            className="min-w-[180px] max-w-[260px]"
-          />
-          {onOpenSettings ? (
-            <>
-              <div
-                className="mx-1 h-6 w-px shrink-0 bg-slate-200/80"
-                aria-hidden="true"
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 rounded-[18px] text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                onClick={onOpenSettings}
-                aria-label="打开设置"
-                title="打开设置"
-              >
-                <Settings2 size={18} />
-              </Button>
-            </>
-          ) : null}
-        </div>
+  const headerControls = onProjectChange ? (
+    <div className="flex w-full justify-start sm:w-auto sm:justify-end">
+      <div className="inline-flex max-w-full items-center rounded-[24px] border border-white/85 bg-white/84 p-1 shadow-sm shadow-slate-950/5 backdrop-blur-sm">
+        <ProjectSelector
+          value={projectId ?? null}
+          onChange={onProjectChange}
+          workspaceType={activeTheme}
+          placeholder="选择项目"
+          dropdownSide="bottom"
+          dropdownAlign="end"
+          enableManagement={activeTheme === "general"}
+          density="compact"
+          chrome="embedded"
+          skipDefaultWorkspaceReadyCheck={
+            skipProjectSelectorWorkspaceReadyCheck
+          }
+          deferProjectListLoad={deferProjectSelectorListLoad}
+          className="min-w-[180px] max-w-[260px]"
+        />
+        {onOpenSettings ? (
+          <>
+            <div
+              className="mx-1 h-6 w-px shrink-0 bg-slate-200/80"
+              aria-hidden="true"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-[18px] text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              onClick={onOpenSettings}
+              aria-label="打开设置"
+              title="打开设置"
+            >
+              <Settings2 size={18} />
+            </Button>
+          </>
+        ) : null}
       </div>
-    ) : null;
+    </div>
+  ) : null;
 
   return (
     <PageContainer>

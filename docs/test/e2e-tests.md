@@ -1,276 +1,126 @@
-# Lime E2E 测试指南
+# Lime 浏览器续测与 E2E 指南
 
-> 端到端测试验证完整用户流程
+> 本文只保留 Lime 当前仍有效的浏览器端 E2E 入口；详细操作与续测步骤以 `docs/aiprompts/playwright-e2e.md` 为准。
 
-## 概述
+## 1. 当前事实源
 
-E2E 测试模拟真实用户操作，验证从前端到后端的完整流程。Lime 使用 Tauri 框架，E2E 测试需要覆盖：
+### current
 
-- 桌面应用启动和初始化
-- 用户界面交互
-- API 代理完整流程
-- 凭证管理流程
+- `docs/aiprompts/playwright-e2e.md`：浏览器续测、Playwright MCP 交互、DevBridge 排障的唯一详细事实源
+- `npm run tauri:dev:headless`：当前浏览器模式启动入口
+- `npm run bridge:health -- --timeout-ms 120000`：当前 DevBridge 就绪检查入口
+- `npm run test:bridge`：当前浏览器桥接最小自动校验入口
+- `npm run smoke:workspace-ready`：当前首条自包含 smoke，覆盖 DevBridge 就绪与默认 workspace 基础链路
 
-## 测试框架
+### supplement
 
-### Tauri E2E 测试
+- `npm run bridge:e2e`：偏排障性质的脚本，不是仓库统一 E2E 标准
+- `npm run smoke:social-workbench`：现有专项 smoke，但仍依赖人工前置状态，暂不等于“自包含主链路冒烟”
 
-使用 `tauri-driver` 进行自动化测试：
+### deprecated
 
-```bash
-# 安装依赖
-cargo install tauri-driver
+- `tauri-driver`：不再是当前仓库推荐的 E2E 方案
+- `npm run test:e2e`：当前仓库已不存在，不应继续作为执行入口
 
-# 运行 E2E 测试
-npm run test:e2e
-```
+## 2. 何时使用 E2E / 续测
 
-### 测试配置
+以下场景优先走当前浏览器续测流程：
 
-```javascript
-// playwright.config.ts
-import { defineConfig } from "@playwright/test";
+- 用户明确要求“继续测试”“继续复现”“继续用 Playwright MCP 验证”
+- 需要复用已有页面状态或浏览器标签页
+- 需要确认页面真实交互、控制台报错、DevBridge / mock fallback 行为
+- 修改涉及前端页面主路径，而不是单一工具函数或纯后端逻辑
 
-export default defineConfig({
-  testDir: "./tests/e2e",
-  timeout: 30000,
-  use: {
-    baseURL: "tauri://localhost",
-  },
-});
-```
+以下场景不要强行拉起整条 E2E：
 
-## 测试场景
+- 只是模块级逻辑修改，可用单测或定向集成测试覆盖
+- 只是 `safeInvoke`、mock、bridge 边界修改，且 `npm run test:bridge` 足以验证
+- 只是命令注册 / 命令漂移问题，优先跑 `npm run test:contracts`
 
-### 1. 应用启动流程
+## 3. 当前标准流程
 
-```typescript
-import { test, expect } from "@playwright/test";
-
-test.describe("应用启动", () => {
-  test("应用正常启动并显示主界面", async ({ page }) => {
-    // 等待应用加载
-    await page.waitForSelector('[data-testid="main-layout"]');
-
-    // 验证核心组件存在
-    await expect(page.locator('[data-testid="sidebar"]')).toBeVisible();
-    await expect(page.locator('[data-testid="content-area"]')).toBeVisible();
-  });
-
-  test("首次启动显示欢迎引导", async ({ page }) => {
-    // 清除本地存储模拟首次启动
-    await page.evaluate(() => localStorage.clear());
-    await page.reload();
-
-    await expect(page.locator('[data-testid="welcome-modal"]')).toBeVisible();
-  });
-});
-```
-
-### 2. 凭证管理流程
-
-```typescript
-test.describe("凭证管理", () => {
-  test("添加 Kiro 凭证", async ({ page }) => {
-    // 打开凭证管理
-    await page.click('[data-testid="credentials-tab"]');
-    await page.click('[data-testid="add-credential-btn"]');
-
-    // 选择 Provider
-    await page.click('[data-testid="provider-kiro"]');
-
-    // 上传凭证文件
-    const fileInput = page.locator('input[type="file"]');
-    await fileInput.setInputFiles("./tests/fixtures/test-credential.json");
-
-    // 验证凭证添加成功
-    await expect(page.locator('[data-testid="credential-item"]')).toBeVisible();
-    await expect(page.locator("text=test@example.com")).toBeVisible();
-  });
-
-  test("删除凭证", async ({ page }) => {
-    // 假设已有凭证
-    await page.click('[data-testid="credentials-tab"]');
-
-    // 删除凭证
-    await page.click('[data-testid="credential-menu"]');
-    await page.click('[data-testid="delete-credential"]');
-    await page.click('[data-testid="confirm-delete"]');
-
-    // 验证凭证已删除
-    await expect(
-      page.locator('[data-testid="credential-item"]'),
-    ).not.toBeVisible();
-  });
-});
-```
-
-### 3. API 代理流程
-
-```typescript
-test.describe("API 代理", () => {
-  test("启动代理服务器", async ({ page }) => {
-    await page.click('[data-testid="server-tab"]');
-    await page.click('[data-testid="start-server-btn"]');
-
-    // 等待服务器启动
-    await expect(page.locator("text=服务器运行中")).toBeVisible();
-    await expect(page.locator('[data-testid="server-port"]')).toContainText(
-      "8080",
-    );
-  });
-
-  test("代理请求成功", async ({ page, request }) => {
-    // 启动服务器
-    await page.click('[data-testid="start-server-btn"]');
-    await page.waitForSelector("text=服务器运行中");
-
-    // 发送测试请求
-    const response = await request.post(
-      "http://localhost:8080/v1/chat/completions",
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer test-key",
-        },
-        data: {
-          model: "gpt-4",
-          messages: [{ role: "user", content: "Hello" }],
-        },
-      },
-    );
-
-    expect(response.ok()).toBeTruthy();
-  });
-});
-```
-
-### 4. Agent 对话流程
-
-```typescript
-test.describe("Agent 对话", () => {
-  test("发送消息并接收响应", async ({ page }) => {
-    await page.click('[data-testid="agent-tab"]');
-
-    // 输入消息
-    await page.fill('[data-testid="message-input"]', "你好，请介绍一下自己");
-    await page.click('[data-testid="send-btn"]');
-
-    // 等待响应
-    await expect(page.locator('[data-testid="assistant-message"]')).toBeVisible(
-      {
-        timeout: 30000,
-      },
-    );
-  });
-
-  test("流式响应正确显示", async ({ page }) => {
-    await page.click('[data-testid="agent-tab"]');
-    await page.fill('[data-testid="message-input"]', "写一首短诗");
-    await page.click('[data-testid="send-btn"]');
-
-    // 验证流式显示（内容逐渐增加）
-    const messageEl = page.locator('[data-testid="assistant-message"]');
-
-    let prevLength = 0;
-    for (let i = 0; i < 5; i++) {
-      await page.waitForTimeout(500);
-      const text = await messageEl.textContent();
-      expect(text?.length).toBeGreaterThan(prevLength);
-      prevLength = text?.length || 0;
-    }
-  });
-});
-```
-
-## 测试数据管理
-
-### Fixtures
-
-```
-tests/
-├── fixtures/
-│   ├── test-credential.json    # 测试凭证
-│   ├── mock-responses/         # Mock API 响应
-│   │   ├── chat-completion.json
-│   │   └── streaming-response.txt
-│   └── test-config.json        # 测试配置
-└── e2e/
-    └── *.spec.ts
-```
-
-### Mock 服务
-
-```typescript
-// tests/mocks/api-server.ts
-import { setupServer } from "msw/node";
-import { rest } from "msw";
-
-export const mockServer = setupServer(
-  rest.post("*/v1/chat/completions", (req, res, ctx) => {
-    return res(
-      ctx.json({
-        id: "test-id",
-        choices: [
-          {
-            message: { role: "assistant", content: "Mock response" },
-          },
-        ],
-      }),
-    );
-  }),
-);
-```
-
-## 运行 E2E 测试
+### 第 1 步：启动浏览器模式
 
 ```bash
-# 构建应用
-npm run build
-
-# 运行 E2E 测试
-npm run test:e2e
-
-# 运行特定测试
-npm run test:e2e -- --grep "凭证管理"
-
-# 生成测试报告
-npm run test:e2e -- --reporter=html
+npm run tauri:dev:headless
 ```
 
-## CI/CD 集成
+用途：
 
-```yaml
-# .github/workflows/e2e.yml
-name: E2E Tests
+- 启动前端 dev server
+- 启动 Tauri headless 环境
+- 启动 DevBridge
+- 让 Playwright MCP 可访问 `http://127.0.0.1:1420/`
 
-on: [push, pull_request]
+### 第 2 步：等待桥接就绪
 
-jobs:
-  e2e:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build app
-        run: npm run build
-
-      - name: Run E2E tests
-        run: npm run test:e2e
+```bash
+npm run bridge:health -- --timeout-ms 120000
 ```
 
-## 下一步
+用途：
 
-- [Agent 评估指南](agent-evaluation.md)
-- [测试用例：Agent](test-cases/agent-tests.md)
+- 等待 `http://127.0.0.1:3030/health` 可用
+- 降低页面早于 DevBridge 就绪时的 `Failed to fetch` 噪音
+
+### 第 3 步：使用 Playwright MCP 进入页面
+
+标准入口：
+
+- 打开 `http://127.0.0.1:1420/`
+- 等待“正在加载...”消失
+- 确认默认首页已出现
+- 检查一次 `browser_console_messages(level=error)`
+
+### 第 4 步：沿主路径做最小验证
+
+当前优先验证以下路径：
+
+1. 首页可加载，主导航可见
+2. 社媒内容工作流可进入
+3. 页面交互后控制台不新增关键 error
+
+详细点击路径、控制台检查要求、交接格式，以 `docs/aiprompts/playwright-e2e.md` 为准。
+
+## 4. 当前命令矩阵
+
+| 目标                   | 命令 / 入口                                    | 角色       | 说明                                            |
+| ---------------------- | ---------------------------------------------- | ---------- | ----------------------------------------------- |
+| 启动浏览器模式         | `npm run tauri:dev:headless`                   | current    | 当前标准启动命令                                |
+| 等待 Bridge 就绪       | `npm run bridge:health -- --timeout-ms 120000` | current    | 当前标准健康检查                                |
+| 校验桥接基础能力       | `npm run test:bridge`                          | current    | `safeInvoke` / mock / tauri-mock 最小自动校验   |
+| Workspace 自包含 smoke | `npm run smoke:workspace-ready`                | current    | 验证 DevBridge、默认 workspace、路径回查链路    |
+| 校验跨层命令契约       | `npm run test:contracts`                       | current    | 检查前端命令、Rust 注册、catalog、mock 集合漂移 |
+| 浏览器续测细则         | `docs/aiprompts/playwright-e2e.md`             | current    | Playwright MCP 唯一详细事实源                   |
+| 专项 bridge 排障       | `npm run bridge:e2e`                           | supplement | 适合排障，不是统一门禁                          |
+| 社媒内容专项 smoke     | `npm run smoke:social-workbench`               | supplement | 仍非自包含，不应冒充标准 E2E                    |
+| 旧 E2E 命令            | `npm run test:e2e`                             | deprecated | 当前仓库不存在                                  |
+
+## 5. 当前验证标准
+
+一次有效的浏览器续测 / E2E 至少满足以下之一：
+
+1. 主路径走通且控制台 error 归零
+2. 主路径走通，且剩余错误已明确归类为非阻塞项
+3. 已定位新的 bridge / mock / 命令注册缺口，并给出下一步最小修复点
+
+## 6. 当前不做的假设
+
+本文不再把以下内容当成当前标准：
+
+- 假设仓库已接入本地 Playwright 测试目录与统一 `test:e2e` 命令
+- 假设 `tauri-driver` 仍是推荐路径
+- 假设浏览器 E2E 已进入 CI 标准门禁
+
+当前 PR 门禁以 `.github/workflows/pr-gate.yml` 为准；完整浏览器主链路 smoke 仍属于后续建设项，详见 `docs/test/testing-strategy-2026.md`。
+
+## 7. 给后续 Agent 的交接要求
+
+如果本轮没有完全收口，请至少留下：
+
+- 当前页面 URL
+- 已完成的业务步骤
+- 控制台 error 数量
+- 是否走到了真实 bridge 或 mock fallback
+- 最新暴露的命令缺口
+- 下一轮应先补 mock、bridge，还是命令注册

@@ -392,6 +392,9 @@ export function AppSidebar({
   currentPageParams,
   onNavigate,
 }: AppSidebarProps) {
+  const agentEntry = (currentPageParams as AgentPageParams | undefined)?.agentEntry;
+  const isClawTaskCenter = currentPage === "agent" && agentEntry === "claw";
+  const isNewTaskHome = currentPage === "agent" && agentEntry === "new-task";
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     if (typeof window === "undefined") {
       return false;
@@ -544,6 +547,19 @@ export function AppSidebar({
       collapsed ? "true" : "false",
     );
   }, [collapsed]);
+
+  useEffect(() => {
+    if (isNewTaskHome) {
+      setCollapsed(false);
+      return;
+    }
+
+    if (!isClawTaskCenter) {
+      return;
+    }
+
+    setCollapsed(true);
+  }, [isClawTaskCenter, isNewTaskHome]);
 
   useEffect(() => {
     if (isThemeWorkspacePage(currentPage)) {

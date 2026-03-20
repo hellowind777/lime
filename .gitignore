@@ -28,6 +28,10 @@ __pycache__/
 .kiro/
 .history
 docs/prd/
+!docs/prd/
+docs/prd/*
+!docs/prd/tools/
+!docs/prd/tools/*.md
 
 # Internal roadmap&gongzonghao (private)
 docs/roadmap/

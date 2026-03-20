@@ -183,7 +183,8 @@ pub struct McpClientWrapper {
     pub process: Option<tokio::process::Child>,
     pub server_info: Option<super::types::McpServerCapabilities>,
     pub client_handler: Arc<LimeMcpClient>,
-    pub running_service: Option<rmcp::service::RunningService<rmcp::RoleClient, LimeMcpClient>>,
+    pub running_service:
+        Option<Arc<rmcp::service::RunningService<rmcp::RoleClient, LimeMcpClient>>>,
 }
 
 impl McpClientWrapper {
@@ -220,13 +221,19 @@ impl McpClientWrapper {
         &mut self,
         service: rmcp::service::RunningService<rmcp::RoleClient, LimeMcpClient>,
     ) {
-        self.running_service = Some(service);
+        self.running_service = Some(Arc::new(service));
     }
 
     pub fn running_service(
         &self,
-    ) -> Option<&rmcp::service::RunningService<rmcp::RoleClient, LimeMcpClient>> {
+    ) -> Option<&Arc<rmcp::service::RunningService<rmcp::RoleClient, LimeMcpClient>>> {
         self.running_service.as_ref()
+    }
+
+    pub fn running_service_arc(
+        &self,
+    ) -> Option<Arc<rmcp::service::RunningService<rmcp::RoleClient, LimeMcpClient>>> {
+        self.running_service.clone()
     }
 
     pub async fn kill_process(&mut self) -> Result<(), std::io::Error> {

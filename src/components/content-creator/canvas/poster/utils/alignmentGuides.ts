@@ -221,7 +221,11 @@ export const alignmentUtils = {
    */
   snapToGrid: (value: number, gridSize: number): number => {
     if (gridSize <= 0) return value;
-    return Math.round(value / gridSize) * gridSize;
+    const lowerGrid = Math.floor(value / gridSize) * gridSize;
+    const upperGrid = Math.ceil(value / gridSize) * gridSize;
+    return Math.abs(value - lowerGrid) <= Math.abs(upperGrid - value)
+      ? lowerGrid
+      : upperGrid;
   },
 
   /**

@@ -83,30 +83,71 @@ export async function checkAndReloadGeminiCredentials(
 }
 
 export async function getQwenCredentials(): Promise<QwenCredentialStatus> {
-  return safeInvoke("get_qwen_credentials");
+  const credential = await safeInvoke<{
+    loaded: boolean;
+    credentials_path?: string | null;
+    status_message?: string | null;
+    extra?: Record<string, unknown> | null;
+  }>("get_oauth_credentials", {
+    provider: "qwen",
+  });
+  const extra = credential.extra ?? {};
+
+  return {
+    loaded: credential.loaded,
+    user_id:
+      typeof extra.user_id === "string"
+        ? extra.user_id
+        : typeof extra.userId === "string"
+          ? extra.userId
+          : undefined,
+    nick_name:
+      typeof extra.nick_name === "string"
+        ? extra.nick_name
+        : typeof extra.nickName === "string"
+          ? extra.nickName
+          : undefined,
+    token_path: credential.credentials_path ?? undefined,
+    status_message: credential.status_message ?? undefined,
+  };
 }
 
 export async function reloadQwenCredentials(): Promise<string> {
-  return safeInvoke("reload_qwen_credentials");
+  const credential = await safeInvoke<{
+    status_message?: string | null;
+  }>("reload_oauth_credentials", {
+    provider: "qwen",
+  });
+  return credential.status_message ?? "ok";
 }
 
 export async function refreshQwenToken(): Promise<string> {
-  return safeInvoke("refresh_qwen_token");
+  const credential = await safeInvoke<{
+    status_message?: string | null;
+  }>("refresh_oauth_token", {
+    provider: "qwen",
+  });
+  return credential.status_message ?? "ok";
 }
 
 export async function getQwenEnvVariables(): Promise<EnvVariable[]> {
-  return safeInvoke("get_qwen_env_variables");
+  return safeInvoke("get_oauth_env_variables", {
+    provider: "qwen",
+  });
 }
 
 export async function getQwenTokenFileHash(): Promise<string> {
-  return safeInvoke("get_qwen_token_file_hash");
+  return safeInvoke("get_oauth_token_file_hash", {
+    provider: "qwen",
+  });
 }
 
 export async function checkAndReloadQwenCredentials(
   lastHash: string,
 ): Promise<CheckResult> {
-  return safeInvoke("check_and_reload_qwen_credentials", {
-    last_hash: lastHash,
+  return safeInvoke("check_and_reload_oauth_credentials", {
+    provider: "qwen",
+    lastHash,
   });
 }
 

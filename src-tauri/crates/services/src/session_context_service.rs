@@ -599,6 +599,7 @@ mod tests {
                 timestamp TEXT NOT NULL,
                 tool_calls_json TEXT,
                 tool_call_id TEXT,
+                reasoning_content TEXT,
                 FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
             )",
             [],
@@ -616,33 +617,6 @@ mod tests {
 
         conn.execute("PRAGMA foreign_keys = ON", []).unwrap();
         conn
-    }
-
-    fn create_test_messages(session_id: &str, count: usize) -> Vec<ChatMessage> {
-        let mut messages = Vec::new();
-        let base_time = chrono::Utc::now().timestamp_millis();
-
-        for i in 0..count {
-            let role = if i % 2 == 0 {
-                MessageRole::User
-            } else {
-                MessageRole::Assistant
-            };
-            let content = format!("这是第 {} 条消息，包含一些测试内容", i + 1);
-
-            messages.push(ChatMessage {
-                id: format!("msg-{}", i + 1),
-                session_id: session_id.to_string(),
-                role,
-                content,
-                blocks: None,
-                status: "complete".to_string(),
-                created_at: base_time + i as i64,
-                metadata: None,
-            });
-        }
-
-        messages
     }
 
     fn create_unified_general_session(session_id: &str) -> UnifiedChatSession {

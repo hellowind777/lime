@@ -13,6 +13,7 @@ interface RecommendationContext {
   hasCanvasContent: boolean;
   hasContentId: boolean;
   selectedText?: string;
+  subagentEnabled?: boolean;
 }
 
 const SOCIAL_PLATFORM_LABELS: Record<string, string> = {
@@ -231,6 +232,48 @@ const SOCIAL_REWRITE_RECOMMENDATIONS: RecommendationTuple[] = [
   ],
 ];
 
+export function isTeamRuntimeRecommendation(
+  shortLabel: string,
+  fullPrompt: string,
+): boolean {
+  const normalizedLabel = shortLabel.trim().toLowerCase();
+  const normalizedPrompt = fullPrompt.trim().toLowerCase();
+
+  return (
+    normalizedLabel.includes("team") ||
+    shortLabel.includes("多代理") ||
+    shortLabel.includes("父子线程") ||
+    normalizedPrompt.includes("team runtime") ||
+    fullPrompt.includes("父子线程联调") ||
+    fullPrompt.includes("多代理") ||
+    (fullPrompt.includes("子代理") &&
+      (fullPrompt.includes("主线程") ||
+        normalizedPrompt.includes("explorer") ||
+        normalizedPrompt.includes("executor")))
+  );
+}
+
+function buildGeneralRecommendations(
+  context: RecommendationContext,
+): RecommendationTuple[] {
+  const baseRecommendations = FALLBACK_THEME_RECOMMENDATIONS.general || [];
+  const subject = normalizeSubject(context.input);
+  const teamSetupHint = context.subagentEnabled
+    ? ""
+    : "如果当前多代理偏好未开启，请先开启输入框工具条里的“多代理”开关，再继续执行。";
+  return [
+    [
+      "Team 冒烟测试",
+      `请按 team runtime 方式处理“${subject}”：先在主线程拆成两个子任务，再创建 explorer 与 executor 两个子代理并行推进；至少等待一个子代理结束，必要时继续 send_input，最后回到主线程汇总每个 agent 的状态、结论和下一步。${teamSetupHint}`,
+    ],
+    [
+      "父子线程联调",
+      `请围绕“${subject}”做一次父子线程联调：主线程只负责分派、等待和汇总；子代理 A 负责整理事实与风险，子代理 B 负责给出落地步骤与验收标准；最终输出 team workspace 视角的协作总结。${teamSetupHint}`,
+    ],
+    ...baseRecommendations.slice(0, 2),
+  ];
+}
+
 function normalizeSubject(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (!normalized) {
@@ -295,7 +338,9 @@ function buildSocialRecommendations(
     return SOCIAL_BLANK_RECOMMENDATIONS;
   }
 
-  const entryRecommendations = getEntryTaskRecommendations(context.entryTaskType);
+  const entryRecommendations = getEntryTaskRecommendations(
+    context.entryTaskType,
+  );
   if (entryRecommendations.length > 0) {
     return entryRecommendations;
   }
@@ -308,6 +353,10 @@ export function getContextualRecommendations(
 ): RecommendationTuple[] {
   if (context.activeTheme === "social-media") {
     return buildSocialRecommendations(context);
+  }
+
+  if (context.activeTheme === "general") {
+    return buildGeneralRecommendations(context);
   }
 
   return FALLBACK_THEME_RECOMMENDATIONS[context.activeTheme] || [];

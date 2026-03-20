@@ -199,7 +199,6 @@ describe("AppearanceSettings", () => {
 
     expect(savedConfig.content_creator.enabled_themes).toEqual([
       "social-media",
-      "poster",
       "video",
     ]);
   });
@@ -227,7 +226,7 @@ describe("AppearanceSettings", () => {
     mockGetConfig.mockResolvedValue({
       language: "zh",
       content_creator: {
-        enabled_themes: ["social-media", "poster"],
+        enabled_themes: ["social-media"],
       },
       chat_appearance: {
         append_selected_text_to_recommendation: true,

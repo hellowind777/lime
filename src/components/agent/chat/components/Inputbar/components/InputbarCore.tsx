@@ -77,6 +77,7 @@ interface InputbarCoreProps {
   visualVariant?: "default" | "floating";
   activeTheme?: string;
   queuedTurns?: QueuedTurnSnapshot[];
+  onPromoteQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
   onRemoveQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
 }
 
@@ -107,6 +108,7 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
   visualVariant = "default",
   activeTheme,
   queuedTurns = [],
+  onPromoteQueuedTurn,
   onRemoveQueuedTurn,
 }) => {
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
@@ -275,6 +277,7 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
               {topExtra}
               <QueuedTurnsPanel
                 queuedTurns={queuedTurns}
+                onPromoteQueuedTurn={onPromoteQueuedTurn}
                 onRemoveQueuedTurn={onRemoveQueuedTurn}
               />
 

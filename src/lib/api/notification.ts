@@ -1,4 +1,4 @@
-import { safeInvoke } from "@/lib/dev-bridge";
+import { notificationService } from "@/lib/notificationService";
 
 export interface ShowNotificationRequest {
   title: string;
@@ -9,5 +9,5 @@ export interface ShowNotificationRequest {
 export async function showSystemNotification(
   request: ShowNotificationRequest,
 ): Promise<void> {
-  await safeInvoke("show_notification", request as unknown as Record<string, unknown>);
+  await notificationService.show(request.title, request.body, "info");
 }

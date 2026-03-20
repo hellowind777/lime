@@ -107,7 +107,9 @@ export function useThemeWorkbenchInputState({
     }
 
     const visibleSteps = workflowSteps
-      .filter((step) => step.status !== "completed" && step.status !== "skipped")
+      .filter(
+        (step) => step.status !== "completed" && step.status !== "skipped",
+      )
       .slice(0, 3);
 
     if (visibleSteps.length > 0) {
@@ -137,12 +139,13 @@ export function useThemeWorkbenchInputState({
     : false;
 
   const shouldShowA2UISubmissionNotice = Boolean(
+    !isSending &&
     !hasPendingA2UIForm &&
-      hasSubmissionNotice &&
-      (!isThemeWorkbenchVariant ||
-        (!renderThemeWorkbenchGeneratingPanel &&
-          themeWorkbenchQueueItems.length === 0 &&
-          (themeWorkbenchGate?.status ?? "idle") === "idle")),
+    hasSubmissionNotice &&
+    (!isThemeWorkbenchVariant ||
+      (!renderThemeWorkbenchGeneratingPanel &&
+        themeWorkbenchQueueItems.length === 0 &&
+        (themeWorkbenchGate?.status ?? "idle") === "idle")),
   );
 
   return {

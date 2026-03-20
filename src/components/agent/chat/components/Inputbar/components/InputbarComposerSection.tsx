@@ -7,11 +7,13 @@ import type { MessageImage } from "../../../types";
 import { CharacterMention } from "./CharacterMention";
 import { InputbarCore } from "./InputbarCore";
 import { SkillSelector } from "./SkillSelector";
+import { TeamSelector } from "./TeamSelector";
 import { ThemeWorkbenchStatusPanel } from "./ThemeWorkbenchStatusPanel";
 import { InputbarModelExtra } from "./InputbarModelExtra";
 import { InputbarVisionCapabilityNotice } from "./InputbarVisionCapabilityNotice";
 import { InputbarExecutionStrategySelect } from "./InputbarExecutionStrategySelect";
 import { isGeneralResearchTheme } from "../../../utils/generalAgentPrompt";
+import type { TeamDefinition } from "../../../utils/teamDefinitions";
 import type {
   ThemeWorkbenchGateState,
   ThemeWorkbenchQuickAction,
@@ -36,6 +38,8 @@ interface InputbarComposerSectionProps {
   onNavigateToSettings?: () => void;
   onImportSkill?: () => void | Promise<void>;
   onRefreshSkills?: () => void | Promise<void>;
+  selectedTeam?: TeamDefinition | null;
+  onSelectTeam?: (team: TeamDefinition | null) => void;
   onSend: () => void;
   onToolClick: (tool: string) => void;
   activeTools: Record<string, boolean>;
@@ -53,6 +57,7 @@ interface InputbarComposerSectionProps {
   ) => void;
   topExtra?: React.ReactNode;
   queuedTurns: QueuedTurnSnapshot[];
+  onPromoteQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
   onRemoveQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
 }
 
@@ -76,6 +81,8 @@ export const InputbarComposerSection: React.FC<
   onNavigateToSettings,
   onImportSkill,
   onRefreshSkills,
+  selectedTeam,
+  onSelectTeam,
   onSend,
   onToolClick,
   activeTools,
@@ -91,6 +98,7 @@ export const InputbarComposerSection: React.FC<
   setExecutionStrategy,
   topExtra,
   queuedTurns,
+  onPromoteQueuedTurn,
   onRemoveQueuedTurn,
 }) => {
   const showSkillSelector =
@@ -174,6 +182,7 @@ export const InputbarComposerSection: React.FC<
         }
         activeTheme={activeTheme}
         queuedTurns={queuedTurns}
+        onPromoteQueuedTurn={onPromoteQueuedTurn}
         onRemoveQueuedTurn={onRemoveQueuedTurn}
         leftExtra={
           <>
@@ -187,6 +196,14 @@ export const InputbarComposerSection: React.FC<
                 onNavigateToSettings={onNavigateToSettings}
                 onImportSkill={onImportSkill}
                 onRefreshSkills={onRefreshSkills}
+              />
+            ) : null}
+            {activeTools["subagent_mode"] ? (
+              <TeamSelector
+                activeTheme={activeTheme}
+                input={input}
+                selectedTeam={selectedTeam}
+                onSelectTeam={(team) => onSelectTeam?.(team)}
               />
             ) : null}
             <InputbarModelExtra

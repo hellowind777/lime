@@ -9,16 +9,23 @@ vi.mock("@/lib/dev-bridge", () => ({
 }));
 
 import {
+  closeAgentRuntimeSubagent,
   createAgentRuntimeSession,
   deleteAgentRuntimeSession,
   getAsterAgentStatus,
   generateAgentRuntimeSessionTitle,
   getAgentRuntimeSession,
+  getAgentRuntimeToolInventory,
   interruptAgentRuntimeTurn,
   listAgentRuntimeSessions,
+  promoteAgentRuntimeQueuedTurn,
+  resumeAgentRuntimeSubagent,
   respondAgentRuntimeAction,
+  sendAgentRuntimeSubagentInput,
+  spawnAgentRuntimeSubagent,
   submitAgentRuntimeTurn,
   updateAgentRuntimeSession,
+  waitAgentRuntimeSubagents,
 } from "./agentRuntime";
 
 describe("Agent API 治理护栏", () => {
@@ -162,6 +169,56 @@ describe("Agent API 治理护栏", () => {
     );
   });
 
+  it("respondAgentRuntimeAction 应透传 event_name 以便立即恢复当前执行流", async () => {
+    mockSafeInvoke.mockResolvedValueOnce(undefined);
+
+    await respondAgentRuntimeAction({
+      session_id: "session-runtime",
+      request_id: "req-runtime-resume",
+      action_type: "elicitation",
+      confirmed: true,
+      response: '{"answer":"继续"}',
+      user_data: { answer: "继续" },
+      event_name: "aster_stream_session-runtime",
+    });
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_respond_action",
+      {
+        request: {
+          session_id: "session-runtime",
+          request_id: "req-runtime-resume",
+          action_type: "elicitation",
+          confirmed: true,
+          response: '{"answer":"继续"}',
+          user_data: { answer: "继续" },
+          event_name: "aster_stream_session-runtime",
+        },
+      },
+    );
+  });
+
+  it("promoteAgentRuntimeQueuedTurn 应走统一 runtime promote 命令", async () => {
+    mockSafeInvoke.mockResolvedValueOnce(true);
+
+    await expect(
+      promoteAgentRuntimeQueuedTurn({
+        session_id: "session-runtime",
+        queued_turn_id: "queued-turn-2",
+      }),
+    ).resolves.toBe(true);
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_promote_queued_turn",
+      {
+        request: {
+          session_id: "session-runtime",
+          queued_turn_id: "queued-turn-2",
+        },
+      },
+    );
+  });
+
   it("interruptAgentRuntimeTurn 与 updateAgentRuntimeSession 应走统一 runtime 命令", async () => {
     mockSafeInvoke.mockResolvedValueOnce(true).mockResolvedValueOnce(undefined);
 
@@ -239,6 +296,40 @@ describe("Agent API 治理护栏", () => {
       workspace_id: "workspace-2",
       working_dir: "/tmp/workspace-2",
       execution_strategy: "react",
+      child_subagent_sessions: [
+        {
+          id: "subagent-session-1",
+          name: "Image #1",
+          created_at: 1710001200,
+          updated_at: 1710001800,
+          session_type: "sub_agent",
+          model: "gpt-5.4-mini",
+          role_hint: "image_editor",
+          task_summary: "处理封面图优化",
+          origin_tool: "spawn_agent",
+          runtime_status: "completed",
+        },
+      ],
+      subagent_parent_context: {
+        parent_session_id: "parent-session-1",
+        parent_session_name: "主线程会话",
+        role_hint: "image_editor",
+        task_summary: "处理封面图优化",
+        origin_tool: "spawn_agent",
+        created_from_turn_id: "turn-2",
+        sibling_subagent_sessions: [
+          {
+            id: "subagent-session-2",
+            name: "Image #2",
+            created_at: 1710001250,
+            updated_at: 1710001850,
+            session_type: "sub_agent",
+            role_hint: "image_reviewer",
+            task_summary: "检查图片导出尺寸",
+            runtime_status: "running",
+          },
+        ],
+      },
       queued_turns: [
         {
           queued_turn_id: "queued-1",
@@ -272,6 +363,40 @@ describe("Agent API 治理护栏", () => {
       workspace_id: "workspace-2",
       working_dir: "/tmp/workspace-2",
       execution_strategy: "react",
+      child_subagent_sessions: [
+        {
+          id: "subagent-session-1",
+          name: "Image #1",
+          created_at: 1710001200,
+          updated_at: 1710001800,
+          session_type: "sub_agent",
+          model: "gpt-5.4-mini",
+          role_hint: "image_editor",
+          task_summary: "处理封面图优化",
+          origin_tool: "spawn_agent",
+          runtime_status: "completed",
+        },
+      ],
+      subagent_parent_context: {
+        parent_session_id: "parent-session-1",
+        parent_session_name: "主线程会话",
+        role_hint: "image_editor",
+        task_summary: "处理封面图优化",
+        origin_tool: "spawn_agent",
+        created_from_turn_id: "turn-2",
+        sibling_subagent_sessions: [
+          {
+            id: "subagent-session-2",
+            name: "Image #2",
+            created_at: 1710001250,
+            updated_at: 1710001850,
+            session_type: "sub_agent",
+            role_hint: "image_reviewer",
+            task_summary: "检查图片导出尺寸",
+            runtime_status: "running",
+          },
+        ],
+      },
       queued_turns: [
         {
           queued_turn_id: "queued-1",
@@ -298,6 +423,243 @@ describe("Agent API 治理护栏", () => {
     expect(mockSafeInvoke).toHaveBeenCalledWith("agent_runtime_get_session", {
       sessionId: "session-runtime-2",
     });
+  });
+
+  it("getAgentRuntimeToolInventory 应走统一 runtime inventory 命令", async () => {
+    mockSafeInvoke.mockResolvedValueOnce({
+      request: {
+        caller: "assistant",
+        surface: {
+          creator: true,
+          browser_assist: true,
+        },
+      },
+      agent_initialized: true,
+      warnings: [],
+      mcp_servers: ["docs"],
+      default_allowed_tools: ["tool_search"],
+      counts: {
+        catalog_total: 1,
+        catalog_current_total: 1,
+        catalog_compat_total: 0,
+        catalog_deprecated_total: 0,
+        default_allowed_total: 1,
+        registry_total: 1,
+        registry_visible_total: 1,
+        registry_catalog_unmapped_total: 0,
+        extension_surface_total: 1,
+        extension_mcp_bridge_total: 1,
+        extension_runtime_total: 0,
+        extension_tool_total: 1,
+        extension_tool_visible_total: 1,
+        mcp_server_total: 1,
+        mcp_tool_total: 1,
+        mcp_tool_visible_total: 1,
+      },
+      catalog_tools: [
+        {
+          name: "bash",
+          profiles: ["core"],
+          capabilities: ["execution"],
+          lifecycle: "current",
+          source: "aster_builtin",
+          permission_plane: "parameter_restricted",
+          workspace_default_allow: false,
+          execution_warning_policy: "shell_command_risk",
+          execution_warning_policy_source: "default",
+          execution_restriction_profile: "workspace_shell_command",
+          execution_restriction_profile_source: "runtime",
+          execution_sandbox_profile: "workspace_command",
+          execution_sandbox_profile_source: "persisted",
+        },
+      ],
+      registry_tools: [
+        {
+          name: "bash",
+          description: "workspace bash",
+          catalog_entry_name: "bash",
+          catalog_source: "aster_builtin",
+          catalog_lifecycle: "current",
+          catalog_permission_plane: "parameter_restricted",
+          catalog_workspace_default_allow: false,
+          catalog_execution_warning_policy: "shell_command_risk",
+          catalog_execution_warning_policy_source: "default",
+          catalog_execution_restriction_profile: "workspace_shell_command",
+          catalog_execution_restriction_profile_source: "runtime",
+          catalog_execution_sandbox_profile: "workspace_command",
+          catalog_execution_sandbox_profile_source: "persisted",
+          deferred_loading: false,
+          always_visible: true,
+          allowed_callers: ["assistant"],
+          tags: [],
+          input_examples_count: 0,
+          caller_allowed: true,
+          visible_in_context: true,
+        },
+      ],
+      extension_surfaces: [],
+      extension_tools: [],
+      mcp_tools: [],
+    });
+
+    await expect(
+      getAgentRuntimeToolInventory({
+        creator: true,
+        browserAssist: true,
+        caller: "assistant",
+      }),
+    ).resolves.toMatchObject({
+      request: {
+        caller: "assistant",
+        surface: {
+          creator: true,
+          browser_assist: true,
+        },
+      },
+      counts: {
+        catalog_total: 1,
+      },
+      catalog_tools: [
+        expect.objectContaining({
+          execution_warning_policy_source: "default",
+          execution_restriction_profile_source: "runtime",
+          execution_sandbox_profile_source: "persisted",
+        }),
+      ],
+    });
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_get_tool_inventory",
+      {
+        request: {
+          creator: true,
+          browserAssist: true,
+          caller: "assistant",
+        },
+      },
+    );
+  });
+
+  it("getAgentRuntimeToolInventory 应透传 metadata 以计算 effective policy", async () => {
+    mockSafeInvoke.mockResolvedValueOnce({
+      request: {
+        caller: "assistant",
+        surface: {
+          creator: false,
+          browser_assist: false,
+        },
+      },
+      agent_initialized: true,
+      warnings: [],
+      mcp_servers: [],
+      default_allowed_tools: [],
+      counts: {
+        catalog_total: 0,
+        catalog_current_total: 0,
+        catalog_compat_total: 0,
+        catalog_deprecated_total: 0,
+        default_allowed_total: 0,
+        registry_total: 0,
+        registry_visible_total: 0,
+        registry_catalog_unmapped_total: 0,
+        extension_surface_total: 0,
+        extension_mcp_bridge_total: 0,
+        extension_runtime_total: 0,
+        extension_tool_total: 0,
+        extension_tool_visible_total: 0,
+        mcp_server_total: 0,
+        mcp_tool_total: 0,
+        mcp_tool_visible_total: 0,
+      },
+      catalog_tools: [],
+      registry_tools: [],
+      extension_surfaces: [],
+      extension_tools: [],
+      mcp_tools: [],
+    });
+
+    await getAgentRuntimeToolInventory({
+      caller: "assistant",
+      metadata: {
+        harness: {
+          executionPolicy: {
+            toolOverrides: {
+              bash: {
+                warningPolicy: "none",
+              },
+            },
+          },
+        },
+      },
+    });
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_get_tool_inventory",
+      {
+        request: {
+          caller: "assistant",
+          metadata: {
+            harness: {
+              executionPolicy: {
+                toolOverrides: {
+                  bash: {
+                    warningPolicy: "none",
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+  });
+
+  it("getAgentRuntimeToolInventory 默认请求应传空对象", async () => {
+    mockSafeInvoke.mockResolvedValueOnce({
+      request: {
+        caller: "assistant",
+        surface: {
+          creator: false,
+          browser_assist: false,
+        },
+      },
+      agent_initialized: false,
+      warnings: [],
+      mcp_servers: [],
+      default_allowed_tools: [],
+      counts: {
+        catalog_total: 0,
+        catalog_current_total: 0,
+        catalog_compat_total: 0,
+        catalog_deprecated_total: 0,
+        default_allowed_total: 0,
+        registry_total: 0,
+        registry_visible_total: 0,
+        registry_catalog_unmapped_total: 0,
+        extension_surface_total: 0,
+        extension_mcp_bridge_total: 0,
+        extension_runtime_total: 0,
+        extension_tool_total: 0,
+        extension_tool_visible_total: 0,
+        mcp_server_total: 0,
+        mcp_tool_total: 0,
+        mcp_tool_visible_total: 0,
+      },
+      catalog_tools: [],
+      registry_tools: [],
+      extension_surfaces: [],
+      extension_tools: [],
+      mcp_tools: [],
+    });
+
+    await getAgentRuntimeToolInventory();
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_get_tool_inventory",
+      {
+        request: {},
+      },
+    );
   });
 
   it("deleteAgentRuntimeSession / updateAgentRuntimeSession / generateAgentRuntimeSessionTitle 应走现役命令", async () => {
@@ -337,4 +699,144 @@ describe("Agent API 治理护栏", () => {
     });
   });
 
+  it("subagent 控制面 helper 应走统一 runtime 命令", async () => {
+    mockSafeInvoke
+      .mockResolvedValueOnce({
+        agent_id: "subagent-session-1",
+        nickname: "Image #1",
+      })
+      .mockResolvedValueOnce({
+        submission_id: "queued-subagent-1",
+      })
+      .mockResolvedValueOnce({
+        status: {
+          "subagent-session-1": {
+            session_id: "subagent-session-1",
+            kind: "completed",
+          },
+        },
+        timed_out: false,
+      })
+      .mockResolvedValueOnce({
+        status: {
+          session_id: "subagent-session-1",
+          kind: "idle",
+        },
+        cascade_session_ids: ["subagent-session-1", "subagent-child-1"],
+        changed_session_ids: ["subagent-session-1", "subagent-child-1"],
+      })
+      .mockResolvedValueOnce({
+        previous_status: {
+          session_id: "subagent-session-1",
+          kind: "running",
+        },
+        cascade_session_ids: ["subagent-session-1", "subagent-child-1"],
+        changed_session_ids: ["subagent-session-1", "subagent-child-1"],
+      });
+
+    await expect(
+      spawnAgentRuntimeSubagent({
+        parent_session_id: "session-runtime-parent",
+        message: "处理 Image #1",
+        agent_type: "image_editor",
+      }),
+    ).resolves.toEqual({
+      agent_id: "subagent-session-1",
+      nickname: "Image #1",
+    });
+    await expect(
+      sendAgentRuntimeSubagentInput({
+        id: "subagent-session-1",
+        message: "继续优化导出尺寸",
+        interrupt: true,
+      }),
+    ).resolves.toEqual({
+      submission_id: "queued-subagent-1",
+    });
+    await expect(
+      waitAgentRuntimeSubagents({
+        ids: ["subagent-session-1"],
+        timeout_ms: 12000,
+      }),
+    ).resolves.toEqual({
+      status: {
+        "subagent-session-1": {
+          session_id: "subagent-session-1",
+          kind: "completed",
+        },
+      },
+      timed_out: false,
+    });
+    await expect(
+      resumeAgentRuntimeSubagent({ id: "subagent-session-1" }),
+    ).resolves.toEqual({
+      status: {
+        session_id: "subagent-session-1",
+        kind: "idle",
+      },
+      cascade_session_ids: ["subagent-session-1", "subagent-child-1"],
+      changed_session_ids: ["subagent-session-1", "subagent-child-1"],
+    });
+    await expect(
+      closeAgentRuntimeSubagent({ id: "subagent-session-1" }),
+    ).resolves.toEqual({
+      previous_status: {
+        session_id: "subagent-session-1",
+        kind: "running",
+      },
+      cascade_session_ids: ["subagent-session-1", "subagent-child-1"],
+      changed_session_ids: ["subagent-session-1", "subagent-child-1"],
+    });
+
+    expect(mockSafeInvoke).toHaveBeenNthCalledWith(
+      1,
+      "agent_runtime_spawn_subagent",
+      {
+        request: {
+          parent_session_id: "session-runtime-parent",
+          message: "处理 Image #1",
+          agent_type: "image_editor",
+        },
+      },
+    );
+    expect(mockSafeInvoke).toHaveBeenNthCalledWith(
+      2,
+      "agent_runtime_send_subagent_input",
+      {
+        request: {
+          id: "subagent-session-1",
+          message: "继续优化导出尺寸",
+          interrupt: true,
+        },
+      },
+    );
+    expect(mockSafeInvoke).toHaveBeenNthCalledWith(
+      3,
+      "agent_runtime_wait_subagents",
+      {
+        request: {
+          ids: ["subagent-session-1"],
+          timeout_ms: 12000,
+        },
+      },
+    );
+    expect(mockSafeInvoke).toHaveBeenNthCalledWith(
+      4,
+      "agent_runtime_resume_subagent",
+      {
+        request: {
+          id: "subagent-session-1",
+        },
+      },
+    );
+    expect(mockSafeInvoke).toHaveBeenNthCalledWith(
+      5,
+      "agent_runtime_close_subagent",
+      {
+        request: {
+          id: "subagent-session-1",
+        },
+      },
+    );
+  });
 });

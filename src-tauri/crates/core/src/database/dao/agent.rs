@@ -917,8 +917,16 @@ impl AgentDao {
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
         conn.execute(
-            "INSERT INTO agent_messages (session_id, role, content_json, timestamp, tool_calls_json, tool_call_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO agent_messages (
+                session_id,
+                role,
+                content_json,
+                timestamp,
+                tool_calls_json,
+                tool_call_id,
+                reasoning_content
+            )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 session_id,
                 message.role,
@@ -926,6 +934,7 @@ impl AgentDao {
                 message.timestamp,
                 tool_calls_json,
                 message.tool_call_id,
+                message.reasoning_content.as_deref(),
             ],
         )?;
 
@@ -944,7 +953,7 @@ impl AgentDao {
         session_id: &str,
     ) -> Result<Vec<AgentMessage>, rusqlite::Error> {
         let mut stmt = conn.prepare(
-            "SELECT role, content_json, timestamp, tool_calls_json, tool_call_id
+            "SELECT role, content_json, timestamp, tool_calls_json, tool_call_id, reasoning_content
              FROM agent_messages WHERE session_id = ? ORDER BY id ASC",
         )?;
 
@@ -954,6 +963,7 @@ impl AgentDao {
             let timestamp: String = row.get(2)?;
             let tool_calls_json: Option<String> = row.get(3)?;
             let tool_call_id: Option<String> = row.get(4)?;
+            let reasoning_content: Option<String> = row.get(5)?;
 
             // 解析 JSON - 支持多种格式
             // 1. Aster 格式: [{"Text":"..."}, {"Text":"..."}]
@@ -969,7 +979,7 @@ impl AgentDao {
                 timestamp,
                 tool_calls,
                 tool_call_id,
-                reasoning_content: None,
+                reasoning_content,
             })
         })?;
 
@@ -1094,7 +1104,8 @@ mod tests {
                 content_json TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 tool_calls_json TEXT,
-                tool_call_id TEXT
+                tool_call_id TEXT,
+                reasoning_content TEXT
             );
             ",
         )
@@ -1406,5 +1417,45 @@ mod tests {
             .expect("renamed overview");
         assert_eq!(renamed.session.title.as_deref(), Some("新的标题"));
         assert_eq!(renamed.session.updated_at, "2026-03-12T09:00:00+08:00");
+    }
+
+    #[test]
+    fn add_message_and_get_messages_should_roundtrip_reasoning_content() {
+        let conn = setup_pattern_test_db();
+
+        conn.execute(
+            "INSERT INTO agent_sessions (id, model, system_prompt, title, created_at, updated_at, working_dir, execution_strategy)
+             VALUES (?1, ?2, NULL, ?3, ?4, ?5, NULL, ?6)",
+            params![
+                "session-reasoning",
+                "deepseek-reasoner",
+                "推理会话",
+                "2026-03-19T10:00:00+08:00",
+                "2026-03-19T10:00:00+08:00",
+                "react"
+            ],
+        )
+        .unwrap();
+
+        AgentDao::add_message(
+            &conn,
+            "session-reasoning",
+            &crate::agent::types::AgentMessage {
+                role: "assistant".to_string(),
+                content: MessageContent::Text("需要继续调用工具".to_string()),
+                timestamp: "2026-03-19T10:00:01+08:00".to_string(),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: Some("先分析参数，再继续请求".to_string()),
+            },
+        )
+        .unwrap();
+
+        let messages = AgentDao::get_messages(&conn, "session-reasoning").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].reasoning_content.as_deref(),
+            Some("先分析参数，再继续请求")
+        );
     }
 }

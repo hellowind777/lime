@@ -4,6 +4,7 @@
 
 use crate::config::{Config, ToolCallingConfig};
 use crate::env_compat;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -22,6 +23,20 @@ static TOOLCALL_RUNTIME_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static TOOLCALL_V2_ENABLED: AtomicBool = AtomicBool::new(true);
 static TOOLCALL_DYNAMIC_FILTERING_ENABLED: AtomicBool = AtomicBool::new(true);
 static TOOLCALL_NATIVE_INPUT_EXAMPLES_ENABLED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ToolSurfaceMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_loading: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub always_visible: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_callers: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_examples: Vec<Value>,
+}
 
 /// 将配置应用到进程内运行时开关。
 pub fn apply_tool_calling_runtime_config(config: &Config) {
@@ -67,6 +82,109 @@ pub fn tool_calling_native_input_examples_enabled() -> bool {
         return TOOLCALL_NATIVE_INPUT_EXAMPLES_ENABLED.load(Ordering::Acquire);
     }
     false
+}
+
+fn metadata_extension(schema: &Value) -> &Value {
+    schema
+        .get("x-lime")
+        .or_else(|| schema.get("x_lime"))
+        .unwrap_or(schema)
+}
+
+fn metadata_read_bool(schema: &Value, key: &str, camel_key: &str) -> Option<bool> {
+    metadata_extension(schema)
+        .get(key)
+        .or_else(|| metadata_extension(schema).get(camel_key))
+        .and_then(|value| value.as_bool())
+}
+
+fn metadata_read_string_vec(schema: &Value, key: &str, camel_key: &str) -> Option<Vec<String>> {
+    let values = metadata_extension(schema)
+        .get(key)
+        .or_else(|| metadata_extension(schema).get(camel_key))
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(|item| item.trim().to_ascii_lowercase())
+                .filter(|item| !item.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    (!values.is_empty()).then_some(values)
+}
+
+pub fn normalize_tool_caller(caller: Option<&str>) -> Option<String> {
+    caller
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+}
+
+pub fn extract_tool_surface_metadata(tool_name: &str, schema: &Value) -> ToolSurfaceMetadata {
+    ToolSurfaceMetadata {
+        deferred_loading: metadata_read_bool(schema, "deferred_loading", "deferredLoading"),
+        always_visible: metadata_read_bool(schema, "always_visible", "alwaysVisible"),
+        allowed_callers: metadata_read_string_vec(schema, "allowed_callers", "allowedCallers"),
+        tags: metadata_read_string_vec(schema, "tags", "tags"),
+        input_examples: resolve_tool_input_examples(tool_name, schema),
+    }
+}
+
+pub fn tool_visible_in_context(metadata: &ToolSurfaceMetadata, include_deferred: bool) -> bool {
+    if include_deferred {
+        return true;
+    }
+
+    let deferred_loading = metadata.deferred_loading.unwrap_or(false);
+    let always_visible = metadata.always_visible.unwrap_or(false);
+    !deferred_loading || always_visible
+}
+
+pub fn tool_matches_caller(metadata: &ToolSurfaceMetadata, caller: Option<&str>) -> bool {
+    let Some(allowed_callers) = metadata.allowed_callers.as_ref() else {
+        return true;
+    };
+    let Some(caller) = normalize_tool_caller(caller) else {
+        return true;
+    };
+
+    allowed_callers.iter().any(|item| item == &caller)
+}
+
+pub fn score_tool_match(name: &str, description: &str, tags: &[String], query: &str) -> i32 {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return 1;
+    }
+
+    let name_lc = name.to_ascii_lowercase();
+    let description_lc = description.to_ascii_lowercase();
+    let mut score = 0;
+
+    if name_lc == query {
+        score += 120;
+    } else if name_lc.starts_with(&query) {
+        score += 90;
+    } else if name_lc.contains(&query) {
+        score += 70;
+    }
+
+    if description_lc.contains(&query) {
+        score += 40;
+    }
+
+    for tag in tags {
+        if tag == &query {
+            score += 35;
+        } else if tag.contains(&query) {
+            score += 20;
+        }
+    }
+
+    score
 }
 
 fn schema_read_examples(schema: &Value) -> Vec<Value> {
@@ -307,5 +425,67 @@ mod tests {
         });
         let examples = resolve_tool_input_examples("docs_search", &schema);
         assert!(examples.is_empty());
+    }
+
+    #[test]
+    fn test_extract_tool_surface_metadata_reads_extension_fields() {
+        let schema = serde_json::json!({
+            "x-lime": {
+                "deferred_loading": true,
+                "always_visible": false,
+                "allowed_callers": ["assistant", "code_execution"],
+                "input_examples": [{"query":"rust"}],
+                "tags": ["docs", "search"]
+            }
+        });
+
+        let metadata = extract_tool_surface_metadata("docs_search", &schema);
+        assert_eq!(metadata.deferred_loading, Some(true));
+        assert_eq!(metadata.always_visible, Some(false));
+        assert_eq!(
+            metadata.allowed_callers,
+            Some(vec!["assistant".to_string(), "code_execution".to_string()])
+        );
+        assert_eq!(
+            metadata.tags,
+            Some(vec!["docs".to_string(), "search".to_string()])
+        );
+        assert_eq!(
+            metadata.input_examples,
+            vec![serde_json::json!({"query":"rust"})]
+        );
+    }
+
+    #[test]
+    fn test_tool_visibility_and_caller_match_follow_metadata() {
+        let metadata = ToolSurfaceMetadata {
+            deferred_loading: Some(true),
+            always_visible: Some(false),
+            allowed_callers: Some(vec!["assistant".to_string()]),
+            tags: None,
+            input_examples: Vec::new(),
+        };
+
+        assert!(!tool_visible_in_context(&metadata, false));
+        assert!(tool_visible_in_context(&metadata, true));
+        assert!(tool_matches_caller(&metadata, Some("assistant")));
+        assert!(!tool_matches_caller(&metadata, Some("code_execution")));
+    }
+
+    #[test]
+    fn test_score_tool_match_prefers_exact_name() {
+        let exact = score_tool_match(
+            "tool_search",
+            "Search tool surfaces",
+            &["search".to_string()],
+            "tool_search",
+        );
+        let partial = score_tool_match(
+            "tool_lookup",
+            "Search tool surfaces",
+            &["search".to_string()],
+            "tool_search",
+        );
+        assert!(exact > partial);
     }
 }

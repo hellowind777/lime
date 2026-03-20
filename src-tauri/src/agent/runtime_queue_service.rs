@@ -14,6 +14,7 @@ use aster::session::QueuedTurnRuntime;
 use lime_agent::{
     clear_runtime_queue as clear_runtime_queue_impl,
     list_runtime_queue_snapshots as list_runtime_queue_snapshots_impl,
+    promote_runtime_queued_turn as promote_runtime_queued_turn_impl,
     remove_runtime_queued_turn as remove_runtime_queued_turn_impl,
     resume_persisted_runtime_queues_on_startup as resume_persisted_runtime_queues_on_startup_impl,
     resume_runtime_queue_if_needed as resume_runtime_queue_if_needed_impl,
@@ -176,6 +177,13 @@ pub(crate) async fn remove_runtime_queued_turn(
         build_runtime_queue_event_emitter(app),
     )
     .await
+}
+
+pub(crate) async fn promote_runtime_queued_turn(
+    session_id: &str,
+    queued_turn_id: &str,
+) -> Result<bool, String> {
+    promote_runtime_queued_turn_impl(session_id, queued_turn_id).await
 }
 
 pub(crate) async fn resume_persisted_runtime_queues_on_startup(

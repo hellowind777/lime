@@ -22,6 +22,7 @@ const ChatPanel = styled.div<{
   $duration: number;
   $minWidth: string;
   $hidden: boolean;
+  $chrome: "panel" | "plain";
 }>`
   height: 100%;
   overflow: hidden;
@@ -31,7 +32,8 @@ const ChatPanel = styled.div<{
   will-change: width;
   display: ${({ $hidden }) => ($hidden ? "none" : "flex")};
   flex-direction: column;
-  padding: 16px 16px 16px 0;
+  padding: ${({ $chrome }) =>
+    $chrome === "plain" ? "0" : "16px 16px 16px 0"};
 `;
 
 const ChatPanelInner = styled.div`
@@ -43,6 +45,13 @@ const ChatPanelInner = styled.div`
   border: 1px solid hsl(var(--border));
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+`;
+
+const PlainChatPanelInner = styled.div`
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 `;
 
 const CanvasPanel = styled.div<{
@@ -74,6 +83,8 @@ interface LayoutTransitionProps {
   canvasContent: React.ReactNode;
   /** 过渡配置 */
   transitionConfig?: TransitionConfig;
+  /** 聊天区域是否使用额外面板壳 */
+  chatPanelChrome?: "panel" | "plain";
 }
 
 /**
@@ -82,7 +93,13 @@ interface LayoutTransitionProps {
  * 处理纯对话和对话+画布两种布局之间的平滑切换
  */
 export const LayoutTransition: React.FC<LayoutTransitionProps> = memo(
-  ({ mode, chatContent, canvasContent, transitionConfig }) => {
+  ({
+    mode,
+    chatContent,
+    canvasContent,
+    transitionConfig,
+    chatPanelChrome = "panel",
+  }) => {
     const hasCanvasContent = React.Children.count(canvasContent) > 0;
     const effectiveMode: LayoutMode = hasCanvasContent ? mode : "chat";
     const { isCanvasVisible, getTransitionStyles } = useLayoutTransition(
@@ -118,8 +135,17 @@ export const LayoutTransition: React.FC<LayoutTransitionProps> = memo(
           )}
           $minWidth={effectiveMode === "canvas" ? "0px" : "460px"}
           $hidden={effectiveMode === "canvas"}
+          $chrome={chatPanelChrome}
         >
-          <ChatPanelInner>{chatContent}</ChatPanelInner>
+          {chatPanelChrome === "plain" ? (
+            <PlainChatPanelInner data-testid="layout-chat-panel-plain">
+              {chatContent}
+            </PlainChatPanelInner>
+          ) : (
+            <ChatPanelInner data-testid="layout-chat-panel-inner">
+              {chatContent}
+            </ChatPanelInner>
+          )}
         </ChatPanel>
       </Container>
     );

@@ -71,6 +71,8 @@ interface MessageListProps {
   onFileClick?: (fileName: string, content: string) => void;
   /** Artifact 点击回调 */
   onArtifactClick?: (artifact: Artifact) => void;
+  /** 打开子代理会话 */
+  onOpenSubagentSession?: (sessionId: string) => void;
   /** 权限确认响应回调 */
   onPermissionResponse?: (response: ConfirmResponse) => void;
   /** 是否折叠代码块（当画布打开时） */
@@ -98,6 +100,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
   onWriteFile,
   onFileClick,
   onArtifactClick,
+  onOpenSubagentSession,
   onPermissionResponse,
   collapseCodeBlocks,
   shouldCollapseCodeBlock,
@@ -125,6 +128,29 @@ const MessageListInner: React.FC<MessageListProps> = ({
     () => buildMessageTurnTimeline(visibleMessages, turns, threadItems),
     [threadItems, turns, visibleMessages],
   );
+  const lastAssistantMessageId = useMemo(
+    () =>
+      [...visibleMessages]
+        .reverse()
+        .find((message) => message.role === "assistant")?.id ?? null,
+    [visibleMessages],
+  );
+  const currentTurnTimeline = useMemo(() => {
+    if (!currentTurnId || !lastAssistantMessageId) {
+      return null;
+    }
+
+    const turn = turns.find((entry) => entry.id === currentTurnId);
+    if (!turn) {
+      return null;
+    }
+
+    return {
+      messageId: lastAssistantMessageId,
+      turn,
+      items: threadItems.filter((item) => item.turn_id === turn.id),
+    };
+  }, [currentTurnId, lastAssistantMessageId, threadItems, turns]);
   const messageGroups = useMemo(
     () => buildMessageTurnGroups(visibleMessages),
     [visibleMessages],
@@ -229,7 +255,15 @@ const MessageListInner: React.FC<MessageListProps> = ({
       showIdentity?: boolean;
     },
   ) => {
-    const timeline = timelineByMessageId.get(msg.id);
+    const mappedTimeline = timelineByMessageId.get(msg.id);
+    const timeline =
+      msg.role !== "assistant"
+        ? null
+        : msg.id === lastAssistantMessageId
+          ? currentTurnTimeline || mappedTimeline || null
+          : mappedTimeline?.turn.id === currentTurnTimeline?.turn.id
+            ? null
+            : mappedTimeline || null;
     const showIdentity = options?.showIdentity ?? true;
 
     return (
@@ -365,6 +399,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
                 actionRequests={msg.actionRequests}
                 isCurrentTurn={timeline.turn.id === currentTurnId}
                 onFileClick={onFileClick}
+                onOpenSubagentSession={onOpenSubagentSession}
                 onPermissionResponse={onPermissionResponse}
               />
             ) : null}
@@ -501,7 +536,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
 
   return (
     <MessageListContainer ref={containerRef}>
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-5 px-4 py-8">
+      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 pl-7 pr-4 py-3">
         {messageGroups.length === 0 && (
           <div className="flex flex-col items-center justify-center h-64 text-muted-foreground opacity-50">
             <img
@@ -528,11 +563,11 @@ const MessageListInner: React.FC<MessageListProps> = ({
               key={group.id}
               data-testid="message-turn-group"
               data-group-index={groupIndex + 1}
-              className="rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.94)_100%)] px-4 py-4 shadow-sm shadow-slate-950/5 dark:border-slate-800/80 dark:bg-[linear-gradient(180deg,rgba(15,23,42,0.92)_0%,rgba(15,23,42,0.84)_100%)]"
+              className="border-t border-slate-200/70 pl-3 pr-1 py-4 first:border-t-0 first:pt-0 dark:border-slate-800/70"
             >
               <div
                 data-testid={`message-turn-group:${groupIndex + 1}:header`}
-                className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
               >
                 <span className="inline-flex items-center rounded-full border border-slate-200/80 bg-white/90 px-2.5 py-1 font-medium text-slate-700 shadow-sm shadow-slate-950/5 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-200">
                   回合 {formatGroupNumber(groupIndex)}

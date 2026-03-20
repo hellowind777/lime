@@ -39,6 +39,19 @@ function EmptyCanvasLayoutHarness({ mode }: { mode: LayoutMode }) {
   );
 }
 
+function PlainChatLayoutHarness({ mode }: { mode: LayoutMode }) {
+  return (
+    <div style={{ width: "1200px", height: "720px" }}>
+      <LayoutTransition
+        mode={mode}
+        chatContent={<div data-testid="layout-chat-content">chat</div>}
+        canvasContent={null}
+        chatPanelChrome="plain"
+      />
+    </div>
+  );
+}
+
 describe("LayoutTransition", () => {
   const mountedRoots: MountedRoot[] = [];
 
@@ -87,6 +100,21 @@ describe("LayoutTransition", () => {
     ).not.toBeNull();
     expect(
       container.querySelector('[data-testid="layout-canvas-content"]'),
+    ).toBeNull();
+  });
+
+  it("plain 聊天壳模式不应再渲染额外面板背景层", () => {
+    const { container } = mountHarness(
+      PlainChatLayoutHarness,
+      { mode: "chat" },
+      mountedRoots,
+    );
+
+    expect(
+      container.querySelector('[data-testid="layout-chat-panel-plain"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="layout-chat-panel-inner"]'),
     ).toBeNull();
   });
 });

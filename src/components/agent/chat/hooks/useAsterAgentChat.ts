@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AsterExecutionStrategy } from "@/lib/api/agentRuntime";
+import { parseStreamEvent } from "@/lib/api/agentStream";
 import { logAgentDebug } from "@/lib/agentDebug";
 import {
   defaultAgentRuntimeAdapter,
@@ -44,6 +45,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
   const sessionIdRef = useRef<string | null>(null);
   const currentAssistantMsgIdRef = useRef<string | null>(null);
   const currentStreamingSessionIdRef = useRef<string | null>(null);
+  const currentStreamingEventNameRef = useRef<string | null>(null);
   const lastTopicSnapshotKeyRef = useRef<string | null>(null);
   const lastIsSendingRef = useRef(false);
   const sendMessageRef = useRef<SendMessageFn | null>(null);
@@ -88,6 +90,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     runtime,
     sessionIdRef,
     currentStreamingSessionIdRef,
+    currentStreamingEventNameRef,
     messages: session.messages,
     setMessages: session.setMessages,
     setThreadItems: session.setThreadItems,
@@ -106,6 +109,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     modelRef: context.modelRef,
     currentAssistantMsgIdRef,
     currentStreamingSessionIdRef,
+    currentStreamingEventNameRef,
     warnedKeysRef: tools.warnedKeysRef,
     getRequiredWorkspaceId: context.getRequiredWorkspaceId,
     setWorkspacePathMissing: context.setWorkspacePathMissing,
@@ -227,6 +231,65 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
 
   useEffect(() => {
     const activeSessionId = session.sessionId;
+    const refreshSessionDetail = session.refreshSessionDetail;
+    const parentSessionId =
+      session.subagentParentContext?.parent_session_id?.trim() || null;
+
+    if (!activeSessionId) {
+      return;
+    }
+
+    const eventNames = [
+      `agent_subagent_status:${activeSessionId}`,
+      parentSessionId ? `agent_subagent_status:${parentSessionId}` : null,
+    ].filter((value, index, values): value is string => {
+      return Boolean(value) && values.indexOf(value) === index;
+    });
+
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
+
+    const subscribe = async () => {
+      for (const eventName of eventNames) {
+        const unlisten = await runtime.listenToTeamEvents(
+          eventName,
+          (event) => {
+            const data = parseStreamEvent(event.payload);
+            if (disposed || data?.type !== "subagent_status_changed") {
+              return;
+            }
+            if (sessionIdRef.current !== activeSessionId) {
+              return;
+            }
+            void refreshSessionDetail(activeSessionId);
+          },
+        );
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlisteners.push(unlisten);
+      }
+    };
+
+    void subscribe();
+
+    return () => {
+      disposed = true;
+      for (const unlisten of unlisteners) {
+        unlisten();
+      }
+    };
+  }, [
+    runtime,
+    session.sessionId,
+    session.refreshSessionDetail,
+    session.subagentParentContext?.parent_session_id,
+    sessionIdRef,
+  ]);
+
+  useEffect(() => {
+    const activeSessionId = session.sessionId;
     const messages = session.messages;
     const queuedTurnCount = session.queuedTurns.length;
     const updateTopicSnapshot = session.updateTopicSnapshot;
@@ -339,10 +402,13 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     turns: session.threadTurns,
     threadItems: session.threadItems,
     todoItems: session.todoItems,
+    childSubagentSessions: session.childSubagentSessions,
+    subagentParentContext: session.subagentParentContext,
     queuedTurns: session.queuedTurns,
     isSending: stream.isSending,
     sendMessage: stream.sendMessage,
     stopSending: stream.stopSending,
+    promoteQueuedTurn: stream.promoteQueuedTurn,
     removeQueuedTurn: stream.removeQueuedTurn,
     clearMessages: session.clearMessages,
     deleteMessage: session.deleteMessage,

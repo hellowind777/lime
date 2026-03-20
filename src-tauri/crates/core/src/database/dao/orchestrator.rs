@@ -670,39 +670,40 @@ mod tests {
     use super::*;
     use rusqlite::{params, Connection};
 
+    struct ModelUsageStatSeed<'a> {
+        model_id: &'a str,
+        credential_id: &'a str,
+        date: &'a str,
+        request_count: i64,
+        success_count: i64,
+        error_count: i64,
+        total_tokens: i64,
+        total_latency_ms: i64,
+    }
+
     fn setup_test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         crate::database::schema::create_tables(&conn).unwrap();
         conn
     }
 
-    fn insert_model_usage_stat(
-        conn: &Connection,
-        model_id: &str,
-        credential_id: &str,
-        date: &str,
-        request_count: i64,
-        success_count: i64,
-        error_count: i64,
-        total_tokens: i64,
-        total_latency_ms: i64,
-    ) {
+    fn insert_model_usage_stat(conn: &Connection, stat: ModelUsageStatSeed<'_>) {
         conn.execute(
             "INSERT INTO model_usage_stats (
                 model_id, credential_id, date, request_count, success_count,
                 error_count, total_tokens, total_latency_ms, avg_latency_ms
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
-                model_id,
-                credential_id,
-                date,
-                request_count,
-                success_count,
-                error_count,
-                total_tokens,
-                total_latency_ms,
-                if request_count > 0 {
-                    total_latency_ms as f64 / request_count as f64
+                stat.model_id,
+                stat.credential_id,
+                stat.date,
+                stat.request_count,
+                stat.success_count,
+                stat.error_count,
+                stat.total_tokens,
+                stat.total_latency_ms,
+                if stat.request_count > 0 {
+                    stat.total_latency_ms as f64 / stat.request_count as f64
                 } else {
                     0.0
                 },
@@ -821,27 +822,43 @@ mod tests {
 
         insert_model_usage_stat(
             &conn,
-            "claude-3-opus",
-            "cred-1",
-            "2026-03-10",
-            2,
-            2,
-            0,
-            2000,
-            1000,
+            ModelUsageStatSeed {
+                model_id: "claude-3-opus",
+                credential_id: "cred-1",
+                date: "2026-03-10",
+                request_count: 2,
+                success_count: 2,
+                error_count: 0,
+                total_tokens: 2000,
+                total_latency_ms: 1000,
+            },
         );
         insert_model_usage_stat(
             &conn,
-            "claude-3-opus",
-            "cred-2",
-            "2026-03-11",
-            1,
-            1,
-            0,
-            1200,
-            600,
+            ModelUsageStatSeed {
+                model_id: "claude-3-opus",
+                credential_id: "cred-2",
+                date: "2026-03-11",
+                request_count: 1,
+                success_count: 1,
+                error_count: 0,
+                total_tokens: 1200,
+                total_latency_ms: 600,
+            },
         );
-        insert_model_usage_stat(&conn, "gpt-4.1", "cred-3", "2026-03-12", 3, 2, 1, 900, 450);
+        insert_model_usage_stat(
+            &conn,
+            ModelUsageStatSeed {
+                model_id: "gpt-4.1",
+                credential_id: "cred-3",
+                date: "2026-03-12",
+                request_count: 3,
+                success_count: 2,
+                error_count: 1,
+                total_tokens: 900,
+                total_latency_ms: 450,
+            },
+        );
 
         assert!(OrchestratorDao::has_model_usage_stats(&conn).unwrap());
         assert_eq!(

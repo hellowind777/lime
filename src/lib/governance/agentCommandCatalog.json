@@ -4,8 +4,6 @@
     "agent_stop_process",
     "agent_get_process_status",
     "agent_generate_title",
-    "agent_terminal_command_response",
-    "agent_term_scrollback_response",
     "aster_agent_init",
     "aster_agent_status",
     "aster_agent_configure_provider",
@@ -13,11 +11,18 @@
     "aster_agent_reset",
     "agent_runtime_submit_turn",
     "agent_runtime_interrupt_turn",
+    "agent_runtime_promote_queued_turn",
     "agent_runtime_remove_queued_turn",
     "agent_runtime_respond_action",
     "agent_runtime_create_session",
     "agent_runtime_list_sessions",
     "agent_runtime_get_session",
+    "agent_runtime_get_tool_inventory",
+    "agent_runtime_spawn_subagent",
+    "agent_runtime_send_subagent_input",
+    "agent_runtime_wait_subagents",
+    "agent_runtime_resume_subagent",
+    "agent_runtime_close_subagent",
     "agent_runtime_update_session",
     "agent_runtime_delete_session"
   ],
@@ -84,6 +89,16 @@
         "agent_get_session",
         "agent_delete_session",
         "agent_rename_session"
+      ],
+      "allowedPaths": []
+    },
+    {
+      "id": "agent-terminal-tool-callback-commands",
+      "classification": "dead-candidate",
+      "description": "已下线的 TerminalTool / TermScrollbackTool 回调命令边界",
+      "commands": [
+        "agent_terminal_command_response",
+        "agent_term_scrollback_response"
       ],
       "allowedPaths": []
     }

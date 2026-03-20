@@ -6,8 +6,6 @@
  * **Validates: Requirements 10.1, 10.2**
  */
 
-import { safeInvoke } from "@/lib/dev-bridge";
-
 /**
  * 通知设置
  */
@@ -46,14 +44,19 @@ export class NotificationApi {
    * 获取通知配置
    */
   static async getConfig(): Promise<NotificationConfig> {
-    return await safeInvoke<NotificationConfig>("get_notification_config");
+    throw new Error(
+      "旧通知配置 Tauri API 已废弃，请改用 src/lib/notificationService.ts。",
+    );
   }
 
   /**
    * 更新通知配置
    */
   static async updateConfig(config: NotificationConfig): Promise<void> {
-    await safeInvoke<void>("update_notification_config", { config });
+    void config;
+    throw new Error(
+      "旧通知配置 Tauri API 已废弃，请改用 src/lib/notificationService.ts。",
+    );
   }
 }
 

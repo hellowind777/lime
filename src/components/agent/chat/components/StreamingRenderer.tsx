@@ -60,6 +60,12 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
 }) => {
   const [expanded, setExpanded] = React.useState(defaultExpanded);
 
+  React.useEffect(() => {
+    if (defaultExpanded) {
+      setExpanded(true);
+    }
+  }, [defaultExpanded]);
+
   if (!content) return null;
 
   return (
@@ -898,9 +904,7 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
                             onA2UIFormChange={onA2UIFormChange}
                             renderProposedPlanBlocks={renderProposedPlanBlocks}
                             collapseCodeBlocks={collapseCodeBlocks}
-                            shouldCollapseCodeBlock={
-                              shouldCollapseCodeBlock
-                            }
+                            shouldCollapseCodeBlock={shouldCollapseCodeBlock}
                             onCodeBlockClick={onCodeBlockClick}
                           />
                         );

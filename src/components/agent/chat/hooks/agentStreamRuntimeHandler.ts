@@ -204,7 +204,25 @@ export function handleTurnStreamEvent({
           data.turn,
         ),
       );
-      clearOptimisticItem();
+      setThreadItems((prev) => {
+        const optimisticItem = prev.find((item) => item.id === optimisticItemId);
+        if (!optimisticItem) {
+          return prev;
+        }
+
+        return upsertThreadItemState(
+          removeThreadItemState(prev, optimisticItemId),
+          {
+            ...optimisticItem,
+            thread_id: data.turn.thread_id,
+            turn_id: data.turn.id,
+            updated_at:
+              data.turn.updated_at ||
+              data.turn.started_at ||
+              optimisticItem.updated_at,
+          },
+        );
+      });
       break;
 
     case "item_started":

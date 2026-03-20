@@ -117,4 +117,22 @@ describe("agentStream.parseStreamEvent", () => {
       },
     });
   });
+
+  it("应解析 subagent_status_changed 事件", () => {
+    expect(
+      parseStreamEvent({
+        type: "subagent_status_changed",
+        session_id: "child-1",
+        root_session_id: "root-1",
+        parent_session_id: "parent-1",
+        status: "running",
+      }),
+    ).toEqual({
+      type: "subagent_status_changed",
+      session_id: "child-1",
+      root_session_id: "root-1",
+      parent_session_id: "parent-1",
+      status: "running",
+    });
+  });
 });

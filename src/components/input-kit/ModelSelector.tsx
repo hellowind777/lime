@@ -32,6 +32,9 @@ const defaultTriggerClassName =
 const itemClassName =
   "flex w-full items-center justify-between rounded-xl border border-transparent px-2.5 py-2 text-left text-sm transition-colors";
 
+const BACKGROUND_PRELOAD_IDLE_TIMEOUT_MS = 1_500;
+const BACKGROUND_PRELOAD_FALLBACK_DELAY_MS = 180;
+
 const THEME_LABEL_MAP: Record<string, string> = {
   general: "通用对话",
   "social-media": "社媒内容",
@@ -55,6 +58,7 @@ export interface ModelSelectorProps {
   onManageProviders?: () => void;
   popoverSide?: "top" | "bottom";
   disabled?: boolean;
+  backgroundPreload?: "immediate" | "idle" | "disabled";
 }
 
 export const ModelSelector: React.FC<ModelSelectorProps> = ({
@@ -68,6 +72,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   onManageProviders,
   popoverSide = "top",
   disabled = false,
+  backgroundPreload = "immediate",
 }) => {
   const [open, setOpen] = useState(false);
   const [backgroundProviderLoadReady, setBackgroundProviderLoadReady] =
@@ -77,28 +82,51 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
   modelRef.current = model;
   const shouldLoadProviders =
     open ||
+    backgroundPreload === "immediate" ||
     backgroundProviderLoadReady ||
     !providerType.trim() ||
     !model.trim();
   const shouldLoadModels = open || !providerType.trim() || !model.trim();
 
   useEffect(() => {
-    if (open || backgroundProviderLoadReady) {
+    if (
+      backgroundPreload !== "idle" ||
+      open ||
+      backgroundProviderLoadReady
+    ) {
       return;
     }
 
-    let cancelled = false;
-    const timerId = window.setTimeout(() => {
-      if (!cancelled) {
-        setBackgroundProviderLoadReady(true);
-      }
-    }, 0);
+    if (typeof window === "undefined") {
+      setBackgroundProviderLoadReady(true);
+      return;
+    }
+
+    if (typeof window.requestIdleCallback === "function") {
+      const idleId = window.requestIdleCallback(
+        () => {
+          setBackgroundProviderLoadReady(true);
+        },
+        {
+          timeout: BACKGROUND_PRELOAD_IDLE_TIMEOUT_MS,
+        },
+      );
+
+      return () => {
+        if (typeof window.cancelIdleCallback === "function") {
+          window.cancelIdleCallback(idleId);
+        }
+      };
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setBackgroundProviderLoadReady(true);
+    }, BACKGROUND_PRELOAD_FALLBACK_DELAY_MS);
 
     return () => {
-      cancelled = true;
-      window.clearTimeout(timerId);
+      window.clearTimeout(timeoutId);
     };
-  }, [backgroundProviderLoadReady, open]);
+  }, [backgroundPreload, backgroundProviderLoadReady, open]);
 
   const { providers: configuredProviders, loading: providersLoading } =
     useConfiguredProviders({ autoLoad: shouldLoadProviders });

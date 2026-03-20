@@ -191,6 +191,8 @@ pub fn run() {
         .manage(automation_service_state)
         .manage(workflow_service)
         .manage(progress_store)
+        .manage(commands::subagent_cmd::SubAgentSchedulerState::default())
+        .manage(commands::websocket_cmd::WsServiceState::default())
         .manage(lime_gateway::telegram::TelegramGatewayState::default())
         .manage(lime_gateway::discord::DiscordGatewayState::default())
         .manage(lime_gateway::feishu::FeishuGatewayState::default())
@@ -241,14 +243,6 @@ pub fn run() {
             {
                 crate::commands::windows_startup_cmd::maybe_show_windows_startup_notice(&app.handle());
             }
-
-            // TODO: 重新实现 TerminalTool 和 TermScrollbackTool 的 AppHandle 设置
-            // 当前暂时注释掉，等待适配 aster-rust 工具系统
-            // crate::agent::tools::set_terminal_tool_app_handle(app.handle().clone());
-            // tracing::info!("[启动] TerminalTool AppHandle 已设置");
-
-            // crate::agent::tools::set_term_scrollback_tool_app_handle(app.handle().clone());
-            // tracing::info!("[启动] TermScrollbackTool AppHandle 已设置");
 
             // 初始化托盘管理器
             // Requirements 1.4: 应用启动时显示停止状态图标
@@ -1345,6 +1339,8 @@ pub fn run() {
             commands::plugin_install_cmd::is_plugin_installed,
             // Plugin UI commands
             commands::plugin_cmd::get_plugins_with_ui,
+            commands::plugin_cmd::get_plugin_ui,
+            commands::plugin_cmd::handle_plugin_action,
             commands::plugin_cmd::read_plugin_manifest_cmd,
             commands::plugin_cmd::launch_plugin_ui,
             commands::plugin_cmd::frontend_debug_log,
@@ -1387,9 +1383,6 @@ pub fn run() {
             commands::agent_cmd::agent_stop_process,
             commands::agent_cmd::agent_get_process_status,
             commands::agent_cmd::agent_generate_title,
-            // TODO: 重新启用这些命令，适配 aster-rust 工具系统
-            // commands::agent_cmd::agent_terminal_command_response,
-            // commands::agent_cmd::agent_term_scrollback_response,
             // Aster Agent commands
             commands::aster_agent_cmd::aster_agent_init,
             commands::aster_agent_cmd::aster_agent_status,
@@ -1398,10 +1391,17 @@ pub fn run() {
             commands::aster_agent_cmd::aster_agent_configure_from_pool,
             commands::aster_agent_cmd::agent_runtime_submit_turn,
             commands::aster_agent_cmd::agent_runtime_interrupt_turn,
+            commands::aster_agent_cmd::agent_runtime_promote_queued_turn,
             commands::aster_agent_cmd::agent_runtime_remove_queued_turn,
             commands::aster_agent_cmd::agent_runtime_create_session,
             commands::aster_agent_cmd::agent_runtime_list_sessions,
             commands::aster_agent_cmd::agent_runtime_get_session,
+            commands::aster_agent_cmd::agent_runtime_get_tool_inventory,
+            commands::aster_agent_cmd::agent_runtime_spawn_subagent,
+            commands::aster_agent_cmd::agent_runtime_send_subagent_input,
+            commands::aster_agent_cmd::agent_runtime_wait_subagents,
+            commands::aster_agent_cmd::agent_runtime_resume_subagent,
+            commands::aster_agent_cmd::agent_runtime_close_subagent,
             commands::aster_agent_cmd::agent_runtime_update_session,
             commands::aster_agent_cmd::agent_runtime_delete_session,
             commands::aster_agent_cmd::agent_runtime_respond_action,
@@ -1478,6 +1478,10 @@ pub fn run() {
             commands::terminal_cmd::terminal_close,
             commands::terminal_cmd::terminal_list_sessions,
             commands::terminal_cmd::terminal_get_session,
+            // SubAgent commands
+            commands::subagent_cmd::init_subagent_scheduler,
+            commands::subagent_cmd::execute_subagent_tasks,
+            commands::subagent_cmd::cancel_subagent_tasks,
             // Connection commands
             commands::connection_cmd::connection_list,
             commands::connection_cmd::connection_add,
@@ -1489,6 +1493,10 @@ pub fn run() {
             commands::connection_cmd::connection_save_raw_config,
             commands::connection_cmd::connection_test,
             commands::connection_cmd::connection_import_ssh_host,
+            // WebSocket commands
+            commands::websocket_cmd::get_websocket_status,
+            commands::websocket_cmd::get_websocket_connections,
+            commands::websocket_cmd::set_websocket_enabled,
             // Browser environment preset commands
             commands::browser_environment_cmd::list_browser_environment_presets_cmd,
             commands::browser_environment_cmd::save_browser_environment_preset_cmd,

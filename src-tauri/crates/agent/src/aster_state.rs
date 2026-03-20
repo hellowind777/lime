@@ -23,7 +23,6 @@
 //! 参考文档：`docs/prd/chat-architecture-redesign.md`
 
 use aster::agents::Agent;
-use aster::model::ModelConfig;
 #[cfg(test)]
 use aster::skills::{global_registry, load_skills_from_directory, SkillSource};
 use aster::tools::{create_shared_history, EditTool, WriteTool};
@@ -84,6 +83,8 @@ impl<T> QueuedTurnTask<T> {
 pub struct ProviderConfig {
     /// Provider 名称 (openai, anthropic, google, ollama 等)
     pub provider_name: String,
+    /// Provider 选择器（优先保留前端 provider_id / pool provider_type）
+    pub provider_selector: Option<String>,
     /// 模型名称
     pub model_name: String,
     /// API Key (可选，某些 provider 从环境变量读取)
@@ -92,6 +93,8 @@ pub struct ProviderConfig {
     pub base_url: Option<String>,
     /// 凭证 UUID（来自凭证池，用于记录使用和健康状态）
     pub credential_uuid: Option<String>,
+    /// 是否强制 OpenAI provider 使用 Responses API
+    pub force_responses_api: bool,
 }
 
 /// Aster Agent 全局状态
@@ -234,17 +237,19 @@ impl AsterAgentState {
         // 确保 Agent 已初始化（使用带数据库的版本）
         self.init_agent_with_db(db).await?;
 
-        // 设置环境变量（Aster 的 provider 从环境变量读取配置）
-        self.set_provider_env_vars(&config);
-
-        // 创建 ModelConfig
-        let model_config = ModelConfig::new(&config.model_name)
-            .map_err(|e| format!("创建 ModelConfig 失败: {e}"))?;
-
-        // 创建 Provider
-        let provider = aster::providers::create(&config.provider_name, model_config)
-            .await
-            .map_err(|e| format!("创建 Provider 失败: {e}"))?;
+        let provider = create_aster_provider(&AsterProviderConfig {
+            provider_name: config.provider_name.clone(),
+            model_name: config.model_name.clone(),
+            api_key: config.api_key.clone(),
+            base_url: config.base_url.clone(),
+            credential_uuid: config
+                .credential_uuid
+                .clone()
+                .unwrap_or_else(|| format!("manual:{session_id}")),
+            force_responses_api: config.force_responses_api,
+        })
+        .await
+        .map_err(|e| format!("创建 Provider 失败: {e}"))?;
 
         // 更新 Agent 的 Provider
         let agent_guard = self.agent.read().await;
@@ -315,10 +320,12 @@ impl AsterAgentState {
         // 保存当前配置
         let config = ProviderConfig {
             provider_name: aster_config.provider_name.clone(),
+            provider_selector: Some(provider_type.trim().to_string()),
             model_name: aster_config.model_name.clone(),
             api_key: aster_config.api_key.clone(),
             base_url: aster_config.base_url.clone(),
             credential_uuid: Some(aster_config.credential_uuid.clone()),
+            force_responses_api: aster_config.force_responses_api,
         };
         let mut config_guard = self.current_provider_config.write().await;
         *config_guard = Some(config);
@@ -368,57 +375,6 @@ impl AsterAgentState {
                     }
                 }
             }
-        }
-    }
-
-    /// 设置 Provider 相关的环境变量
-    fn set_provider_env_vars(&self, config: &ProviderConfig) {
-        tracing::info!(
-            "[AsterAgent] set_provider_env_vars: provider_name={}, model_name={}, has_api_key={}, base_url={:?}",
-            config.provider_name,
-            config.model_name,
-            config.api_key.is_some(),
-            config.base_url
-        );
-
-        // 根据 provider 类型设置对应的环境变量
-        let env_key = match config.provider_name.as_str() {
-            "openai" => "OPENAI_API_KEY",
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "google" => "GOOGLE_API_KEY",
-            "deepseek" | "custom_deepseek" => "OPENAI_API_KEY", // DeepSeek 使用 OpenAI 兼容 API
-            "groq" => "OPENAI_API_KEY",                         // Groq 使用 OpenAI 兼容 API
-            "mistral" => "OPENAI_API_KEY",                      // Mistral 使用 OpenAI 兼容 API
-            "openrouter" => "OPENROUTER_API_KEY",
-            "ollama" => return, // Ollama 不需要 API Key
-            _ => {
-                tracing::warn!(
-                    "[AsterAgent] 未知的 provider_name: {}, 使用通用 OpenAI 格式",
-                    config.provider_name
-                );
-                // 通用 OpenAI 兼容格式
-                if let Some(api_key) = &config.api_key {
-                    std::env::set_var("OPENAI_API_KEY", api_key);
-                }
-                if let Some(base_url) = &config.base_url {
-                    std::env::set_var("OPENAI_BASE_URL", base_url);
-                }
-                return;
-            }
-        };
-
-        tracing::info!("[AsterAgent] 设置环境变量: {}=***", env_key);
-
-        if let Some(api_key) = &config.api_key {
-            std::env::set_var(env_key, api_key);
-        }
-
-        if let Some(base_url) = &config.base_url {
-            let base_url_key = format!(
-                "{}_BASE_URL",
-                config.provider_name.to_uppercase().replace("_", "")
-            );
-            std::env::set_var(base_url_key, base_url);
         }
     }
 
@@ -636,17 +592,6 @@ mod tests {
 
         state.remove_cancel_token(session_id).await;
         assert!(!state.cancel_session(session_id).await);
-    }
-
-    #[test]
-    fn test_session_turn_queue_manager_execution_gate() {
-        let gate = SessionTurnExecutionGate::default();
-
-        assert!(gate.try_start("session-queue"));
-        assert!(gate.is_active("session-queue"));
-        assert!(!gate.try_start("session-queue"));
-        assert!(gate.finish("session-queue"));
-        assert!(!gate.is_active("session-queue"));
     }
 
     #[test]

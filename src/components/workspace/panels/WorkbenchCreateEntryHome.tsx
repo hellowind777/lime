@@ -116,7 +116,12 @@ export function WorkbenchCreateEntryHome({
         <div className="w-full relative group">
           <div className="absolute -inset-0.5 bg-gradient-to-br from-primary/30 to-purple-500/30 rounded-[28px] blur-md opacity-20 group-hover:opacity-40 transition duration-500"></div>
           
-          <div className="relative w-full bg-white/80 dark:bg-[#15161A]/80 backdrop-blur-xl border border-white/40 dark:border-white/10 rounded-[26px] shadow-2xl overflow-hidden transition-all duration-500">
+          <div
+            className="relative w-full bg-white/80 dark:bg-[#15161A]/80 backdrop-blur-xl border border-white/40 dark:border-white/10 rounded-[26px] shadow-2xl overflow-hidden transition-all duration-500"
+            data-testid={
+              hasPendingTask ? "workspace-create-confirmation-card" : undefined
+            }
+          >
             {hasPendingTask ? (
               <div className="flex flex-col">
                 <div className="p-8 md:p-10 md:pb-8 flex flex-col gap-8">

@@ -77,6 +77,44 @@ describe("buildClawAgentParams", () => {
     expect(params.theme).toBe("social-media");
     expect(params.lockTheme).toBe(false);
   });
+
+  it("应透传首页壳提交后的首条上下文参数", () => {
+    const params = buildClawAgentParams({
+      projectId: "proj-3",
+      initialUserPrompt: "整理成 notebook 工作方式",
+      initialCreationMode: "framework",
+      initialUserImages: [
+        {
+          data: "aGVsbG8=",
+          mediaType: "image/png",
+        },
+      ],
+      openBrowserAssistOnMount: true,
+    });
+
+    expect(params.agentEntry).toBe("claw");
+    expect(params.projectId).toBe("proj-3");
+    expect(params.initialUserPrompt).toBe("整理成 notebook 工作方式");
+    expect(params.initialCreationMode).toBe("framework");
+    expect(params.initialUserImages).toEqual([
+      {
+        data: "aGVsbG8=",
+        mediaType: "image/png",
+      },
+    ]);
+    expect(params.openBrowserAssistOnMount).toBe(true);
+  });
+
+  it("应允许首页壳透传新会话时间戳", () => {
+    const params = buildClawAgentParams({
+      projectId: "proj-4",
+      newChatAt: 1234567890,
+    });
+
+    expect(params.agentEntry).toBe("claw");
+    expect(params.projectId).toBe("proj-4");
+    expect(params.newChatAt).toBe(1234567890);
+  });
 });
 
 describe("buildWorkspaceResetParams", () => {

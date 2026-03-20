@@ -34,10 +34,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import type {
-  SchedulerEvent,
-  SchedulerExecutionResult,
-  SchedulerProgress,
-} from "@/lib/api/subAgentScheduler";
+  AgentRuntimeToolInventory,
+  AgentRuntimeToolInventoryCatalogEntry,
+  AgentRuntimeToolInventoryRegistryEntry,
+  AgentToolExecutionPolicySource,
+  AsterSubagentSessionInfo,
+} from "@/lib/api/agentRuntime";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -72,6 +74,7 @@ import {
   classifySearchQuerySemantic,
   summarizeSearchQuerySemantics,
 } from "../utils/searchQueryGrouping";
+import type { CompatSubagentRuntimeSnapshot } from "../utils/compatSubagentRuntime";
 
 interface HarnessEnvironmentSummary {
   skillsCount: number;
@@ -93,19 +96,19 @@ export interface HarnessFilePreviewResult {
 
 interface HarnessStatusPanelProps {
   harnessState: HarnessSessionState;
-  subAgentRuntime: {
-    isRunning: boolean;
-    progress: SchedulerProgress | null;
-    events: SchedulerEvent[];
-    result: SchedulerExecutionResult | null;
-    error: string | null;
-  };
+  compatSubagentRuntime: CompatSubagentRuntimeSnapshot;
   environment: HarnessEnvironmentSummary;
   layout?: "default" | "sidebar" | "dialog";
   onLoadFilePreview?: (path: string) => Promise<HarnessFilePreviewResult>;
   onOpenFile?: (fileName: string, content: string) => void;
   onRevealPath?: (path: string) => Promise<void>;
   onOpenPath?: (path: string) => Promise<void>;
+  childSubagentSessions?: AsterSubagentSessionInfo[];
+  onOpenSubagentSession?: (sessionId: string) => void;
+  toolInventory?: AgentRuntimeToolInventory | null;
+  toolInventoryLoading?: boolean;
+  toolInventoryError?: string | null;
+  onRefreshToolInventory?: () => void;
   title?: string;
   description?: string;
   toggleLabel?: string;
@@ -129,9 +132,11 @@ interface PreviewDialogState {
 type FileFilterValue = "all" | HarnessFileKind;
 type OutputFilterValue = "all" | "path" | "offload" | "truncated" | "summary";
 type FileDisplayMode = "timeline" | "grouped";
+type ToolInventoryFilterValue = "all" | "runtime" | "persisted" | "default";
 
 type HarnessSectionKey =
   | "runtime"
+  | "inventory"
   | "approvals"
   | "writes"
   | "files"
@@ -181,6 +186,108 @@ function formatTime(value?: Date): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatUnixTimestamp(value?: number): string {
+  if (!value) {
+    return "未知";
+  }
+
+  return new Date(value * 1000).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function resolveSubagentRuntimeStatusLabel(
+  status?: AsterSubagentSessionInfo["runtime_status"],
+): string {
+  switch (status) {
+    case "queued":
+      return "排队中";
+    case "running":
+      return "运行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "aborted":
+      return "已中止";
+    case "idle":
+    default:
+      return "待开始";
+  }
+}
+
+function resolveSubagentRuntimeStatusVariant(
+  status?: AsterSubagentSessionInfo["runtime_status"],
+): ComponentProps<typeof Badge>["variant"] {
+  switch (status) {
+    case "running":
+      return "default";
+    case "completed":
+      return "secondary";
+    case "failed":
+    case "aborted":
+      return "destructive";
+    case "queued":
+    case "idle":
+    default:
+      return "outline";
+  }
+}
+
+function resolveSubagentSessionTypeLabel(value?: string): string {
+  switch (value) {
+    case "sub_agent":
+      return "子代理";
+    case "fork":
+      return "分支会话";
+    case "user":
+    default:
+      return value?.trim() || "会话";
+  }
+}
+
+function summarizeChildSubagentSessions(
+  sessions: AsterSubagentSessionInfo[],
+): {
+  total: number;
+  running: number;
+  queued: number;
+  active: number;
+  settled: number;
+  failed: number;
+} {
+  const running = sessions.filter(
+    (session) => session.runtime_status === "running",
+  ).length;
+  const queued = sessions.filter(
+    (session) => session.runtime_status === "queued",
+  ).length;
+  const failed = sessions.filter(
+    (session) =>
+      session.runtime_status === "failed" ||
+      session.runtime_status === "aborted",
+  ).length;
+  const settled = sessions.filter(
+    (session) =>
+      session.runtime_status === "completed" ||
+      session.runtime_status === "failed" ||
+      session.runtime_status === "aborted" ||
+      session.runtime_status === "closed",
+  ).length;
+
+  return {
+    total: sessions.length,
+    running,
+    queued,
+    active: running + queued,
+    settled,
+    failed,
+  };
 }
 
 function formatSize(value?: number): string | null {
@@ -452,6 +559,190 @@ function formatWriteSourceLabel(source?: string): string {
   }
 }
 
+function formatExecutionSourceLabel(
+  source: AgentToolExecutionPolicySource,
+): string {
+  switch (source) {
+    case "runtime":
+      return "运行时覆盖";
+    case "persisted":
+      return "持久化覆盖";
+    case "default":
+    default:
+      return "默认策略";
+  }
+}
+
+function resolveExecutionSourceVariant(
+  source: AgentToolExecutionPolicySource,
+): ComponentProps<typeof Badge>["variant"] {
+  switch (source) {
+    case "runtime":
+      return "default";
+    case "persisted":
+      return "secondary";
+    case "default":
+    default:
+      return "outline";
+  }
+}
+
+function formatExecutionWarningPolicyLabel(value: string): string {
+  switch (value) {
+    case "shell_command_risk":
+      return "命令风险告警";
+    case "none":
+    default:
+      return "无告警";
+  }
+}
+
+function formatExecutionRestrictionProfileLabel(value: string): string {
+  switch (value) {
+    case "workspace_path_required":
+      return "必须提供工作区路径";
+    case "workspace_path_optional":
+      return "可选工作区路径";
+    case "workspace_absolute_path_required":
+      return "必须提供绝对工作区路径";
+    case "workspace_shell_command":
+      return "工作区命令限制";
+    case "analyze_image_input":
+      return "仅图像输入";
+    case "safe_https_url_required":
+      return "仅安全 HTTPS URL";
+    case "none":
+    default:
+      return "无额外限制";
+  }
+}
+
+function formatExecutionSandboxProfileLabel(value: string): string {
+  switch (value) {
+    case "workspace_command":
+      return "工作区命令沙箱";
+    case "none":
+    default:
+      return "无沙箱";
+  }
+}
+
+function formatToolLifecycleLabel(value: string): string {
+  switch (value) {
+    case "current":
+      return "现役";
+    case "compat":
+      return "兼容";
+    case "deprecated":
+      return "待清理";
+    default:
+      return value;
+  }
+}
+
+function formatToolPermissionPlaneLabel(value: string): string {
+  switch (value) {
+    case "session_allowlist":
+      return "会话白名单";
+    case "parameter_restricted":
+      return "参数受限";
+    case "caller_filtered":
+      return "调用方过滤";
+    default:
+      return value;
+  }
+}
+
+function formatToolSourceKindLabel(value: string): string {
+  switch (value) {
+    case "aster_builtin":
+      return "Aster 内置";
+    case "lime_injected":
+      return "Lime 注入";
+    case "browser_compatibility":
+      return "Browser Assist";
+    default:
+      return value;
+  }
+}
+
+function formatExtensionSourceKindLabel(value: string): string {
+  switch (value) {
+    case "mcp_bridge":
+      return "MCP Bridge";
+    case "runtime_extension":
+      return "Runtime Extension";
+    default:
+      return value;
+  }
+}
+
+function collectCatalogExecutionSources(
+  entry: AgentRuntimeToolInventoryCatalogEntry,
+): AgentToolExecutionPolicySource[] {
+  return [
+    entry.execution_warning_policy_source,
+    entry.execution_restriction_profile_source,
+    entry.execution_sandbox_profile_source,
+  ];
+}
+
+function collectRegistryExecutionSources(
+  entry: AgentRuntimeToolInventoryRegistryEntry,
+): AgentToolExecutionPolicySource[] {
+  return [
+    entry.catalog_execution_warning_policy_source,
+    entry.catalog_execution_restriction_profile_source,
+    entry.catalog_execution_sandbox_profile_source,
+  ].filter((value): value is AgentToolExecutionPolicySource => Boolean(value));
+}
+
+function matchesCatalogToolInventoryFilter(
+  entry: AgentRuntimeToolInventoryCatalogEntry,
+  filter: ToolInventoryFilterValue,
+): boolean {
+  const sources = collectCatalogExecutionSources(entry);
+
+  switch (filter) {
+    case "runtime":
+      return sources.includes("runtime");
+    case "persisted":
+      return sources.includes("persisted");
+    case "default":
+      return sources.every((source) => source === "default");
+    case "all":
+    default:
+      return true;
+  }
+}
+
+function countCatalogToolsByInventoryFilter(
+  catalogTools: AgentRuntimeToolInventoryCatalogEntry[],
+  filter: ToolInventoryFilterValue,
+): number {
+  return catalogTools.filter((entry) =>
+    matchesCatalogToolInventoryFilter(entry, filter),
+  ).length;
+}
+
+function buildToolInventorySourceStats(
+  catalogTools: AgentRuntimeToolInventoryCatalogEntry[],
+): Record<AgentToolExecutionPolicySource, number> {
+  const stats: Record<AgentToolExecutionPolicySource, number> = {
+    default: 0,
+    persisted: 0,
+    runtime: 0,
+  };
+
+  for (const entry of catalogTools) {
+    for (const source of collectCatalogExecutionSources(entry)) {
+      stats[source] += 1;
+    }
+  }
+
+  return stats;
+}
+
 function getActiveWriteDescription(write: HarnessActiveFileWrite): string {
   const parts = [
     formatArtifactWritePhaseLabel(write.phase),
@@ -460,31 +751,6 @@ function getActiveWriteDescription(write: HarnessActiveFileWrite): string {
   ].filter(Boolean);
 
   return parts.join(" · ");
-}
-
-function summarizeSchedulerEvent(event: SchedulerEvent): string {
-  switch (event.type) {
-    case "started":
-      return `开始调度 ${event.totalTasks} 个子任务`;
-    case "taskStarted":
-      return `任务 ${event.taskId} 开始执行`;
-    case "taskCompleted":
-      return `任务 ${event.taskId} 已完成`;
-    case "taskFailed":
-      return `任务 ${event.taskId} 失败：${event.error}`;
-    case "taskRetry":
-      return `任务 ${event.taskId} 重试第 ${event.retryCount} 次`;
-    case "taskSkipped":
-      return `任务 ${event.taskId} 已跳过：${event.reason}`;
-    case "progress":
-      return `进度 ${event.progress.completed}/${event.progress.total}`;
-    case "completed":
-      return `调度完成，耗时 ${Math.round(event.durationMs / 1000)} 秒`;
-    case "cancelled":
-      return "调度已取消";
-    default:
-      return (event as { type: string }).type;
-  }
 }
 
 async function openExternalUrl(url: string): Promise<void> {
@@ -895,6 +1161,132 @@ function SummaryCard({
   );
 }
 
+function CompatSubagentFallbackCard({
+  snapshot,
+  condensed = false,
+  onOpenUrl,
+}: {
+  snapshot: CompatSubagentRuntimeSnapshot;
+  condensed?: boolean;
+  onOpenUrl: (url: string) => void | Promise<void>;
+}) {
+  if (!snapshot.hasSignals) {
+    return null;
+  }
+
+  const statusVariant: ComponentProps<typeof Badge>["variant"] = snapshot.error
+    ? "destructive"
+    : snapshot.isRunning
+      ? "secondary"
+      : "outline";
+  const statusLabel = snapshot.error
+    ? "异常"
+    : snapshot.isRunning
+      ? snapshot.progress
+        ? `${snapshot.progress.completed}/${snapshot.progress.total}`
+        : "运行中"
+      : snapshot.result
+        ? "已结束"
+        : `${snapshot.recentActivity.length} 条`;
+  const primarySummary = snapshot.progress
+    ? `进度 ${snapshot.progress.completed}/${snapshot.progress.total}${
+        snapshot.progress.currentTasks.length > 0
+          ? ` · 当前任务 ${snapshot.progress.currentTasks.join("、")}`
+          : ""
+      }`
+    : snapshot.recentActivity[0]?.summary ||
+      snapshot.error ||
+      snapshot.result?.mergedSummary ||
+      "检测到兼容调度信号";
+  const visibleActivity = condensed
+    ? snapshot.recentActivity.slice(0, 1)
+    : snapshot.recentActivity.slice(0, 3);
+
+  return (
+    <div className="rounded-xl border border-dashed border-border bg-muted/35 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <TerminalSquare className="h-4 w-4 text-muted-foreground" />
+            <div className="text-sm font-medium text-foreground">兼容回退</div>
+            <Badge variant="outline">Fallback</Badge>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            仅用于承接旧 scheduler 信号，不作为 Team 主事实源。
+          </div>
+        </div>
+        <Badge variant={statusVariant}>{statusLabel}</Badge>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        <InteractiveText
+          text={primarySummary}
+          className="text-xs text-muted-foreground"
+          onOpenUrl={onOpenUrl}
+        />
+
+        {visibleActivity.length > 0 &&
+        visibleActivity[0]?.summary !== primarySummary ? (
+          <div className="rounded-lg bg-background/70 px-2.5 py-2">
+            <div className="text-[11px] font-medium text-muted-foreground">
+              最近兼容轨迹
+            </div>
+            <div className="mt-1 space-y-1">
+              {visibleActivity.map((item) => (
+                <InteractiveText
+                  key={item.id}
+                  text={item.summary}
+                  className="text-xs text-muted-foreground"
+                  onOpenUrl={onOpenUrl}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {!condensed &&
+        snapshot.result?.mergedSummary &&
+        snapshot.result.mergedSummary !== primarySummary ? (
+          <div className="rounded-lg bg-background/70 px-2.5 py-2">
+            <div className="text-[11px] font-medium text-muted-foreground">
+              兼容汇总
+            </div>
+            <InteractiveText
+              text={snapshot.result.mergedSummary}
+              className="mt-1 text-xs text-muted-foreground"
+              onOpenUrl={onOpenUrl}
+            />
+          </div>
+        ) : null}
+
+        {!condensed && snapshot.error && snapshot.error !== primarySummary ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
+            <InteractiveText text={snapshot.error} onOpenUrl={onOpenUrl} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function InventoryStatCard({
+  title,
+  value,
+  hint,
+}: {
+  title: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-background p-3">
+      <div className="text-xs font-medium text-muted-foreground">{title}</div>
+      <div className="mt-1 text-base font-semibold text-foreground">{value}</div>
+      <div className="mt-1 text-xs text-muted-foreground">{hint}</div>
+    </div>
+  );
+}
+
 function Section({
   sectionKey,
   title,
@@ -927,13 +1319,19 @@ function Section({
 
 export function HarnessStatusPanel({
   harnessState,
-  subAgentRuntime,
+  compatSubagentRuntime,
   environment,
   layout = "default",
   onLoadFilePreview,
   onOpenFile,
   onRevealPath,
   onOpenPath,
+  childSubagentSessions = [],
+  onOpenSubagentSession,
+  toolInventory,
+  toolInventoryLoading = false,
+  toolInventoryError = null,
+  onRefreshToolInventory,
   title = "Harness 运行面板",
   description = "展示最近文件活动、工具输出、审批与上下文装载情况。",
   toggleLabel = "详情",
@@ -946,6 +1344,8 @@ export function HarnessStatusPanel({
   const [outputFilter, setOutputFilter] = useState<OutputFilterValue>("all");
   const [fileDisplayMode, setFileDisplayMode] =
     useState<FileDisplayMode>("timeline");
+  const [toolInventoryFilter, setToolInventoryFilter] =
+    useState<ToolInventoryFilterValue>("all");
   const [previewDialog, setPreviewDialog] = useState<PreviewDialogState>({
     open: false,
     title: "",
@@ -973,10 +1373,24 @@ export function HarnessStatusPanel({
     target.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  const recentSchedulerEvents = useMemo(
-    () => subAgentRuntime.events.slice(-4).reverse(),
-    [subAgentRuntime.events],
+  const hasToolInventorySection =
+    toolInventoryLoading || Boolean(toolInventoryError) || Boolean(toolInventory);
+  const toolInventorySourceStats = useMemo(
+    () => buildToolInventorySourceStats(toolInventory?.catalog_tools || []),
+    [toolInventory],
   );
+  const filteredCatalogTools = useMemo(
+    () =>
+      (toolInventory?.catalog_tools || []).filter((entry) =>
+        matchesCatalogToolInventoryFilter(entry, toolInventoryFilter),
+      ),
+    [toolInventory, toolInventoryFilter],
+  );
+  const realTeamSummary = useMemo(
+    () => summarizeChildSubagentSessions(childSubagentSessions),
+    [childSubagentSessions],
+  );
+  const hasCompatSchedulerSignals = compatSubagentRuntime.hasSignals;
 
   const fileFilterOptions = useMemo(
     () =>
@@ -1124,6 +1538,9 @@ export function HarnessStatusPanel({
     if (harnessState.outputSignals.length > 0) {
       sections.push({ key: "outputs", label: "工具输出" });
     }
+    if (hasToolInventorySection) {
+      sections.push({ key: "inventory", label: "工具与权限" });
+    }
     if (harnessState.pendingApprovals.length > 0) {
       sections.push({ key: "approvals", label: "待审批" });
     }
@@ -1137,11 +1554,9 @@ export function HarnessStatusPanel({
       sections.push({ key: "plan", label: "规划状态" });
     }
     if (
-      subAgentRuntime.isRunning ||
+      realTeamSummary.total > 0 ||
       harnessState.delegatedTasks.length > 0 ||
-      recentSchedulerEvents.length > 0 ||
-      subAgentRuntime.error ||
-      subAgentRuntime.result
+      hasCompatSchedulerSignals
     ) {
       sections.push({ key: "delegation", label: "子任务委派" });
     }
@@ -1156,6 +1571,7 @@ export function HarnessStatusPanel({
     return sections;
   }, [
     environment.skillsCount,
+    hasToolInventorySection,
     harnessState.delegatedTasks.length,
     harnessState.activeFileWrites.length,
     harnessState.latestContextTrace.length,
@@ -1165,10 +1581,8 @@ export function HarnessStatusPanel({
     harnessState.plan.phase,
     harnessState.recentFileEvents.length,
     harnessState.runtimeStatus,
-    recentSchedulerEvents.length,
-    subAgentRuntime.error,
-    subAgentRuntime.isRunning,
-    subAgentRuntime.result,
+    hasCompatSchedulerSignals,
+    realTeamSummary.total,
   ]);
 
   const summaryCards = useMemo(() => {
@@ -1193,6 +1607,40 @@ export function HarnessStatusPanel({
         hint:
           harnessState.activeFileWrites[0]?.displayName || "暂无正在处理的文件",
         icon: FileText,
+      });
+    }
+
+    if (realTeamSummary.total > 0) {
+      cards.push({
+        sectionKey: "delegation",
+        title: "Team 会话",
+        value:
+          realTeamSummary.active > 0
+            ? `${realTeamSummary.active}/${realTeamSummary.total}`
+            : `${realTeamSummary.total}`,
+        hint:
+          realTeamSummary.active > 0
+            ? `运行 ${realTeamSummary.running} · 排队 ${realTeamSummary.queued} · 已收敛 ${realTeamSummary.settled}`
+            : `已收敛 ${realTeamSummary.settled} · 失败 ${realTeamSummary.failed}`,
+        icon: Workflow,
+      });
+    }
+
+    if (hasToolInventorySection) {
+      cards.push({
+        sectionKey: "inventory",
+        title: "工具库存",
+        value: toolInventoryLoading
+          ? "同步中"
+          : toolInventory
+            ? `${toolInventory.counts.registry_visible_total}`
+            : "异常",
+        hint: toolInventoryError
+          ? toolInventoryError
+          : toolInventory
+            ? `catalog ${toolInventory.counts.catalog_total} · MCP 可见 ${toolInventory.counts.mcp_tool_visible_total}`
+            : "等待拉取运行时库存",
+        icon: Wrench,
       });
     }
 
@@ -1246,6 +1694,7 @@ export function HarnessStatusPanel({
     environment.activeContextCount,
     environment.contextEnabled,
     environment.contextItemsCount,
+    hasToolInventorySection,
     harnessState.activeFileWrites,
     harnessState.pendingApprovals.length,
     harnessState.plan.items,
@@ -1253,6 +1702,15 @@ export function HarnessStatusPanel({
     harnessState.plan.summaryText,
     harnessState.recentFileEvents,
     harnessState.runtimeStatus,
+    realTeamSummary.active,
+    realTeamSummary.failed,
+    realTeamSummary.queued,
+    realTeamSummary.running,
+    realTeamSummary.settled,
+    realTeamSummary.total,
+    toolInventory,
+    toolInventoryError,
+    toolInventoryLoading,
   ]);
 
   const openPreview = useCallback(
@@ -1473,10 +1931,15 @@ export function HarnessStatusPanel({
             <div className="flex items-center gap-2">
               <Wrench className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-              {subAgentRuntime.isRunning ? (
+              {realTeamSummary.active > 0 ? (
                 <Badge variant="secondary" className="gap-1">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  子任务运行中
+                  Team 运行中
+                </Badge>
+              ) : compatSubagentRuntime.isRunning ? (
+                <Badge variant="secondary" className="gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  兼容调度中
                 </Badge>
               ) : null}
             </div>
@@ -1504,7 +1967,7 @@ export function HarnessStatusPanel({
           ) : null}
         </div>
 
-        {leadContent ? (
+        {!isDialogLayout && leadContent ? (
           <div
             className={cn(
               "border-b border-border px-4 py-4",
@@ -1515,29 +1978,28 @@ export function HarnessStatusPanel({
           </div>
         ) : null}
 
-        <div
-          className={cn(
-            "grid gap-2 px-4 py-4",
-            isDialogLayout && "shrink-0 px-5 py-3",
-            layout === "sidebar"
-              ? "grid-cols-1"
-              : isDialogLayout
-                ? "sm:grid-cols-2 xl:grid-cols-5"
+        {!isDialogLayout ? (
+          <div
+            className={cn(
+              "grid gap-2 px-4 py-4",
+              layout === "sidebar"
+                ? "grid-cols-1"
                 : "md:grid-cols-2 xl:grid-cols-4",
-          )}
-        >
-          {summaryCards.map((card) => (
-            <SummaryCard
-              key={card.title}
-              title={card.title}
-              value={card.value}
-              hint={card.hint}
-              icon={card.icon}
-              onClick={() => scrollToSection(card.sectionKey)}
-              compact={isDialogLayout}
-            />
-          ))}
-        </div>
+            )}
+          >
+            {summaryCards.map((card) => (
+              <SummaryCard
+                key={card.title}
+                title={card.title}
+                value={card.value}
+                hint={card.hint}
+                icon={card.icon}
+                onClick={() => scrollToSection(card.sectionKey)}
+                compact={false}
+              />
+            ))}
+          </div>
+        ) : null}
 
         {isDetailsExpanded ? (
           <ScrollArea
@@ -1551,14 +2013,28 @@ export function HarnessStatusPanel({
             )}
           >
             <div className="space-y-4 pb-1">
+              {isDialogLayout && leadContent ? (
+                <div className="pt-4">{leadContent}</div>
+              ) : null}
+
+              {isDialogLayout ? (
+                <div className="grid gap-2 pt-1 sm:grid-cols-2 xl:grid-cols-5">
+                  {summaryCards.map((card) => (
+                    <SummaryCard
+                      key={card.title}
+                      title={card.title}
+                      value={card.value}
+                      hint={card.hint}
+                      icon={card.icon}
+                      onClick={() => scrollToSection(card.sectionKey)}
+                      compact={true}
+                    />
+                  ))}
+                </div>
+              ) : null}
+
               {availableSections.length > 0 ? (
-                <div
-                  className={cn(
-                    "flex flex-wrap gap-2",
-                    isDialogLayout &&
-                      "sticky top-0 z-10 -mx-1 -mt-1 bg-background/95 px-1 pb-2 pt-1 backdrop-blur supports-[backdrop-filter]:bg-background/80",
-                  )}
-                >
+                <div className="flex flex-wrap gap-2">
                   {availableSections.map((item) => (
                     <button
                       key={item.key}
@@ -1843,6 +2319,617 @@ export function HarnessStatusPanel({
                         当前筛选条件下暂无记录。
                       </div>
                     )}
+                  </div>
+                </Section>
+              ) : null}
+
+              {hasToolInventorySection ? (
+                <Section
+                  sectionKey="inventory"
+                  title="工具与权限"
+                  badge={
+                    toolInventoryLoading
+                      ? "同步中"
+                      : toolInventory
+                        ? `catalog ${toolInventory.counts.catalog_total} / registry ${toolInventory.counts.registry_visible_total}`
+                        : toolInventoryError
+                          ? "读取失败"
+                          : "待同步"
+                  }
+                  registerRef={registerSectionRef}
+                >
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        {toolInventory ? (
+                          <>
+                            <Badge variant="secondary">
+                              caller：{toolInventory.request.caller}
+                            </Badge>
+                            <Badge variant="outline">
+                              Creator：
+                              {toolInventory.request.surface.creator
+                                ? "开启"
+                                : "关闭"}
+                            </Badge>
+                            <Badge variant="outline">
+                              Browser Assist：
+                              {toolInventory.request.surface.browser_assist
+                                ? "开启"
+                                : "关闭"}
+                            </Badge>
+                            <Badge variant="outline">
+                              默认允许：
+                              {toolInventory.counts.default_allowed_total}
+                            </Badge>
+                          </>
+                        ) : (
+                          <Badge variant="outline">等待工具库存</Badge>
+                        )}
+                      </div>
+                      {onRefreshToolInventory ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="gap-2"
+                          aria-label="刷新工具库存"
+                          onClick={onRefreshToolInventory}
+                        >
+                          {toolInventoryLoading ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Wrench className="h-4 w-4" />
+                          )}
+                          刷新库存
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    {toolInventoryLoading ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-border bg-background px-3 py-3 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        正在同步当前工具库存与权限策略...
+                      </div>
+                    ) : null}
+
+                    {toolInventoryError ? (
+                      <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-3 text-sm text-destructive">
+                        {toolInventoryError}
+                      </div>
+                    ) : null}
+
+                    {toolInventory ? (
+                      <>
+                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          <InventoryStatCard
+                            title="Catalog"
+                            value={`${toolInventory.counts.catalog_total}`}
+                            hint={`现役 ${toolInventory.counts.catalog_current_total} · 兼容 ${toolInventory.counts.catalog_compat_total}`}
+                          />
+                          <InventoryStatCard
+                            title="Registry"
+                            value={`${toolInventory.counts.registry_visible_total}`}
+                            hint={`可见 / 总数 ${toolInventory.counts.registry_visible_total} / ${toolInventory.counts.registry_total}`}
+                          />
+                          <InventoryStatCard
+                            title="Extension"
+                            value={`${toolInventory.counts.extension_tool_visible_total}`}
+                            hint={`可见 / 总数 ${toolInventory.counts.extension_tool_visible_total} / ${toolInventory.counts.extension_tool_total}`}
+                          />
+                          <InventoryStatCard
+                            title="MCP"
+                            value={`${toolInventory.counts.mcp_tool_visible_total}`}
+                            hint={`服务 ${toolInventory.counts.mcp_server_total} · 工具 ${toolInventory.counts.mcp_tool_total}`}
+                          />
+                        </div>
+
+                        <div className="grid gap-2 sm:grid-cols-3">
+                          {(
+                            [
+                              ["default", "默认策略"],
+                              ["persisted", "持久化覆盖"],
+                              ["runtime", "运行时覆盖"],
+                            ] as Array<
+                              [AgentToolExecutionPolicySource, string]
+                            >
+                          ).map(([source, label]) => (
+                            <InventoryStatCard
+                              key={source}
+                              title={label}
+                              value={`${toolInventorySourceStats[source]}`}
+                              hint="按 warning / restriction / sandbox 三字段累计"
+                            />
+                          ))}
+                        </div>
+
+                        {toolInventory.warnings.length > 0 ? (
+                          <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3">
+                            <div className="text-sm font-medium text-amber-900">
+                              库存告警
+                            </div>
+                            <div className="mt-2 space-y-1 text-xs text-amber-800">
+                              {toolInventory.warnings.map((warning, index) => (
+                                <div key={`${warning}-${index}`}>{warning}</div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-sm font-medium text-foreground">
+                              Catalog 工具
+                            </div>
+                            <Badge variant="secondary">
+                              {filteredCatalogTools.length} /{" "}
+                              {toolInventory.catalog_tools.length}
+                            </Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {[
+                              { value: "all" as const, label: "全部" },
+                              { value: "runtime" as const, label: "运行时覆盖" },
+                              {
+                                value: "persisted" as const,
+                                label: "持久化覆盖",
+                              },
+                              { value: "default" as const, label: "纯默认" },
+                            ].map((option) => {
+                              const active = option.value === toolInventoryFilter;
+                              const count = countCatalogToolsByInventoryFilter(
+                                toolInventory.catalog_tools,
+                                option.value,
+                              );
+
+                              return (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  className={cn(
+                                    "rounded-full border px-3 py-1 text-xs transition-colors",
+                                    active
+                                      ? "border-primary bg-primary/10 text-foreground"
+                                      : "border-border bg-background text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                                  )}
+                                  onClick={() =>
+                                    setToolInventoryFilter(option.value)
+                                  }
+                                  aria-pressed={active}
+                                  aria-label={`工具库存筛选：${option.label}`}
+                                >
+                                  {option.label} {count}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {filteredCatalogTools.length > 0 ? (
+                            filteredCatalogTools.map((entry) => (
+                              <div
+                                key={entry.name}
+                                className="rounded-xl border border-border bg-background p-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-sm font-medium text-foreground">
+                                        {entry.name}
+                                      </span>
+                                      <Badge variant="outline">
+                                        {formatToolLifecycleLabel(
+                                          entry.lifecycle,
+                                        )}
+                                      </Badge>
+                                      <Badge variant="outline">
+                                        {formatToolSourceKindLabel(entry.source)}
+                                      </Badge>
+                                      <Badge variant="outline">
+                                        {formatToolPermissionPlaneLabel(
+                                          entry.permission_plane,
+                                        )}
+                                      </Badge>
+                                      {entry.workspace_default_allow ? (
+                                        <Badge variant="secondary">
+                                          默认允许
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                      {entry.profiles.map((profile) => (
+                                        <Badge
+                                          key={`${entry.name}-${profile}`}
+                                          variant="outline"
+                                        >
+                                          {profile}
+                                        </Badge>
+                                      ))}
+                                      {entry.capabilities.map((capability) => (
+                                        <Badge
+                                          key={`${entry.name}-${capability}`}
+                                          variant="outline"
+                                        >
+                                          {capability}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="mt-3 grid gap-2 xl:grid-cols-3">
+                                  <div className="rounded-lg bg-muted/50 p-2">
+                                    <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                      Warning
+                                    </div>
+                                    <div className="mt-1 text-sm text-foreground">
+                                      {formatExecutionWarningPolicyLabel(
+                                        entry.execution_warning_policy,
+                                      )}
+                                    </div>
+                                    <div className="mt-2">
+                                      <Badge
+                                        variant={resolveExecutionSourceVariant(
+                                          entry.execution_warning_policy_source,
+                                        )}
+                                      >
+                                        {formatExecutionSourceLabel(
+                                          entry.execution_warning_policy_source,
+                                        )}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                  <div className="rounded-lg bg-muted/50 p-2">
+                                    <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                      Restriction
+                                    </div>
+                                    <div className="mt-1 text-sm text-foreground">
+                                      {formatExecutionRestrictionProfileLabel(
+                                        entry.execution_restriction_profile,
+                                      )}
+                                    </div>
+                                    <div className="mt-2">
+                                      <Badge
+                                        variant={resolveExecutionSourceVariant(
+                                          entry.execution_restriction_profile_source,
+                                        )}
+                                      >
+                                        {formatExecutionSourceLabel(
+                                          entry.execution_restriction_profile_source,
+                                        )}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                  <div className="rounded-lg bg-muted/50 p-2">
+                                    <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                      Sandbox
+                                    </div>
+                                    <div className="mt-1 text-sm text-foreground">
+                                      {formatExecutionSandboxProfileLabel(
+                                        entry.execution_sandbox_profile,
+                                      )}
+                                    </div>
+                                    <div className="mt-2">
+                                      <Badge
+                                        variant={resolveExecutionSourceVariant(
+                                          entry.execution_sandbox_profile_source,
+                                        )}
+                                      >
+                                        {formatExecutionSourceLabel(
+                                          entry.execution_sandbox_profile_source,
+                                        )}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                              当前筛选条件下暂无 catalog 工具。
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="space-y-3">
+                          <div className="text-sm font-medium text-foreground">
+                            Runtime Registry
+                          </div>
+                          {toolInventory.registry_tools.length > 0 ? (
+                            toolInventory.registry_tools.map((entry) => (
+                              <div
+                                key={entry.name}
+                                className="rounded-xl border border-border bg-background p-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-sm font-medium text-foreground">
+                                        {entry.name}
+                                      </span>
+                                      {entry.catalog_entry_name ? (
+                                        <Badge variant="outline">
+                                          映射 {entry.catalog_entry_name}
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="destructive">
+                                          未映射 catalog
+                                        </Badge>
+                                      )}
+                                      {entry.visible_in_context ? (
+                                        <Badge variant="secondary">
+                                          上下文可见
+                                        </Badge>
+                                      ) : null}
+                                      {entry.deferred_loading ? (
+                                        <Badge variant="outline">
+                                          Deferred
+                                        </Badge>
+                                      ) : null}
+                                      {!entry.caller_allowed ? (
+                                        <Badge variant="destructive">
+                                          Caller 拒绝
+                                        </Badge>
+                                      ) : null}
+                                    </div>
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                      {entry.description}
+                                    </div>
+                                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                      {entry.allowed_callers.length > 0 ? (
+                                        <Badge variant="outline">
+                                          callers：
+                                          {entry.allowed_callers.join(", ")}
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="outline">
+                                          callers：全部
+                                        </Badge>
+                                      )}
+                                      {entry.tags.map((tag) => (
+                                        <Badge
+                                          key={`${entry.name}-${tag}`}
+                                          variant="outline"
+                                        >
+                                          {tag}
+                                        </Badge>
+                                      ))}
+                                      <Badge variant="outline">
+                                        input_examples：
+                                        {entry.input_examples_count}
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {collectRegistryExecutionSources(entry).length > 0 ? (
+                                  <div className="mt-3 flex flex-wrap gap-2">
+                                    {entry.catalog_execution_warning_policy &&
+                                    entry.catalog_execution_warning_policy_source ? (
+                                      <Badge
+                                        variant={resolveExecutionSourceVariant(
+                                          entry.catalog_execution_warning_policy_source,
+                                        )}
+                                      >
+                                        Warning：
+                                        {formatExecutionSourceLabel(
+                                          entry.catalog_execution_warning_policy_source,
+                                        )}
+                                      </Badge>
+                                    ) : null}
+                                    {entry.catalog_execution_restriction_profile &&
+                                    entry.catalog_execution_restriction_profile_source ? (
+                                      <Badge
+                                        variant={resolveExecutionSourceVariant(
+                                          entry.catalog_execution_restriction_profile_source,
+                                        )}
+                                      >
+                                        Restriction：
+                                        {formatExecutionSourceLabel(
+                                          entry.catalog_execution_restriction_profile_source,
+                                        )}
+                                      </Badge>
+                                    ) : null}
+                                    {entry.catalog_execution_sandbox_profile &&
+                                    entry.catalog_execution_sandbox_profile_source ? (
+                                      <Badge
+                                        variant={resolveExecutionSourceVariant(
+                                          entry.catalog_execution_sandbox_profile_source,
+                                        )}
+                                      >
+                                        Sandbox：
+                                        {formatExecutionSourceLabel(
+                                          entry.catalog_execution_sandbox_profile_source,
+                                        )}
+                                      </Badge>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                              当前 runtime registry 为空。
+                            </div>
+                          )}
+                        </div>
+
+                        {toolInventory.extension_surfaces.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="text-sm font-medium text-foreground">
+                              Extension Surfaces
+                            </div>
+                            {toolInventory.extension_surfaces.map((entry) => (
+                              <div
+                                key={entry.extension_name}
+                                className="rounded-xl border border-border bg-background p-3"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-medium text-foreground">
+                                    {entry.extension_name}
+                                  </span>
+                                  <Badge variant="outline">
+                                    {formatExtensionSourceKindLabel(
+                                      entry.source_kind,
+                                    )}
+                                  </Badge>
+                                  {entry.deferred_loading ? (
+                                    <Badge variant="outline">Deferred</Badge>
+                                  ) : null}
+                                  {entry.allowed_caller ? (
+                                    <Badge variant="secondary">
+                                      caller：{entry.allowed_caller}
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {entry.description}
+                                </div>
+                                <div className="mt-2 grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
+                                  <div>
+                                    可用工具：{entry.available_tools.length}
+                                  </div>
+                                  <div>
+                                    常驻工具：{entry.always_expose_tools.length}
+                                  </div>
+                                  <div>
+                                    已加载：{entry.loaded_tools.length}
+                                  </div>
+                                  <div>
+                                    可搜索：{entry.searchable_tools.length}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {toolInventory.extension_tools.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="text-sm font-medium text-foreground">
+                              Extension Tools
+                            </div>
+                            {toolInventory.extension_tools.map((entry) => (
+                              <div
+                                key={entry.name}
+                                className="rounded-xl border border-border bg-background p-3"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-medium text-foreground">
+                                    {entry.name}
+                                  </span>
+                                  <Badge variant="outline">{entry.status}</Badge>
+                                  <Badge variant="outline">
+                                    {formatExtensionSourceKindLabel(
+                                      entry.source_kind,
+                                    )}
+                                  </Badge>
+                                  {entry.visible_in_context ? (
+                                    <Badge variant="secondary">
+                                      上下文可见
+                                    </Badge>
+                                  ) : null}
+                                  {!entry.caller_allowed ? (
+                                    <Badge variant="destructive">
+                                      Caller 拒绝
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  {entry.extension_name ? (
+                                    <Badge variant="outline">
+                                      extension：{entry.extension_name}
+                                    </Badge>
+                                  ) : null}
+                                  {entry.allowed_caller ? (
+                                    <Badge variant="outline">
+                                      caller：{entry.allowed_caller}
+                                    </Badge>
+                                  ) : null}
+                                  {entry.deferred_loading ? (
+                                    <Badge variant="outline">Deferred</Badge>
+                                  ) : null}
+                                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {entry.description}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+
+                        {toolInventory.mcp_tools.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="text-sm font-medium text-foreground">
+                              MCP Tools
+                            </div>
+                            {toolInventory.mcp_tools.map((entry) => (
+                              <div
+                                key={`${entry.server_name}:${entry.name}`}
+                                className="rounded-xl border border-border bg-background p-3"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-medium text-foreground">
+                                    {entry.name}
+                                  </span>
+                                  <Badge variant="outline">
+                                    {entry.server_name}
+                                  </Badge>
+                                  {entry.visible_in_context ? (
+                                    <Badge variant="secondary">
+                                      上下文可见
+                                    </Badge>
+                                  ) : null}
+                                  {entry.always_visible ? (
+                                    <Badge variant="outline">
+                                      Always Visible
+                                    </Badge>
+                                  ) : null}
+                                  {entry.deferred_loading ? (
+                                    <Badge variant="outline">Deferred</Badge>
+                                  ) : null}
+                                  {!entry.caller_allowed ? (
+                                    <Badge variant="destructive">
+                                      Caller 拒绝
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <div className="mt-1 text-xs text-muted-foreground">
+                                  {entry.description}
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  {entry.allowed_callers.length > 0 ? (
+                                    <Badge variant="outline">
+                                      callers：
+                                      {entry.allowed_callers.join(", ")}
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline">
+                                      callers：全部
+                                    </Badge>
+                                  )}
+                                  {entry.tags.map((tag) => (
+                                    <Badge
+                                      key={`${entry.server_name}:${entry.name}:${tag}`}
+                                      variant="outline"
+                                    >
+                                      {tag}
+                                    </Badge>
+                                  ))}
+                                  <Badge variant="outline">
+                                    input_examples：
+                                    {entry.input_examples_count}
+                                  </Badge>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : !toolInventoryLoading && !toolInventoryError ? (
+                      <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                        当前尚未拿到工具库存快照。
+                      </div>
+                    ) : null}
                   </div>
                 </Section>
               ) : null}
@@ -2148,58 +3235,40 @@ export function HarnessStatusPanel({
                 </Section>
               ) : null}
 
-              {subAgentRuntime.isRunning ||
+              {realTeamSummary.total > 0 ||
               harnessState.delegatedTasks.length > 0 ||
-              recentSchedulerEvents.length > 0 ||
-              subAgentRuntime.error ||
-              subAgentRuntime.result ? (
+              hasCompatSchedulerSignals ? (
                 <Section
                   sectionKey="delegation"
                   title="子任务委派"
                   badge={
-                    subAgentRuntime.isRunning
-                      ? "运行中"
-                      : `${harnessState.delegatedTasks.length} 条`
+                    realTeamSummary.active > 0
+                      ? `运行中 ${realTeamSummary.active}`
+                      : realTeamSummary.total > 0
+                        ? `${realTeamSummary.total} 个会话`
+                        : harnessState.delegatedTasks.length > 0
+                        ? `${harnessState.delegatedTasks.length} 条`
+                        : undefined
                   }
                   registerRef={registerSectionRef}
                 >
                   <div className="space-y-3">
-                    {subAgentRuntime.progress ? (
+                    {realTeamSummary.total > 0 ? (
                       <div className="rounded-xl border border-border bg-background p-3">
                         <div className="flex items-center justify-between gap-3">
                           <div className="text-sm font-medium text-foreground">
-                            调度进度
+                            当前 Team 会话
                           </div>
-                          <Badge variant="secondary">
-                            {subAgentRuntime.progress.completed}/
-                            {subAgentRuntime.progress.total}
+                          <Badge variant="outline">
+                            {realTeamSummary.total} 个
                           </Badge>
                         </div>
-                        <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
-                          <div
-                            className="h-full rounded-full bg-primary transition-all"
-                            style={{
-                              width: `${Math.max(
-                                0,
-                                Math.min(
-                                  100,
-                                  subAgentRuntime.progress.percentage,
-                                ),
-                              )}%`,
-                            }}
-                          />
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <span>运行中 {realTeamSummary.running}</span>
+                          <span>排队中 {realTeamSummary.queued}</span>
+                          <span>已收敛 {realTeamSummary.settled}</span>
+                          <span>失败 {realTeamSummary.failed}</span>
                         </div>
-                        {subAgentRuntime.progress.currentTasks.length > 0 ? (
-                          <div className="mt-2 text-xs text-muted-foreground">
-                            当前任务：
-                            <InteractiveText
-                              text={subAgentRuntime.progress.currentTasks.join(
-                                "、",
-                              )}
-                              onOpenUrl={handleOpenExternalLink}
-                            />
-                          </div>
-                        ) : null}
                       </div>
                     ) : null}
 
@@ -2254,44 +3323,85 @@ export function HarnessStatusPanel({
                       </div>
                     ))}
 
-                    {recentSchedulerEvents.length > 0 ? (
-                      <div className="rounded-xl border border-border bg-background p-3">
-                        <div className="mb-2 text-sm font-medium text-foreground">
-                          最近调度事件
+                    {childSubagentSessions.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="text-xs font-medium text-muted-foreground">
+                          真实 Team 会话
                         </div>
-                        <div className="space-y-2">
-                          {recentSchedulerEvents.map((event, index) => (
-                            <div
-                              key={`${event.type}-${index}`}
-                              className="text-xs text-muted-foreground"
-                            >
-                              <InteractiveText
-                                text={summarizeSchedulerEvent(event)}
-                                onOpenUrl={handleOpenExternalLink}
-                              />
+                        {childSubagentSessions.map((session) => (
+                          <div
+                            key={session.id}
+                            className="rounded-xl border border-border bg-background p-3"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <Workflow className="h-4 w-4 text-muted-foreground" />
+                                  <span className="truncate text-sm font-medium text-foreground">
+                                    {session.name}
+                                  </span>
+                                  <Badge
+                                    variant={resolveSubagentRuntimeStatusVariant(
+                                      session.runtime_status,
+                                    )}
+                                  >
+                                    {resolveSubagentRuntimeStatusLabel(
+                                      session.runtime_status,
+                                    )}
+                                  </Badge>
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                  <span>
+                                    类型：
+                                    {resolveSubagentSessionTypeLabel(
+                                      session.session_type,
+                                    )}
+                                  </span>
+                                  {session.role_hint ? (
+                                    <span>角色：{session.role_hint}</span>
+                                  ) : null}
+                                  {session.model ? (
+                                    <span>模型：{session.model}</span>
+                                  ) : null}
+                                  {session.provider_name ? (
+                                    <span>提供方：{session.provider_name}</span>
+                                  ) : null}
+                                  {session.origin_tool ? (
+                                    <span>来源：{session.origin_tool}</span>
+                                  ) : null}
+                                  <span>更新：{formatUnixTimestamp(session.updated_at)}</span>
+                                </div>
+                                {session.task_summary ? (
+                                  <InteractiveText
+                                    text={session.task_summary}
+                                    className="mt-2 text-xs text-muted-foreground"
+                                    onOpenUrl={handleOpenExternalLink}
+                                  />
+                                ) : null}
+                              </div>
+                              {onOpenSubagentSession ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    onOpenSubagentSession(session.id)
+                                  }
+                                >
+                                  打开会话
+                                </Button>
+                              ) : null}
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        ))}
                       </div>
                     ) : null}
 
-                    {subAgentRuntime.error ? (
-                      <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-                        <InteractiveText
-                          text={subAgentRuntime.error}
-                          onOpenUrl={handleOpenExternalLink}
-                        />
-                      </div>
-                    ) : null}
-
-                    {subAgentRuntime.result?.mergedSummary ? (
-                      <div className="rounded-xl border border-border bg-background p-3 text-sm text-muted-foreground">
-                        <InteractiveText
-                          text={subAgentRuntime.result.mergedSummary}
-                          onOpenUrl={handleOpenExternalLink}
-                        />
-                      </div>
-                    ) : null}
+                    <CompatSubagentFallbackCard
+                      snapshot={compatSubagentRuntime}
+                      condensed={realTeamSummary.total > 0}
+                      onOpenUrl={handleOpenExternalLink}
+                    />
                   </div>
                 </Section>
               ) : null}

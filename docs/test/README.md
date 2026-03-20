@@ -1,14 +1,21 @@
 # Lime 测试体系
 
-> 基于 Anthropic AI Agent 评估指南与 Orchids Bridge 项目实践
+> 面向 Lime 当前桌面端产品形态的测试入口与索引
 
 ## 概述
 
-Lime 作为 AI API 代理和 Agent 集成平台，需要一套完整的测试体系来确保：
-- API 代理的正确性和稳定性
-- 凭证池管理的可靠性
-- Aster Agent 集成的功能完整性
-- 协议转换的准确性
+Lime 当前是一个本地优先的 Tauri 桌面应用，而不是单一前端项目或单一 API 服务。
+
+测试体系需要同时覆盖：
+
+- 前端界面与工作台交互
+- Tauri 命令边界
+- Rust 服务层与业务逻辑
+- 数据库、文件系统与工作区状态
+- Provider、协议转换与本地 HTTP Server
+- 浏览器运行时、终端、OpenClaw 等桌面能力
+- Agent Runtime 与真实模型行为
+- macOS / Windows 平台差异
 
 ## 测试分层
 
@@ -36,9 +43,10 @@ Lime 作为 AI API 代理和 Agent 集成平台，需要一套完整的测试体
 ```
 docs/test/
 ├── README.md                    # 本文件 - 测试体系概览
+├── testing-strategy-2026.md     # 当前 Lime 主测试策略
 ├── unit-tests.md               # 单元测试指南
 ├── integration-tests.md        # 集成测试指南
-├── e2e-tests.md               # 端到端测试指南
+├── e2e-tests.md               # 浏览器续测与 E2E 总览
 ├── agent-evaluation.md        # Agent 评估指南（核心文档）
 └── test-cases/                # 测试用例模板
     ├── converter-tests.md     # 协议转换器测试用例
@@ -48,15 +56,17 @@ docs/test/
 
 ## 文档索引
 
-| 文档 | 说明 | 适用场景 |
-|------|------|----------|
-| [unit-tests.md](unit-tests.md) | 单元测试指南 | 独立模块测试 |
-| [integration-tests.md](integration-tests.md) | 集成测试指南 | 模块间协作测试 |
-| [e2e-tests.md](e2e-tests.md) | E2E 测试指南 | 完整用户流程测试 |
-| [agent-evaluation.md](agent-evaluation.md) | Agent 评估指南 | AI Agent 行为评估 |
-| [test-cases/converter-tests.md](test-cases/converter-tests.md) | 转换器测试用例 | OpenAI ↔ Claude 转换 |
-| [test-cases/provider-tests.md](test-cases/provider-tests.md) | Provider 测试用例 | OAuth 和 API 调用 |
-| [test-cases/agent-tests.md](test-cases/agent-tests.md) | Agent 测试用例 | Aster Agent 集成 |
+| 文档                                                             | 说明                       | 适用场景                              |
+| ---------------------------------------------------------------- | -------------------------- | ------------------------------------- |
+| [testing-strategy-2026.md](testing-strategy-2026.md)             | 当前 Lime 测试体系建设建议 | 建立分层门禁、规划演进                |
+| [unit-tests.md](unit-tests.md)                                   | 单元测试指南               | 独立模块测试                          |
+| [integration-tests.md](integration-tests.md)                     | 集成测试指南               | 模块间协作测试                        |
+| [e2e-tests.md](e2e-tests.md)                                     | 当前浏览器续测与 E2E 入口  | Playwright MCP / DevBridge 主路径验证 |
+| [../aiprompts/playwright-e2e.md](../aiprompts/playwright-e2e.md) | 浏览器续测详细事实源       | 继续测试、复现、控制台与 Bridge 排障  |
+| [agent-evaluation.md](agent-evaluation.md)                       | Agent 评估指南             | AI Agent 行为评估                     |
+| [test-cases/converter-tests.md](test-cases/converter-tests.md)   | 转换器测试用例             | OpenAI ↔ Claude 转换                  |
+| [test-cases/provider-tests.md](test-cases/provider-tests.md)     | Provider 测试用例          | OAuth 和 API 调用                     |
+| [test-cases/agent-tests.md](test-cases/agent-tests.md)           | Agent 测试用例             | Aster Agent 集成                      |
 
 ## 快速开始
 
@@ -72,6 +82,37 @@ cd src-tauri && cargo test
 npm test
 ```
 
+### 运行本地智能校验
+
+```bash
+npm run verify:local
+```
+
+### 运行本地全量校验
+
+```bash
+npm run verify:local:full
+```
+
+### 浏览器模式桥接检查
+
+```bash
+npm run bridge:health -- --timeout-ms 120000
+```
+
+### 运行首条自包含 smoke
+
+```bash
+npm run smoke:workspace-ready
+```
+
+### 当前浏览器续测入口
+
+当前仓库的浏览器模式 E2E / 续测文档分两层：
+
+- `docs/test/e2e-tests.md`：总览、命令矩阵、适用边界
+- `docs/aiprompts/playwright-e2e.md`：详细操作流程与 Playwright MCP 续测事实源
+
 ### 运行代码检查
 
 ```bash
@@ -84,12 +125,12 @@ npm run lint
 
 ## 核心测试模块
 
-| 模块 | 测试重点 | 文档 |
-|------|----------|------|
-| 协议转换 | OpenAI ↔ Claude 转换正确性 | [converter-tests.md](test-cases/converter-tests.md) |
-| Provider 系统 | OAuth 刷新、API 调用 | [provider-tests.md](test-cases/provider-tests.md) |
-| 凭证池 | 轮询、健康检查、负载均衡 | [integration-tests.md](integration-tests.md) |
-| Aster Agent | 流式响应、工具调用 | [agent-tests.md](test-cases/agent-tests.md) |
+| 模块          | 测试重点                   | 文档                                                |
+| ------------- | -------------------------- | --------------------------------------------------- |
+| 协议转换      | OpenAI ↔ Claude 转换正确性 | [converter-tests.md](test-cases/converter-tests.md) |
+| Provider 系统 | OAuth 刷新、API 调用       | [provider-tests.md](test-cases/provider-tests.md)   |
+| 凭证池        | 轮询、健康检查、负载均衡   | [integration-tests.md](integration-tests.md)        |
+| Aster Agent   | 流式响应、工具调用         | [agent-tests.md](test-cases/agent-tests.md)         |
 
 ## 测试原则
 
@@ -104,11 +145,11 @@ npm run lint
 
 ## 评分器类型
 
-| 类型 | 适用场景 | 优点 | 缺点 |
-|------|----------|------|------|
-| **代码评分器** | 确定性验证 | 快速、可复现 | 对有效变体脆弱 |
-| **模型评分器** | 语义评估 | 灵活、可扩展 | 非确定性、需校准 |
-| **人工评分器** | 复杂判断 | 金标准质量 | 昂贵、慢 |
+| 类型           | 适用场景   | 优点         | 缺点             |
+| -------------- | ---------- | ------------ | ---------------- |
+| **代码评分器** | 确定性验证 | 快速、可复现 | 对有效变体脆弱   |
+| **模型评分器** | 语义评估   | 灵活、可扩展 | 非确定性、需校准 |
+| **人工评分器** | 复杂判断   | 金标准质量   | 昂贵、慢         |
 
 ## 评估指标
 

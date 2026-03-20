@@ -2313,7 +2313,7 @@ mod tests {
 
             if expires_in_secs <= -2 {
                 prop_assert!(is_expired(&result), "Expected Expired for expires_in_secs={}", expires_in_secs);
-            } else if expires_in_secs >= 2 && expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD - 2 {
+            } else if (2..=TOKEN_EXPIRING_SOON_THRESHOLD - 2).contains(&expires_in_secs) {
                 prop_assert!(is_expiring_soon(&result), "Expected ExpiringSoon for expires_in_secs={}", expires_in_secs);
             } else if expires_in_secs > TOKEN_EXPIRING_SOON_THRESHOLD + 2 {
                 prop_assert!(is_valid(&result), "Expected Valid for expires_in_secs={}", expires_in_secs);
@@ -2338,7 +2338,7 @@ mod tests {
 
             if expires_in_secs <= -2 {
                 prop_assert!(is_expired(&result), "Expected Expired for expires_in_secs={}", expires_in_secs);
-            } else if expires_in_secs >= 2 && expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD - 2 {
+            } else if (2..=TOKEN_EXPIRING_SOON_THRESHOLD - 2).contains(&expires_in_secs) {
                 prop_assert!(is_expiring_soon(&result), "Expected ExpiringSoon for expires_in_secs={}", expires_in_secs);
             } else if expires_in_secs > TOKEN_EXPIRING_SOON_THRESHOLD + 2 {
                 prop_assert!(is_valid(&result), "Expected Valid for expires_in_secs={}", expires_in_secs);
@@ -2364,7 +2364,7 @@ mod tests {
             // 由于时间精度问题，允许 2 秒的误差
             if expires_in_secs <= 1 {
                 prop_assert!(is_expired(&result) || is_expiring_soon(&result), "Expected Expired or ExpiringSoon for expires_in_secs={}", expires_in_secs);
-            } else if expires_in_secs >= 2 && expires_in_secs <= TOKEN_EXPIRING_SOON_THRESHOLD - 2 {
+            } else if (2..=TOKEN_EXPIRING_SOON_THRESHOLD - 2).contains(&expires_in_secs) {
                 prop_assert!(is_expiring_soon(&result), "Expected ExpiringSoon for expires_in_secs={}", expires_in_secs);
             } else if expires_in_secs > TOKEN_EXPIRING_SOON_THRESHOLD + 2 {
                 prop_assert!(is_valid(&result), "Expected Valid for expires_in_secs={}", expires_in_secs);

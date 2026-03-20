@@ -1,21 +1,22 @@
-## Lime v0.91.0
+## Lime v0.92.0
 
 ### ✨ 主要更新
 
-- **Aster 运行时队列正式接入 Lime**：桌面端补齐 runtime queue service、Aster state support 与 session store 协作，Agent 会话恢复、排队执行和 runtime item 映射进一步收口
-- **Agent 聊天输入链路继续统一**：输入栏、空状态、图片附件、模型选择与会话 hooks 继续围绕 Aster 聊天主链路整理，减少旧 compat 路径分叉
-- **模型能力与视觉提示增强**：新增模型能力徽章、视觉能力提示与 provider model list 整理，模型选择和多模态提示更直接
-- **Skills / Social Post 执行链路补齐**：新增技能执行运行时与社交内容技能集成，Aster Skills 在 Lime 内的发现、执行与同步更完整
-- **数据库与治理清理继续推进**：移除旧 `unified_chat` / `tool_hooks` / `three stage workflow` 相关残留，统一到现役 Aster Agent、Memory 与 Workspace 路径
+- **Team Workspace 正式成型**：Agent 聊天页新增 Team Workspace 主工作台、建议栏、Dock 与 Home Shell，围绕多代理协作视图重组交互结构
+- **运行态与工具可视化增强**：`ToolCallDisplay`、Harness 状态面板、Runtime Strip、执行日志与子代理时间线继续增强，工具调用与运行态反馈更完整
+- **Aster Agent 运行时继续收口**：Rust 侧补齐 session store、subagent control、agent tools inventory / execution、runtime queue 及命令桥接，统一现役 Agent Runtime 路径
+- **治理与测试基建升级**：新增 `pr-gate`、本地校验脚本、命令契约检查、workspace smoke 与治理报告更新，发布前自检链路更清晰
+- **Provider / 模型兼容性继续补强**：补充 Novita 与多种 OpenAI/Claude 兼容 provider 细节，推理内容与工具调用适配继续完善
 
 ### ⚠️ 兼容性说明
 
-- Aster 相关聊天、会话与时间线事实源进一步集中到新的 runtime / session store 路径，旧 compat API 不再建议继续扩展
-- 模型可见性与能力展示依赖新的 provider model 推断逻辑，历史仅按名称匹配的前端分支需要逐步淘汰
+- Agent 聊天页结构继续向 Team Workspace 与现役 Runtime API 收口，旧 compat 会话 / 子代理展示路径不再建议扩展
+- 工具面板、Harness 状态与时间线展示依赖新的事件元数据与运行时映射，历史 UI 分支需要逐步跟进
 
 ### 🔗 依赖同步
 
-- `src-tauri/Cargo.toml` 中的 `aster-rust` 依赖固定到 `v0.19.0`
+- `src-tauri/Cargo.toml` 中的 `aster-rust` 依赖固定到 `v0.20.0`
+- 应用版本同步提升到 `v0.92.0`，覆盖 `package.json`、Tauri 配置与 Rust workspace 版本入口
 
 ### 🧪 测试
 
@@ -26,7 +27,7 @@
 
 ### 📝 文档
 
-- 更新 Aster 集成、治理、Skills 与发布相关文档，补充当前现役架构与发布说明
+- 更新治理、测试、工具体系与 Aster 集成相关文档，补充当前现役架构与发布说明
 
 ### 📦 Windows 下载说明
 
@@ -36,4 +37,4 @@
 
 ---
 
-**完整变更**: v0.90.0...v0.91.0
+**完整变更**: v0.91.0...v0.92.0

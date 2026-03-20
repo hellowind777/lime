@@ -395,7 +395,8 @@ mod tests {
                 content_json TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 tool_calls_json TEXT,
-                tool_call_id TEXT
+                tool_call_id TEXT,
+                reasoning_content TEXT
             );
             ",
         )
@@ -428,7 +429,8 @@ mod tests {
                 content_json TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 tool_calls_json TEXT,
-                tool_call_id TEXT
+                tool_call_id TEXT,
+                reasoning_content TEXT
             );
             ",
         )

@@ -6,6 +6,7 @@ import {
   getAgentRuntimeSession,
   initAsterAgent,
   interruptAgentRuntimeTurn,
+  promoteAgentRuntimeQueuedTurn,
   removeAgentRuntimeQueuedTurn,
   listAgentRuntimeSessions,
   respondAgentRuntimeAction,
@@ -47,6 +48,7 @@ export interface AgentRuntimeActionResponse {
   response?: string;
   userData?: unknown;
   metadata?: Record<string, unknown>;
+  eventName?: string;
 }
 
 export interface AgentRuntimeAdapter {
@@ -66,9 +68,14 @@ export interface AgentRuntimeAdapter {
   ): Promise<void>;
   submitTurn(request: AgentRuntimeTurnRequest): Promise<void>;
   interruptTurn(sessionId: string): Promise<boolean>;
+  promoteQueuedTurn(sessionId: string, queuedTurnId: string): Promise<boolean>;
   removeQueuedTurn(sessionId: string, queuedTurnId: string): Promise<boolean>;
   respondToAction(request: AgentRuntimeActionResponse): Promise<void>;
   listenToTurnEvents(
+    eventName: string,
+    handler: (event: { payload: StreamEvent | unknown }) => void,
+  ): Promise<UnlistenFn>;
+  listenToTeamEvents(
     eventName: string,
     handler: (event: { payload: StreamEvent | unknown }) => void,
   ): Promise<UnlistenFn>;
@@ -128,6 +135,12 @@ export const defaultAgentRuntimeAdapter: AgentRuntimeAdapter = {
       session_id: sessionId,
     });
   },
+  async promoteQueuedTurn(sessionId, queuedTurnId) {
+    return promoteAgentRuntimeQueuedTurn({
+      session_id: sessionId,
+      queued_turn_id: queuedTurnId,
+    });
+  },
   async removeQueuedTurn(sessionId, queuedTurnId) {
     return removeAgentRuntimeQueuedTurn({
       session_id: sessionId,
@@ -143,9 +156,13 @@ export const defaultAgentRuntimeAdapter: AgentRuntimeAdapter = {
       response: request.response,
       user_data: request.userData,
       metadata: request.metadata,
+      ...(request.eventName ? { event_name: request.eventName } : {}),
     });
   },
   async listenToTurnEvents(eventName, handler) {
+    return safeListen<StreamEvent>(eventName, handler);
+  },
+  async listenToTeamEvents(eventName, handler) {
     return safeListen<StreamEvent>(eventName, handler);
   },
 };

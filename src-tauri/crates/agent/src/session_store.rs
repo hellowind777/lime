@@ -4,7 +4,10 @@
 //! 数据事实源收敛到 lime_core::database::agent_session_repository + Lime 数据库。
 
 use aster::session::extension_data::{resolve_todo_list_state, TodoListItem, TodoListItemStatus};
-use aster::session::SessionRuntimeSnapshot;
+use aster::session::{
+    list_subagent_child_sessions, resolve_subagent_session_metadata, Session as AsterSession,
+    SessionManager, SessionRuntimeSnapshot,
+};
 use chrono::Utc;
 use lime_core::agent::types::{AgentMessage, AgentSession, ContentPart, MessageContent};
 use lime_core::database::agent_session_repository::{
@@ -18,12 +21,15 @@ use lime_core::database::DbConnection;
 use lime_core::workspace::WorkspaceManager;
 use lime_services::aster_session_store::LimeSessionStore;
 use std::collections::HashMap;
+use std::path::Path;
 use uuid::Uuid;
 
 use crate::aster_runtime_support::load_aster_runtime_snapshot;
 use crate::event_converter::{
     convert_item_runtime, convert_turn_runtime, TauriMessage, TauriMessageContent,
 };
+use crate::subagent_control::{load_subagent_runtime_status, SubagentRuntimeStatusKind};
+use crate::subagent_profiles::{SubagentCustomizationState, SubagentSkillSummary};
 use crate::tool_io_offload::{
     build_history_tool_io_eviction_plan_for_model, force_offload_plain_tool_output_for_history,
     force_offload_tool_arguments_for_history, maybe_offload_plain_tool_output,
@@ -63,6 +69,105 @@ pub struct SessionDetail {
     pub items: Vec<AgentThreadItem>,
     #[serde(default)]
     pub todo_items: Vec<SessionTodoItem>,
+    #[serde(default)]
+    pub child_subagent_sessions: Vec<ChildSubagentSession>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subagent_parent_context: Option<SubagentParentContext>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChildSubagentSession {
+    pub id: String,
+    pub name: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub session_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_from_turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_preset_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_contract: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<SubagentSkillSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime_status: Option<ChildSubagentRuntimeStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_turn_status: Option<ChildSubagentRuntimeStatus>,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub queued_turn_count: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SubagentParentContext {
+    pub parent_session_id: String,
+    pub parent_session_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin_tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_from_turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_preset_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_contract: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skill_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<SubagentSkillSummary>,
+    #[serde(default)]
+    pub sibling_subagent_sessions: Vec<ChildSubagentSession>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildSubagentRuntimeStatus {
+    Idle,
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Aborted,
+    Closed,
+}
+
+fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
@@ -170,6 +275,260 @@ fn load_session_todo_items_from_conn(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn resolve_workspace_id_by_working_dir(
+    db: &DbConnection,
+    working_dir: Option<&str>,
+) -> Option<String> {
+    let resolved_working_dir = working_dir?.trim();
+    if resolved_working_dir.is_empty() {
+        return None;
+    }
+
+    let manager = WorkspaceManager::new(db.clone());
+    match manager.get_by_path(Path::new(resolved_working_dir)) {
+        Ok(workspace) => workspace.map(|entry| entry.id),
+        Err(error) => {
+            tracing::warn!(
+                "[SessionStore] 解析 child subagent workspace 失败，已降级忽略: working_dir={}, error={}",
+                resolved_working_dir,
+                error
+            );
+            None
+        }
+    }
+}
+
+fn resolve_subagent_model_name(session: &AsterSession) -> Option<String> {
+    session
+        .model_config
+        .as_ref()
+        .map(|config| config.model_name.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| normalize_optional_text(session.provider_name.clone()))
+}
+
+fn map_child_subagent_runtime_status(
+    status: SubagentRuntimeStatusKind,
+) -> Option<ChildSubagentRuntimeStatus> {
+    match status {
+        SubagentRuntimeStatusKind::Idle => Some(ChildSubagentRuntimeStatus::Idle),
+        SubagentRuntimeStatusKind::Queued => Some(ChildSubagentRuntimeStatus::Queued),
+        SubagentRuntimeStatusKind::Running => Some(ChildSubagentRuntimeStatus::Running),
+        SubagentRuntimeStatusKind::Completed => Some(ChildSubagentRuntimeStatus::Completed),
+        SubagentRuntimeStatusKind::Failed => Some(ChildSubagentRuntimeStatus::Failed),
+        SubagentRuntimeStatusKind::Aborted => Some(ChildSubagentRuntimeStatus::Aborted),
+        SubagentRuntimeStatusKind::Closed => Some(ChildSubagentRuntimeStatus::Closed),
+        SubagentRuntimeStatusKind::NotFound => None,
+    }
+}
+
+#[cfg(test)]
+fn resolve_child_subagent_runtime_status_from_snapshot(
+    snapshot: &SessionRuntimeSnapshot,
+) -> ChildSubagentRuntimeStatus {
+    snapshot
+        .threads
+        .iter()
+        .flat_map(|thread| thread.turns.iter())
+        .max_by(|left, right| {
+            left.updated_at
+                .cmp(&right.updated_at)
+                .then_with(|| left.created_at.cmp(&right.created_at))
+                .then_with(|| left.id.cmp(&right.id))
+        })
+        .and_then(|turn| {
+            map_child_subagent_runtime_status(match turn.status {
+                aster::session::TurnStatus::Queued => SubagentRuntimeStatusKind::Queued,
+                aster::session::TurnStatus::Running => SubagentRuntimeStatusKind::Running,
+                aster::session::TurnStatus::Completed => SubagentRuntimeStatusKind::Completed,
+                aster::session::TurnStatus::Failed => SubagentRuntimeStatusKind::Failed,
+                aster::session::TurnStatus::Aborted => SubagentRuntimeStatusKind::Aborted,
+            })
+        })
+        .unwrap_or(ChildSubagentRuntimeStatus::Idle)
+}
+
+fn build_child_subagent_session_summary(
+    db: Option<&DbConnection>,
+    session: AsterSession,
+) -> Option<ChildSubagentSession> {
+    let metadata = resolve_subagent_session_metadata(&session.extension_data)?;
+    let customization = SubagentCustomizationState::from_session(&session).unwrap_or_default();
+    let working_dir =
+        normalize_optional_text(Some(session.working_dir.to_string_lossy().to_string()));
+    let workspace_id =
+        db.and_then(|conn| resolve_workspace_id_by_working_dir(conn, working_dir.as_deref()));
+    let model = resolve_subagent_model_name(&session);
+    let provider_name = normalize_optional_text(session.provider_name.clone());
+    let name = normalize_optional_text(Some(session.name.clone()))
+        .unwrap_or_else(|| "子代理会话".to_string());
+
+    Some(ChildSubagentSession {
+        id: session.id,
+        name,
+        created_at: session.created_at.timestamp(),
+        updated_at: session.updated_at.timestamp(),
+        session_type: session.session_type.to_string(),
+        model,
+        provider_name,
+        working_dir,
+        workspace_id,
+        task_summary: normalize_optional_nonempty_body(metadata.task_summary),
+        role_hint: normalize_optional_text(metadata.role_hint),
+        origin_tool: normalize_optional_text(Some(metadata.origin_tool)),
+        created_from_turn_id: normalize_optional_text(metadata.created_from_turn_id),
+        profile_id: customization.profile_id,
+        profile_name: customization.profile_name,
+        role_key: customization.role_key,
+        team_preset_id: customization.team_preset_id,
+        theme: customization.theme,
+        output_contract: customization.output_contract,
+        skill_ids: customization.skill_ids,
+        skills: customization.skills,
+        runtime_status: None,
+        latest_turn_status: None,
+        queued_turn_count: 0,
+    })
+}
+
+fn apply_runtime_status_to_child_subagent_session(
+    summary: &mut ChildSubagentSession,
+    status: crate::subagent_control::SubagentRuntimeStatus,
+) {
+    summary.runtime_status = map_child_subagent_runtime_status(status.kind);
+    summary.latest_turn_status = status
+        .latest_turn_status
+        .and_then(map_child_subagent_runtime_status);
+    summary.queued_turn_count = status.queued_turn_count;
+}
+
+fn build_child_subagent_session_summaries(
+    db: Option<&DbConnection>,
+    sessions: Vec<AsterSession>,
+) -> Vec<ChildSubagentSession> {
+    let mut summaries = sessions
+        .into_iter()
+        .filter_map(|session| build_child_subagent_session_summary(db, session))
+        .collect::<Vec<_>>();
+
+    summaries.sort_by(|left, right| {
+        right
+            .updated_at
+            .cmp(&left.updated_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    summaries
+}
+
+fn build_subagent_parent_context(
+    current_session_id: &str,
+    parent_session: Option<&AsterSession>,
+    metadata: aster::session::SubagentSessionMetadata,
+    customization: Option<SubagentCustomizationState>,
+    sibling_subagent_sessions: Vec<ChildSubagentSession>,
+) -> SubagentParentContext {
+    let parent_session_name = parent_session
+        .and_then(|session| normalize_optional_text(Some(session.name.clone())))
+        .unwrap_or_else(|| "父会话".to_string());
+
+    let customization = customization.unwrap_or_default();
+    SubagentParentContext {
+        parent_session_id: metadata.parent_session_id,
+        parent_session_name,
+        role_hint: normalize_optional_text(metadata.role_hint),
+        task_summary: normalize_optional_nonempty_body(metadata.task_summary),
+        origin_tool: normalize_optional_text(Some(metadata.origin_tool)),
+        created_from_turn_id: normalize_optional_text(metadata.created_from_turn_id),
+        profile_id: customization.profile_id,
+        profile_name: customization.profile_name,
+        role_key: customization.role_key,
+        team_preset_id: customization.team_preset_id,
+        theme: customization.theme,
+        output_contract: customization.output_contract,
+        skill_ids: customization.skill_ids,
+        skills: customization.skills,
+        sibling_subagent_sessions: sibling_subagent_sessions
+            .into_iter()
+            .filter(|session| session.id != current_session_id)
+            .collect(),
+    }
+}
+
+async fn load_child_subagent_sessions(
+    db: &DbConnection,
+    session_id: &str,
+) -> Result<Vec<ChildSubagentSession>, String> {
+    let sessions = list_subagent_child_sessions(session_id)
+        .await
+        .map_err(|error| format!("读取 child subagent sessions 失败: {error}"))?;
+    let mut summaries = build_child_subagent_session_summaries(Some(db), sessions);
+    for summary in &mut summaries {
+        match load_subagent_runtime_status(&summary.id).await {
+            Ok(status) => apply_runtime_status_to_child_subagent_session(summary, status),
+            Err(error) => {
+                tracing::debug!(
+                    "[SessionStore] child subagent runtime 状态不可用，按 idle 展示: session_id={}, error={}",
+                    summary.id,
+                    error
+                );
+            }
+        }
+    }
+    Ok(summaries)
+}
+
+async fn load_subagent_parent_context(
+    db: &DbConnection,
+    session_id: &str,
+) -> Result<Option<SubagentParentContext>, String> {
+    let current_session = SessionManager::get_session(session_id, false)
+        .await
+        .map_err(|error| format!("读取当前 subagent session 失败: {error}"))?;
+    let Some(metadata) = resolve_subagent_session_metadata(&current_session.extension_data) else {
+        return Ok(None);
+    };
+
+    let parent_session = match SessionManager::get_session(&metadata.parent_session_id, false).await
+    {
+        Ok(session) => Some(session),
+        Err(error) => {
+            tracing::warn!(
+                "[SessionStore] 读取 parent session 失败，已降级为匿名父会话: session_id={}, parent_session_id={}, error={}",
+                session_id,
+                metadata.parent_session_id,
+                error
+            );
+            None
+        }
+    };
+
+    let sibling_subagent_sessions = match load_child_subagent_sessions(
+        db,
+        &metadata.parent_session_id,
+    )
+    .await
+    {
+        Ok(sessions) => sessions,
+        Err(error) => {
+            tracing::warn!(
+                "[SessionStore] 读取 sibling subagent sessions 失败，已降级为空列表: session_id={}, parent_session_id={}, error={}",
+                session_id,
+                metadata.parent_session_id,
+                error
+            );
+            Vec::new()
+        }
+    };
+
+    Ok(Some(build_subagent_parent_context(
+        session_id,
+        parent_session.as_ref(),
+        metadata,
+        SubagentCustomizationState::from_session(&current_session),
+        sibling_subagent_sessions,
+    )))
 }
 
 fn sort_runtime_turns(turns: &mut [AgentThreadTurn]) {
@@ -453,6 +812,8 @@ pub fn get_session_sync(db: &DbConnection, session_id: &str) -> Result<SessionDe
         turns,
         items,
         todo_items,
+        child_subagent_sessions: Vec::new(),
+        subagent_parent_context: None,
     })
 }
 
@@ -467,6 +828,32 @@ pub async fn get_runtime_session_detail(
         Err(error) => {
             tracing::warn!(
                 "[SessionStore] 读取 Aster runtime snapshot 失败: session_id={}, error={}",
+                session_id,
+                error
+            );
+        }
+    }
+
+    match load_child_subagent_sessions(db, session_id).await {
+        Ok(child_subagent_sessions) => {
+            detail.child_subagent_sessions = child_subagent_sessions;
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[SessionStore] 读取 child subagent sessions 失败: session_id={}, error={}",
+                session_id,
+                error
+            );
+        }
+    }
+
+    match load_subagent_parent_context(db, session_id).await {
+        Ok(subagent_parent_context) => {
+            detail.subagent_parent_context = subagent_parent_context;
+        }
+        Err(error) => {
+            tracing::warn!(
+                "[SessionStore] 读取 subagent parent context 失败: session_id={}, error={}",
                 session_id,
                 error
             );
@@ -699,6 +1086,11 @@ fn convert_agent_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aster::session::{
+        SessionType as AsterSessionType, SubagentSessionMetadata, ThreadRuntime,
+        ThreadRuntimeSnapshot, TurnRuntime, TurnStatus,
+    };
+    use chrono::{Duration, Utc};
     use lime_core::agent::types::{FunctionCall, ImageUrl, ToolCall};
     use lime_core::database::{schema, DbConnection};
     use std::ffi::OsString;
@@ -787,6 +1179,38 @@ mod tests {
         .expect("add message");
     }
 
+    fn build_test_subagent_session(
+        session_id: &str,
+        name: &str,
+        parent_session_id: Option<&str>,
+        updated_at: chrono::DateTime<Utc>,
+        task_summary: Option<&str>,
+        role_hint: Option<&str>,
+        created_from_turn_id: Option<&str>,
+    ) -> AsterSession {
+        let mut session = AsterSession {
+            id: session_id.to_string(),
+            name: name.to_string(),
+            session_type: AsterSessionType::SubAgent,
+            created_at: updated_at - Duration::minutes(1),
+            updated_at,
+            provider_name: Some("openai".to_string()),
+            working_dir: std::path::PathBuf::from("/tmp/workspace-child"),
+            ..AsterSession::default()
+        };
+
+        if let Some(parent_session_id) = parent_session_id {
+            session.extension_data = SubagentSessionMetadata::new(parent_session_id.to_string())
+                .with_task_summary(task_summary.map(str::to_string))
+                .with_role_hint(role_hint.map(str::to_string))
+                .with_created_from_turn_id(created_from_turn_id.map(str::to_string))
+                .into_updated_extension_data(&AsterSession::default())
+                .expect("build child metadata");
+        }
+
+        session
+    }
+
     #[test]
     fn parse_tool_call_arguments_should_parse_json_or_keep_raw() {
         let parsed = parse_tool_call_arguments(r#"{"path":"./a.txt"}"#);
@@ -794,6 +1218,261 @@ mod tests {
 
         let fallback = parse_tool_call_arguments("not-json");
         assert_eq!(fallback["raw"], serde_json::json!("not-json"));
+    }
+
+    #[test]
+    fn build_child_subagent_session_summaries_should_filter_and_sort_by_updated_at_desc() {
+        let now = Utc::now();
+        let summaries = build_child_subagent_session_summaries(
+            None,
+            vec![
+                build_test_subagent_session(
+                    "child-old",
+                    "旧子代理",
+                    Some("parent-1"),
+                    now - Duration::minutes(5),
+                    Some("先检查日志"),
+                    Some("explorer"),
+                    Some("turn-1"),
+                ),
+                build_test_subagent_session(
+                    "ignored",
+                    "忽略项",
+                    None,
+                    now - Duration::minutes(1),
+                    None,
+                    None,
+                    None,
+                ),
+                build_test_subagent_session(
+                    "child-new",
+                    "新子代理",
+                    Some("parent-1"),
+                    now,
+                    Some("补充真实 team runtime"),
+                    Some("planner"),
+                    Some("turn-2"),
+                ),
+            ],
+        );
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].id, "child-new");
+        assert_eq!(summaries[0].session_type, "sub_agent");
+        assert_eq!(
+            summaries[0].task_summary.as_deref(),
+            Some("补充真实 team runtime")
+        );
+        assert_eq!(summaries[0].role_hint.as_deref(), Some("planner"));
+        assert_eq!(summaries[0].created_from_turn_id.as_deref(), Some("turn-2"));
+        assert_eq!(summaries[1].id, "child-old");
+    }
+
+    #[test]
+    fn build_child_subagent_session_summary_should_merge_customization_state() {
+        let now = Utc::now();
+        let mut session = build_test_subagent_session(
+            "child-customized",
+            "自定义子代理",
+            Some("parent-1"),
+            now,
+            Some("整理 customization"),
+            Some("Image #1"),
+            Some("turn-9"),
+        );
+        session.extension_data = SubagentCustomizationState {
+            profile_id: Some("code-explorer".to_string()),
+            profile_name: Some("代码分析员".to_string()),
+            role_key: Some("explorer".to_string()),
+            team_preset_id: Some("code-triage-team".to_string()),
+            theme: Some("engineering".to_string()),
+            output_contract: Some("输出证据、影响面与建议。".to_string()),
+            system_overlay: None,
+            skill_ids: vec!["repo-exploration".to_string()],
+            skills: vec![SubagentSkillSummary {
+                id: "repo-exploration".to_string(),
+                name: "仓库探索".to_string(),
+                description: Some("优先读事实源".to_string()),
+                source: Some("builtin".to_string()),
+                directory: None,
+            }],
+        }
+        .into_updated_extension_data(&session)
+        .expect("merge customization");
+
+        let summary = build_child_subagent_session_summary(None, session)
+            .expect("child summary should exist");
+
+        assert_eq!(summary.profile_id.as_deref(), Some("code-explorer"));
+        assert_eq!(summary.profile_name.as_deref(), Some("代码分析员"));
+        assert_eq!(summary.role_key.as_deref(), Some("explorer"));
+        assert_eq!(summary.team_preset_id.as_deref(), Some("code-triage-team"));
+        assert_eq!(summary.theme.as_deref(), Some("engineering"));
+        assert_eq!(
+            summary.output_contract.as_deref(),
+            Some("输出证据、影响面与建议。")
+        );
+        assert_eq!(summary.skill_ids, vec!["repo-exploration".to_string()]);
+        assert_eq!(summary.skills.len(), 1);
+        assert_eq!(summary.skills[0].name, "仓库探索");
+    }
+
+    #[test]
+    fn build_subagent_parent_context_should_keep_parent_name_and_filter_current_session() {
+        let now = Utc::now();
+        let metadata = SubagentSessionMetadata::new("parent-1".to_string())
+            .with_task_summary(Some("处理父线程拆分出来的图片任务".to_string()))
+            .with_role_hint(Some("Image #1".to_string()))
+            .with_created_from_turn_id(Some("turn-2".to_string()));
+        let parent_session = AsterSession {
+            id: "parent-1".to_string(),
+            name: "主线程会话".to_string(),
+            session_type: AsterSessionType::User,
+            ..AsterSession::default()
+        };
+        let sibling_subagent_sessions = build_child_subagent_session_summaries(
+            None,
+            vec![
+                build_test_subagent_session(
+                    "child-current",
+                    "Image #1",
+                    Some("parent-1"),
+                    now - Duration::seconds(10),
+                    Some("当前子代理"),
+                    Some("Image #1"),
+                    Some("turn-2"),
+                ),
+                build_test_subagent_session(
+                    "child-sibling",
+                    "Image #2",
+                    Some("parent-1"),
+                    now,
+                    Some("兄弟子代理"),
+                    Some("Image #2"),
+                    Some("turn-2"),
+                ),
+            ],
+        );
+
+        let context = build_subagent_parent_context(
+            "child-current",
+            Some(&parent_session),
+            metadata,
+            None,
+            sibling_subagent_sessions,
+        );
+
+        assert_eq!(context.parent_session_id, "parent-1");
+        assert_eq!(context.parent_session_name, "主线程会话");
+        assert_eq!(context.role_hint.as_deref(), Some("Image #1"));
+        assert_eq!(
+            context.task_summary.as_deref(),
+            Some("处理父线程拆分出来的图片任务")
+        );
+        assert_eq!(context.created_from_turn_id.as_deref(), Some("turn-2"));
+        assert_eq!(context.sibling_subagent_sessions.len(), 1);
+        assert_eq!(context.sibling_subagent_sessions[0].id, "child-sibling");
+    }
+
+    #[test]
+    fn resolve_child_subagent_runtime_status_from_snapshot_should_use_latest_turn_status() {
+        let now = Utc::now();
+        let snapshot = SessionRuntimeSnapshot {
+            session_id: "child-session-1".to_string(),
+            threads: vec![ThreadRuntimeSnapshot {
+                thread: ThreadRuntime::new(
+                    "thread-1",
+                    "child-session-1",
+                    std::path::PathBuf::from("/tmp/workspace-child"),
+                ),
+                turns: vec![
+                    TurnRuntime {
+                        id: "turn-old".to_string(),
+                        session_id: "child-session-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        status: TurnStatus::Running,
+                        input_text: Some("旧任务".to_string()),
+                        error_message: None,
+                        context_override: None,
+                        created_at: now - Duration::minutes(2),
+                        started_at: Some(now - Duration::minutes(2)),
+                        completed_at: None,
+                        updated_at: now - Duration::minutes(1),
+                    },
+                    TurnRuntime {
+                        id: "turn-new".to_string(),
+                        session_id: "child-session-1".to_string(),
+                        thread_id: "thread-1".to_string(),
+                        status: TurnStatus::Completed,
+                        input_text: Some("新任务".to_string()),
+                        error_message: None,
+                        context_override: None,
+                        created_at: now - Duration::seconds(30),
+                        started_at: Some(now - Duration::seconds(30)),
+                        completed_at: Some(now - Duration::seconds(10)),
+                        updated_at: now,
+                    },
+                ],
+                items: Vec::new(),
+            }],
+        };
+
+        assert_eq!(
+            resolve_child_subagent_runtime_status_from_snapshot(&snapshot),
+            ChildSubagentRuntimeStatus::Completed
+        );
+    }
+
+    #[test]
+    fn apply_runtime_status_to_child_subagent_session_should_keep_runtime_detail() {
+        let mut summary = ChildSubagentSession {
+            id: "child-1".to_string(),
+            name: "研究员".to_string(),
+            created_at: 1_710_000_000,
+            updated_at: 1_710_000_100,
+            session_type: "sub_agent".to_string(),
+            model: Some("claude-sonnet-4".to_string()),
+            provider_name: Some("openai".to_string()),
+            working_dir: Some("/tmp/workspace-child".to_string()),
+            workspace_id: Some("workspace-1".to_string()),
+            task_summary: Some("整理事实源".to_string()),
+            role_hint: Some("explorer".to_string()),
+            origin_tool: Some("spawn_agent".to_string()),
+            created_from_turn_id: Some("turn-1".to_string()),
+            profile_id: None,
+            profile_name: None,
+            role_key: None,
+            team_preset_id: None,
+            theme: None,
+            output_contract: None,
+            skill_ids: Vec::new(),
+            skills: Vec::new(),
+            runtime_status: None,
+            latest_turn_status: None,
+            queued_turn_count: 0,
+        };
+
+        apply_runtime_status_to_child_subagent_session(
+            &mut summary,
+            crate::subagent_control::SubagentRuntimeStatus {
+                session_id: "child-1".to_string(),
+                kind: SubagentRuntimeStatusKind::Queued,
+                latest_turn_id: Some("turn-queued".to_string()),
+                latest_turn_status: Some(SubagentRuntimeStatusKind::Completed),
+                queued_turn_count: 2,
+                closed: false,
+            },
+        );
+
+        assert_eq!(
+            summary.runtime_status,
+            Some(ChildSubagentRuntimeStatus::Queued)
+        );
+        assert_eq!(
+            summary.latest_turn_status,
+            Some(ChildSubagentRuntimeStatus::Completed)
+        );
+        assert_eq!(summary.queued_turn_count, 2);
     }
 
     #[test]

@@ -53,7 +53,7 @@ const EXEC_LOG_TIMELINE_CLASSNAME =
 const EXEC_LOG_ITEM_CLASSNAME = "relative pb-3 last:pb-0";
 
 const EXEC_LOG_ITEM_CARD_CLASSNAME =
-  "rounded-[18px] border border-slate-200/80 bg-white/92 px-3 py-3 shadow-sm shadow-slate-950/5";
+  "rounded-[18px] border border-slate-200 bg-white px-3 py-3 shadow-sm shadow-slate-950/5";
 
 const EXEC_LOG_HEADER_CLASSNAME = "mb-1.5 flex items-center gap-2";
 
@@ -67,7 +67,7 @@ const EXEC_LOG_META_CLASSNAME =
   "mt-1 whitespace-pre-wrap break-words text-[10.5px] leading-4.5 text-slate-500";
 
 const EXEC_LOG_EMPTY_CLASSNAME =
-  "rounded-[18px] border border-dashed border-slate-200/90 bg-white/72 px-4 py-8 text-center text-sm text-slate-500";
+  "rounded-[18px] border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500";
 
 const EXEC_LOG_FOOTER_CLASSNAME = "mt-3 flex justify-center";
 
@@ -75,7 +75,7 @@ const EXEC_LOG_DETAIL_TOGGLE_CLASSNAME =
   "mt-2 inline-flex items-center gap-1 text-[10.5px] font-semibold text-sky-700 transition-colors hover:text-slate-900";
 
 const EXEC_LOG_DETAIL_PANEL_CLASSNAME =
-  "mt-3 flex flex-col gap-3 rounded-[16px] border border-slate-200/80 bg-slate-50/90 p-3";
+  "mt-3 flex flex-col gap-3 rounded-[16px] border border-slate-200 bg-slate-50 p-3";
 
 const EXEC_LOG_DETAIL_SECTION_CLASSNAME = "flex flex-col gap-1.5";
 
@@ -125,24 +125,24 @@ function getExecLogDotClassName(type: string, status?: string) {
 function getExecLogBadgeClassName(type: string, status?: string) {
   return cn(
     "inline-flex min-h-5 items-center rounded-full border px-2 text-[10px] font-semibold",
-    status === "failed" && "border-rose-200 bg-rose-50/90 text-rose-700",
-    status === "running" && "border-amber-200 bg-amber-50/90 text-amber-700",
+    status === "failed" && "border-rose-200 bg-rose-50 text-rose-700",
+    status === "running" && "border-amber-200 bg-amber-50 text-amber-700",
     status === "completed" &&
-      "border-emerald-200 bg-emerald-50/90 text-emerald-700",
-    !status && type === "user" && "border-sky-200 bg-sky-50/90 text-sky-700",
+      "border-emerald-200 bg-emerald-50 text-emerald-700",
+    !status && type === "user" && "border-sky-200 bg-sky-50 text-sky-700",
     !status &&
       type === "thinking" &&
-      "border-sky-100 bg-sky-50/80 text-sky-600",
+      "border-sky-100 bg-sky-50 text-sky-600",
     !status &&
       type === "response" &&
-      "border-slate-200 bg-slate-100/90 text-slate-600",
+      "border-slate-200 bg-slate-100 text-slate-600",
     !status &&
       type === "run" &&
-      "border-emerald-200 bg-emerald-50/90 text-emerald-700",
+      "border-emerald-200 bg-emerald-50 text-emerald-700",
     !status &&
       type === "task" &&
-      "border-amber-200 bg-amber-50/90 text-amber-700",
-    !status && type === "tool" && "border-sky-200 bg-sky-50/90 text-sky-700",
+      "border-amber-200 bg-amber-50 text-amber-700",
+    !status && type === "tool" && "border-sky-200 bg-sky-50 text-sky-700",
   );
 }
 
@@ -151,7 +151,7 @@ function getExecLogFilterChipClassName(active: boolean) {
     "inline-flex min-w-11 items-center justify-center rounded-full border px-3 py-1 text-[11px] font-semibold transition-colors",
     active
       ? "border-slate-300 bg-slate-100 text-slate-900"
-      : "border-slate-200/80 bg-white/90 text-slate-600 hover:border-slate-300 hover:bg-white hover:text-slate-900",
+      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-white hover:text-slate-900",
   );
 }
 
@@ -159,8 +159,8 @@ function getExecLogMoreButtonClassName(disabled?: boolean) {
   return cn(
     "inline-flex min-w-24 items-center justify-center rounded-full border px-3 py-1.5 text-[11px] font-semibold transition-colors",
     disabled
-      ? "cursor-default border-slate-200/80 bg-slate-100/80 text-slate-400"
-      : "border-slate-200/80 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900",
+      ? "cursor-default border-slate-200 bg-slate-100 text-slate-400"
+      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900",
   );
 }
 

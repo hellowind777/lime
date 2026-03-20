@@ -402,4 +402,66 @@ describe("MessageList", () => {
       }),
     ]);
   });
+
+  it("当前 turn 映射错位时，应优先显示在最后一个助手消息上", () => {
+    const messages: Message[] = [
+      {
+        id: "msg-assistant-earlier",
+        role: "assistant",
+        content: "先给出一段中间反馈。",
+        timestamp: new Date("2026-03-15T09:00:05Z"),
+      },
+      {
+        id: "msg-assistant-latest",
+        role: "assistant",
+        content: "这是当前回合的最新回复。",
+        timestamp: new Date("2026-03-15T09:00:20Z"),
+      },
+    ];
+
+    const container = render(messages, {
+      currentTurnId: "turn-latest",
+      turns: [
+        {
+          id: "turn-latest",
+          thread_id: "thread-1",
+          prompt_text: "继续执行",
+          status: "running",
+          started_at: "2026-03-15T09:00:00Z",
+          completed_at: "2026-03-15T09:00:06Z",
+          created_at: "2026-03-15T09:00:00Z",
+          updated_at: "2026-03-15T09:00:06Z",
+        },
+      ],
+      threadItems: [
+        {
+          id: "item-latest",
+          thread_id: "thread-1",
+          turn_id: "turn-latest",
+          sequence: 1,
+          status: "completed",
+          started_at: "2026-03-15T09:00:01Z",
+          completed_at: "2026-03-15T09:00:02Z",
+          updated_at: "2026-03-15T09:00:02Z",
+          type: "plan",
+          text: "继续执行当前任务",
+        },
+      ],
+    });
+
+    const streamingNodes = Array.from(
+      container.querySelectorAll('[data-testid="streaming-renderer"]'),
+    );
+    const timelineNodes = Array.from(
+      container.querySelectorAll('[data-testid="agent-thread-timeline"]'),
+    );
+
+    expect(streamingNodes).toHaveLength(2);
+    expect(timelineNodes).toHaveLength(1);
+    expect(
+      (streamingNodes[1] as Node).compareDocumentPosition(timelineNodes[0] as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(timelineNodes[0]?.previousElementSibling).toBe(streamingNodes[1]);
+  });
 });

@@ -1,5 +1,5 @@
 use crate::aster_runtime_support::{
-    clear_aster_runtime_queued_turns, list_aster_runtime_queued_turns,
+    clear_aster_runtime_queued_turns, enqueue_aster_runtime_turn, list_aster_runtime_queued_turns,
     prepare_aster_runtime_queue_resumption, queued_turn_event_name_from_runtime,
     queued_turn_runtime_from_task, queued_turn_snapshot_from_runtime,
     remove_aster_runtime_queued_turn,
@@ -239,6 +239,56 @@ pub async fn remove_runtime_queued_turn(
             queued_turn_id: queued_turn.queued_turn_id,
         },
     );
+    Ok(true)
+}
+
+pub async fn promote_runtime_queued_turn(
+    session_id: &str,
+    queued_turn_id: &str,
+) -> Result<bool, String> {
+    let queued_turns = list_aster_runtime_queued_turns(session_id).await?;
+    if queued_turns.is_empty() {
+        return Ok(false);
+    }
+
+    if queued_turns
+        .first()
+        .map(|queued_turn| queued_turn.queued_turn_id == queued_turn_id)
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+
+    let Some(target_index) = queued_turns
+        .iter()
+        .position(|queued_turn| queued_turn.queued_turn_id == queued_turn_id)
+    else {
+        return Ok(false);
+    };
+
+    let mut reordered_turns = Vec::with_capacity(queued_turns.len());
+    reordered_turns.push(queued_turns[target_index].clone());
+    reordered_turns.extend(
+        queued_turns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != target_index)
+            .map(|(_, queued_turn)| queued_turn.clone()),
+    );
+
+    let original_turns = queued_turns;
+    clear_aster_runtime_queued_turns(session_id).await?;
+
+    for queued_turn in &reordered_turns {
+        if let Err(error) = enqueue_aster_runtime_turn(queued_turn.clone()).await {
+            clear_aster_runtime_queued_turns(session_id).await?;
+            for original_turn in original_turns {
+                enqueue_aster_runtime_turn(original_turn).await?;
+            }
+            return Err(error);
+        }
+    }
+
     Ok(true)
 }
 

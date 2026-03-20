@@ -20,6 +20,10 @@ vi.mock("./Inputbar/components/SkillSelector", () => ({
   SkillSelector: () => <div data-testid="empty-state-skill-selector" />,
 }));
 
+vi.mock("./Inputbar/components/TeamSelector", () => ({
+  TeamSelector: () => <div data-testid="empty-state-team-selector" />,
+}));
+
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 beforeEach(() => {
@@ -165,5 +169,64 @@ describe("EmptyStateComposerPanel", () => {
     });
 
     expect(onRemoveImage).toHaveBeenCalledWith(0);
+  });
+
+  it("复杂任务应显示 Team 建议并支持开启多代理", () => {
+    const onSubagentEnabledChange = vi.fn();
+    const container = renderPanel({
+      isGeneralTheme: true,
+      input:
+        "请帮我分析这个 Rust GUI 多代理实现差异，拆分任务并行推进，再补回归测试和最终汇总结论。",
+      onSubagentEnabledChange,
+    });
+
+    expect(container.textContent).toContain("当前任务更适合 Team 协作");
+    expect(container.textContent).toContain("建议角色：分析");
+
+    const enableTeamButton = Array.from(
+      container.querySelectorAll("button"),
+    ).find((button) => button.textContent?.includes("启用 Team"));
+
+    expect(enableTeamButton).toBeTruthy();
+
+    act(() => {
+      enableTeamButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onSubagentEnabledChange).toHaveBeenCalledWith(true);
+  });
+
+  it("继续单代理后应隐藏当前输入对应的 Team 建议", () => {
+    const container = renderPanel({
+      isGeneralTheme: true,
+      input:
+        "请把任务拆成多个子任务分别分析、实现、验证，并在最后统一汇总输出。",
+      onSubagentEnabledChange: vi.fn(),
+    });
+
+    const continueButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("继续单代理"),
+    );
+
+    expect(continueButton).toBeTruthy();
+
+    act(() => {
+      continueButton?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    expect(container.textContent).not.toContain("当前任务更适合 Team 协作");
+  });
+
+  it("开启 Team mode 后应显示 TeamSelector", () => {
+    const container = renderPanel({
+      isGeneralTheme: true,
+      subagentEnabled: true,
+    });
+
+    expect(
+      container.querySelector('[data-testid="empty-state-team-selector"]'),
+    ).toBeTruthy();
   });
 });

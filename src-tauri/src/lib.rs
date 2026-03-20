@@ -39,6 +39,7 @@ pub use lime_mcp as mcp;
 
 // 核心模块（Tauri 相关业务逻辑）
 pub mod agent;
+pub mod agent_tools;
 pub mod app;
 pub mod plugin;
 pub mod screenshot;

@@ -10,6 +10,7 @@
 #![allow(clippy::derivable_impls)]
 #![allow(clippy::borrowed_box)]
 
+pub mod agent_tools;
 pub mod ask_bridge;
 pub mod aster_runtime_support;
 pub mod aster_state;
@@ -25,11 +26,11 @@ pub mod queued_turn;
 pub mod request_tool_policy;
 pub mod runtime_queue;
 mod session_store;
-pub mod shell_security;
 pub mod skill_execution;
+pub mod subagent_control;
+pub mod subagent_profiles;
 pub mod subagent_scheduler;
 pub mod tool_io_offload;
-pub mod tool_permissions;
 pub mod tools;
 mod write_artifact_events;
 
@@ -52,6 +53,7 @@ pub use event_converter::{
     convert_agent_event, convert_item_runtime, convert_to_tauri_message, convert_turn_runtime,
     TauriAgentEvent, TauriArtifactSnapshot, TauriRuntimeStatus,
 };
+pub use lime_mcp as mcp;
 pub use lsp_bridge::create_lsp_callback;
 pub use prompt::SystemPromptBuilder;
 pub use queued_turn::QueuedTurnSnapshot;
@@ -63,25 +65,40 @@ pub use request_tool_policy::{
     WebSearchExecutionTracker, REQUEST_TOOL_POLICY_MARKER,
 };
 pub use runtime_queue::{
-    clear_runtime_queue, list_runtime_queue_snapshots, remove_runtime_queued_turn,
-    resume_persisted_runtime_queues_on_startup, resume_runtime_queue_if_needed,
-    submit_runtime_turn, RuntimeQueueEventEmitter, RuntimeQueueExecutor,
+    clear_runtime_queue, list_runtime_queue_snapshots, promote_runtime_queued_turn,
+    remove_runtime_queued_turn, resume_persisted_runtime_queues_on_startup,
+    resume_runtime_queue_if_needed, submit_runtime_turn, RuntimeQueueEventEmitter,
+    RuntimeQueueExecutor,
 };
 pub use session_store::{
     create_session_sync, delete_session, get_persisted_session_metadata_sync,
     get_runtime_session_detail, get_session_sync, list_sessions_sync,
     list_title_preview_messages_sync, rename_session_sync, update_session_execution_strategy_sync,
-    update_session_working_dir_sync, PersistedSessionMetadata, SessionDetail, SessionInfo,
-    SessionTitlePreviewMessage, SessionTodoItem,
+    update_session_working_dir_sync, ChildSubagentRuntimeStatus, ChildSubagentSession,
+    PersistedSessionMetadata, SessionDetail, SessionInfo, SessionTitlePreviewMessage,
+    SessionTodoItem, SubagentParentContext,
 };
-pub use shell_security::ShellSecurityChecker;
 pub use skill_execution::{
     execute_skill_prompt, execute_skill_workflow, SkillEventEmitter, SkillExecutionError,
     SkillExecutionResult, SkillWorkflowExecution, StepResult,
 };
+pub use subagent_control::{
+    collect_subagent_cascade_session_ids, derive_subagent_runtime_status_kind,
+    list_subagent_cascade_session_ids, load_subagent_runtime_status, read_subagent_control_state,
+    write_subagent_control_state, SubagentControlState, SubagentRuntimeStatus,
+    SubagentRuntimeStatusInput, SubagentRuntimeStatusKind,
+};
+pub use subagent_profiles::{
+    build_subagent_customization_prompt, builtin_profile_descriptor_by_id,
+    builtin_profile_name_by_id, builtin_skill_descriptor_by_id,
+    builtin_team_preset_descriptor_by_id, builtin_team_preset_label_by_id,
+    summarize_builtin_profile, summarize_builtin_skill, summarize_builtin_team_preset,
+    BuiltinProfileDescriptor, BuiltinSkillDescriptor, BuiltinTeamPresetDescriptor,
+    SubagentCustomizationState, SubagentProfileSummary, SubagentSkillPromptBlock,
+    SubagentSkillSummary, TeamPresetSummary,
+};
 pub use subagent_scheduler::{
     LimeScheduler, LimeSubAgentExecutor, SchedulerEventEmitter, SubAgentProgressEvent, SubAgentRole,
 };
-pub use tool_permissions::{DynamicPermissionCheck, PermissionBehavior};
 pub use tools::{BrowserAction, BrowserTool, BrowserToolError, BrowserToolResult};
 pub use write_artifact_events::WriteArtifactEventEmitter;

@@ -150,7 +150,7 @@ pub(crate) async fn prepare_aster_runtime_queue_resumption() -> Result<Vec<Strin
     list_aster_runtime_queued_turn_session_ids().await
 }
 
-async fn enqueue_aster_runtime_turn(
+pub(crate) async fn enqueue_aster_runtime_turn(
     queued_turn: QueuedTurnRuntime,
 ) -> Result<QueuedTurnRuntime, String> {
     let store = require_aster_runtime_store()?;

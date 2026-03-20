@@ -594,11 +594,21 @@ function AppContent() {
             initialUserPrompt={
               (pageParams as AgentPageParams).initialUserPrompt
             }
+            initialUserImages={
+              (pageParams as AgentPageParams).initialUserImages
+            }
+            initialCreationMode={
+              (pageParams as AgentPageParams).initialCreationMode
+            }
             initialSessionName={
               (pageParams as AgentPageParams).initialSessionName
             }
             entryBannerMessage={
               (pageParams as AgentPageParams).entryBannerMessage
+            }
+            immersiveHome={(pageParams as AgentPageParams).immersiveHome}
+            openBrowserAssistOnMount={
+              (pageParams as AgentPageParams).openBrowserAssistOnMount
             }
             theme={(pageParams as AgentPageParams).theme}
             lockTheme={(pageParams as AgentPageParams).lockTheme}

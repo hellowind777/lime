@@ -4,15 +4,15 @@
  * 在输入框中检测 @ 符号，显示角色和技能列表供选择
  */
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { User, Zap } from "lucide-react";
-import {
-  Command,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
+import React, {
+  Suspense,
+  lazy,
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+} from "react";
 import {
   Popover,
   PopoverContent,
@@ -21,6 +21,14 @@ import {
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
 import { toast } from "sonner";
+import { scheduleIdleModulePreload } from "./scheduleIdleModulePreload";
+
+const preloadCharacterMentionPanel = () => import("./CharacterMentionPanel");
+
+const CharacterMentionPanel = lazy(async () => {
+  const module = await preloadCharacterMentionPanel();
+  return { default: module.CharacterMentionPanel };
+});
 
 interface CharacterMentionProps {
   /** 角色列表 */
@@ -56,6 +64,12 @@ export function CharacterMention({
   const [cursorPosition, setCursorPosition] = useState({ top: 0, left: 0 });
   const popoverRef = useRef<HTMLDivElement>(null);
   const commandRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return scheduleIdleModulePreload(() => {
+      void preloadCharacterMentionPanel();
+    });
+  }, []);
 
   // 过滤角色列表
   const filteredCharacters = useMemo(() => {
@@ -264,11 +278,6 @@ export function CharacterMention({
 
   if (!showMentions) return null;
 
-  const hasFilteredResults =
-    filteredCharacters.length > 0 ||
-    installedSkills.length > 0 ||
-    availableSkills.length > 0;
-
   return (
     <Popover open={showMentions} onOpenChange={setShowMentions}>
       <PopoverTrigger asChild>
@@ -291,96 +300,35 @@ export function CharacterMention({
         sideOffset={8}
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        <Command ref={commandRef} className="bg-background">
-          <CommandInput
-            placeholder="搜索角色或技能..."
-            value={mentionQuery}
-            onValueChange={setMentionQuery}
-          />
-          <CommandList>
-            {!hasFilteredResults && (
+        {showMentions ? (
+          <Suspense
+            fallback={
               <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                <div>暂无可用角色或技能</div>
-                {onNavigateToSettings && (
-                  <button
-                    type="button"
-                    className="mt-2 text-primary hover:underline"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
+                加载中...
+              </div>
+            }
+          >
+            <CharacterMentionPanel
+              mentionQuery={mentionQuery}
+              filteredCharacters={filteredCharacters}
+              installedSkills={installedSkills}
+              availableSkills={availableSkills}
+              commandRef={commandRef}
+              onQueryChange={setMentionQuery}
+              onSelectCharacter={handleSelectCharacter}
+              onSelectInstalledSkill={handleSelectInstalledSkill}
+              onSelectAvailableSkill={handleSelectAvailableSkill}
+              onNavigateToSettings={
+                onNavigateToSettings
+                  ? () => {
                       setShowMentions(false);
                       onNavigateToSettings();
-                    }}
-                  >
-                    去技能设置
-                  </button>
-                )}
-              </div>
-            )}
-            {filteredCharacters.length > 0 && (
-              <CommandGroup heading="角色">
-                {filteredCharacters.map((character) => (
-                  <CommandItem
-                    key={character.id}
-                    onSelect={() => handleSelectCharacter(character)}
-                    className="cursor-pointer"
-                  >
-                    <User className="mr-2 h-4 w-4" />
-                    <div className="flex-1">
-                      <div className="font-medium">{character.name}</div>
-                      {character.description && (
-                        <div className="text-xs text-muted-foreground line-clamp-1">
-                          {character.description}
-                        </div>
-                      )}
-                    </div>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            )}
-            {installedSkills.length > 0 && (
-              <CommandGroup heading="已安装技能">
-                {installedSkills.map((skill) => (
-                  <CommandItem
-                    key={skill.directory}
-                    onSelect={() => handleSelectInstalledSkill(skill)}
-                    className="cursor-pointer"
-                  >
-                    <Zap className="mr-2 h-4 w-4 text-primary" />
-                    <div className="flex-1">
-                      <div className="font-medium">{skill.name}</div>
-                      {skill.description && (
-                        <div className="text-xs text-muted-foreground line-clamp-1">
-                          {skill.description}
-                        </div>
-                      )}
-                    </div>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            )}
-            {availableSkills.length > 0 && (
-              <CommandGroup heading="未安装技能">
-                {availableSkills.map((skill) => (
-                  <CommandItem
-                    key={skill.directory}
-                    onSelect={() => handleSelectAvailableSkill(skill)}
-                    className="cursor-pointer opacity-60"
-                  >
-                    <Zap className="mr-2 h-4 w-4" />
-                    <div className="flex-1">
-                      <div className="font-medium">{skill.name}</div>
-                      {skill.description && (
-                        <div className="text-xs text-muted-foreground line-clamp-1">
-                          {skill.description}
-                        </div>
-                      )}
-                    </div>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            )}
-          </CommandList>
-        </Command>
+                    }
+                  : undefined
+              }
+            />
+          </Suspense>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

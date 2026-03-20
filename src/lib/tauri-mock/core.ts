@@ -83,8 +83,7 @@ const mockBrowserProfiles: MockBrowserProfileRecord[] = [
     launch_url: "https://www.google.com/",
     transport_kind: "managed_cdp",
     profile_dir: "/tmp/lime/chrome_profiles/general_browser_assist",
-    managed_profile_dir:
-      "/tmp/lime/chrome_profiles/general_browser_assist",
+    managed_profile_dir: "/tmp/lime/chrome_profiles/general_browser_assist",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     last_used_at: null,
@@ -626,7 +625,7 @@ const defaultMocks: Record<string, any> = {
     },
     content_creator: {
       schema_version: 1,
-      enabled_themes: ["social-media", "poster"],
+      enabled_themes: ["social-media"],
       media_defaults: {},
     },
     navigation: {
@@ -1528,8 +1527,6 @@ const defaultMocks: Record<string, any> = {
   agent_get_process_status: () => ({ running: false }),
   agent_start_process: () => ({ success: true }),
   agent_stop_process: () => ({ success: true }),
-  agent_terminal_command_response: () => ({}),
-  agent_term_scrollback_response: () => ({}),
 
   // Aster Agent
   aster_agent_init: () => ({ initialized: true, provider_configured: false }),
@@ -1550,6 +1547,60 @@ const defaultMocks: Record<string, any> = {
   agent_runtime_create_session: () => "mock-aster-session",
   agent_runtime_list_sessions: () => [],
   agent_runtime_get_session: () => ({ id: "mock", messages: [] }),
+  agent_runtime_get_tool_inventory: () => ({
+    request: {
+      caller: "assistant",
+      surface: { creator: false, browser_assist: false },
+    },
+    agent_initialized: false,
+    warnings: [],
+    mcp_servers: [],
+    default_allowed_tools: ["tool_search"],
+    counts: {
+      catalog_total: 0,
+      catalog_current_total: 0,
+      catalog_compat_total: 0,
+      catalog_deprecated_total: 0,
+      default_allowed_total: 1,
+      registry_total: 0,
+      registry_visible_total: 0,
+      registry_catalog_unmapped_total: 0,
+      extension_surface_total: 0,
+      extension_mcp_bridge_total: 0,
+      extension_runtime_total: 0,
+      extension_tool_total: 0,
+      extension_tool_visible_total: 0,
+      mcp_server_total: 0,
+      mcp_tool_total: 0,
+      mcp_tool_visible_total: 0,
+    },
+    catalog_tools: [],
+    registry_tools: [],
+    extension_surfaces: [],
+    extension_tools: [],
+    mcp_tools: [],
+  }),
+  agent_runtime_spawn_subagent: () => ({
+    agent_id: "mock-subagent-session",
+    nickname: "Mock Subagent",
+  }),
+  agent_runtime_send_subagent_input: () => ({
+    submission_id: "mock-subagent-submit",
+  }),
+  agent_runtime_wait_subagents: () => ({
+    status: {},
+    timed_out: true,
+  }),
+  agent_runtime_resume_subagent: () => ({
+    status: { session_id: "mock-subagent-session", kind: "idle" },
+    cascade_session_ids: ["mock-subagent-session"],
+    changed_session_ids: ["mock-subagent-session"],
+  }),
+  agent_runtime_close_subagent: () => ({
+    previous_status: { session_id: "mock-subagent-session", kind: "idle" },
+    cascade_session_ids: ["mock-subagent-session"],
+    changed_session_ids: ["mock-subagent-session"],
+  }),
   agent_runtime_update_session: () => ({}),
   agent_runtime_delete_session: () => ({}),
   agent_runtime_respond_action: () => ({}),

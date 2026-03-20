@@ -4,6 +4,7 @@ import type {
   ExecLogEntry,
   ExecLogEntryDetail,
 } from "./ThemeWorkbenchExecLog";
+import { resolveToolDisplayLabel } from "../utils/toolDisplayInfo";
 import type {
   ThemeWorkbenchActivityLogGroup,
   ThemeWorkbenchCreationTaskGroup,
@@ -14,31 +15,6 @@ interface BuildThemeWorkbenchExecLogEntriesParams {
   groupedActivityLogs: ThemeWorkbenchActivityLogGroup[];
   groupedCreationTaskEvents: ThemeWorkbenchCreationTaskGroup[];
   skillDetailMap: Record<string, SkillDetailInfo | null>;
-}
-
-function resolveToolLabel(toolName: string): string {
-  const normalized = toolName.trim().toLowerCase();
-  if (normalized === "list_skills") return "获取技能列表";
-  if (normalized === "load_skill") return "加载技能";
-  if (normalized.includes("write_file") || normalized.includes("create_file")) {
-    return "创建文件";
-  }
-  if (normalized.includes("read_file")) return "读取文件";
-  if (normalized.includes("websearch")) return "网络检索";
-  if (normalized.includes("webfetch")) return "网页抓取";
-  if (
-    normalized.includes("social_generate_cover") ||
-    normalized.includes("generate_image")
-  ) {
-    return "生成封面图";
-  }
-  if (normalized.includes("execute") || normalized.includes("bash")) {
-    return "执行命令";
-  }
-  if (normalized.includes("context") || normalized.includes("retrieve")) {
-    return "检索上下文";
-  }
-  return toolName;
 }
 
 function truncate(text: string, max = 300): string {
@@ -141,7 +117,7 @@ function buildToolCallEntry(
   return {
     id: `${messageId}-tc-${toolCall.id}-${index}`,
     type: "tool",
-    typeLabel: resolveToolLabel(toolCall.name),
+    typeLabel: resolveToolDisplayLabel(toolCall.name),
     content: argsPreview || toolCall.name,
     meta: resultMeta,
     timestamp: toolCall.startTime || fallbackTimestamp,
@@ -166,7 +142,7 @@ function buildRunEntry(
     .map((step) => step.name?.trim() || step.id?.trim() || "")
     .filter((step): step is string => Boolean(step));
   const allowedTools = (skillDetail?.allowed_tools || [])
-    .map((toolName) => resolveToolLabel(toolName))
+    .map((toolName) => resolveToolDisplayLabel(toolName))
     .filter((toolName): toolName is string => Boolean(toolName));
 
   const detail: ExecLogEntryDetail | undefined =

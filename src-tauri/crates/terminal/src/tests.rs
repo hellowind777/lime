@@ -8,7 +8,7 @@
 //! - 事件结构序列化
 
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use super::super::error::TerminalError;
     use super::super::events::{SessionStatus, TerminalOutputEvent, TerminalStatusEvent};
 

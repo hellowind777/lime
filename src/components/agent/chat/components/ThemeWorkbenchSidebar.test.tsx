@@ -29,6 +29,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: mockOpenDialog,
 }));
 
+vi.mock("@tauri-apps/plugin-shell", () => ({
+  open: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: mockToastError,
@@ -372,8 +376,8 @@ describe("ThemeWorkbenchSidebar", () => {
     expect(container.textContent).toContain("1. 提炼内容主线");
     expect(container.textContent).toContain("2. 生成封面提示词");
     expect(container.textContent).toContain("允许工具");
-    expect(container.textContent).toContain("读取文件");
-    expect(container.textContent).toContain("生成封面图");
+    expect(container.textContent).toContain("文件读取");
+    expect(container.textContent).toContain("图片生成");
     expect(container.textContent).toContain("适用场景");
     expect(container.textContent).toContain("适合需要主稿与封面同时产出的社媒场景。");
   });
@@ -504,9 +508,71 @@ describe("ThemeWorkbenchSidebar", () => {
       });
     }
 
-    expect(container.textContent).toContain("读取文件");
+    expect(container.textContent).toContain("文件读取");
     expect(container.textContent).toContain("文件不存在");
     expect(container.textContent).not.toContain("执行技能 社媒主稿与封面");
+  });
+
+  it("执行日志应复用工具展示语义而不是使用旧标签映射", () => {
+    const { container } = renderSidebar({
+      activityLogs: [],
+      skillDetailMap: {},
+      messages: [
+        {
+          id: "assistant-tool-labels",
+          role: "assistant",
+          content: "",
+          timestamp: new Date("2026-03-12T10:40:00.000Z"),
+          toolCalls: [
+            {
+              id: "tool-browser-1",
+              name: "mcp__lime-browser__browser_navigate",
+              arguments: JSON.stringify({ url: "https://example.com/docs" }),
+              status: "completed",
+              result: {
+                success: true,
+                output: "ok",
+              },
+              startTime: new Date("2026-03-12T10:40:00.000Z"),
+            },
+            {
+              id: "tool-task-output-1",
+              name: "TaskOutput",
+              arguments: JSON.stringify({ task_id: "video-task-1" }),
+              status: "completed",
+              result: {
+                success: true,
+                output: "done",
+              },
+              startTime: new Date("2026-03-12T10:40:01.000Z"),
+            },
+            {
+              id: "tool-input-1",
+              name: "request_user_input",
+              arguments: JSON.stringify({ question: "需要继续吗？" }),
+              status: "running",
+              startTime: new Date("2026-03-12T10:40:02.000Z"),
+            },
+          ],
+        },
+      ],
+    });
+
+    const logTabButton = container.querySelector(
+      'button[aria-label="打开执行日志"]',
+    ) as HTMLButtonElement | null;
+    expect(logTabButton).toBeTruthy();
+    if (logTabButton) {
+      act(() => {
+        logTabButton.click();
+      });
+    }
+
+    expect(container.textContent).toContain("页面打开");
+    expect(container.textContent).toContain("任务输出");
+    expect(container.textContent).toContain("用户确认");
+    expect(container.textContent).not.toContain("网络检索");
+    expect(container.textContent).not.toContain("执行命令");
   });
 
   it("应支持触发上下文搜索与切换来源", () => {

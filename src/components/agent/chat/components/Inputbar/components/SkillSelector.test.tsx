@@ -6,6 +6,10 @@ import { SkillSelector } from "./SkillSelector";
 import type { Skill } from "@/lib/api/skills";
 
 const mockToastInfo = vi.fn();
+const mockPopoverState = vi.hoisted(() => ({
+  open: false,
+  setOpen: (_next: boolean) => {},
+}));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -14,15 +18,35 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/components/ui/popover", () => ({
-  Popover: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
-  ),
-  PopoverTrigger: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
-  PopoverContent: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="skill-selector-popover">{children}</div>
-  ),
+  Popover: ({
+    children,
+    open,
+    onOpenChange,
+  }: {
+    children: React.ReactNode;
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
+  }) => {
+    mockPopoverState.open = Boolean(open);
+    mockPopoverState.setOpen = onOpenChange ?? (() => {});
+    return <div>{children}</div>;
+  },
+  PopoverTrigger: ({ children }: { children: React.ReactNode }) => {
+    const child = React.Children.only(children) as React.ReactElement<{
+      onClick?: React.MouseEventHandler<HTMLElement>;
+    }>;
+
+    return React.cloneElement(child, {
+      onClick: (event: React.MouseEvent<HTMLElement>) => {
+        child.props.onClick?.(event);
+        mockPopoverState.setOpen(!mockPopoverState.open);
+      },
+    });
+  },
+  PopoverContent: ({ children }: { children: React.ReactNode }) =>
+    mockPopoverState.open ? (
+      <div data-testid="skill-selector-popover">{children}</div>
+    ) : null,
 }));
 
 vi.mock("@/components/ui/command", () => {
@@ -108,6 +132,8 @@ afterEach(() => {
     });
     mounted.container.remove();
   }
+  mockPopoverState.open = false;
+  mockPopoverState.setOpen = () => {};
   vi.clearAllMocks();
 });
 
@@ -135,8 +161,6 @@ function renderSkillSelector(
     isLoading: false,
     onSelectSkill: vi.fn(),
     onClearSkill: vi.fn(),
-    onImportSkill: vi.fn(),
-    onRefreshSkills: vi.fn(),
   };
 
   act(() => {
@@ -147,14 +171,36 @@ function renderSkillSelector(
   return container;
 }
 
+async function preloadSkillSelectorPanel() {
+  await act(async () => {
+    await import("./SkillSelectorPanel");
+  });
+}
+
+async function openSkillSelector(container: HTMLElement) {
+  await preloadSkillSelectorPanel();
+
+  const triggerButton = container.querySelector(
+    '[data-testid="skill-selector-trigger"]',
+  ) as HTMLButtonElement | null;
+
+  expect(triggerButton).toBeTruthy();
+
+  await act(async () => {
+    triggerButton?.click();
+  });
+}
+
 describe("SkillSelector", () => {
-  it("选择已安装技能时应回调 onSelectSkill", () => {
+  it("选择已安装技能时应回调 onSelectSkill", async () => {
     const onSelectSkill = vi.fn<(skill: Skill) => void>();
     const installedSkill = createSkill("写作助手", "writer", true);
     const container = renderSkillSelector({
       skills: [installedSkill],
       onSelectSkill,
     });
+
+    await openSkillSelector(container);
 
     const skillButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("写作助手"),
@@ -168,7 +214,7 @@ describe("SkillSelector", () => {
     expect(onSelectSkill).toHaveBeenCalledWith(installedSkill);
   });
 
-  it("存在已选技能时应支持清空", () => {
+  it("存在已选技能时应支持清空", async () => {
     const onClearSkill = vi.fn<() => void>();
     const activeSkill = createSkill("研究助手", "research", true);
     const container = renderSkillSelector({
@@ -176,6 +222,8 @@ describe("SkillSelector", () => {
       activeSkill,
       onClearSkill,
     });
+
+    await openSkillSelector(container);
 
     expect(container.textContent).toContain("不使用技能");
 
@@ -191,12 +239,14 @@ describe("SkillSelector", () => {
     expect(onClearSkill).toHaveBeenCalledTimes(1);
   });
 
-  it("点击未安装技能时应给出安装提示", () => {
+  it("点击未安装技能时应给出安装提示", async () => {
     const onNavigateToSettings = vi.fn<() => void>();
     const container = renderSkillSelector({
       skills: [createSkill("表格导入", "xlsx", false)],
       onNavigateToSettings,
     });
+
+    await openSkillSelector(container);
 
     const unavailableSkillButton = Array.from(
       container.querySelectorAll("button"),
@@ -223,6 +273,8 @@ describe("SkillSelector", () => {
       onImportSkill,
     });
 
+    await openSkillSelector(container);
+
     const importButton = container.querySelector(
       '[data-testid="skill-selector-import"]',
     ) as HTMLButtonElement | null;
@@ -238,9 +290,13 @@ describe("SkillSelector", () => {
 
   it("点击底部刷新技能入口时应回调 onRefreshSkills", async () => {
     const onRefreshSkills = vi.fn<() => void>();
+    const installedSkill = createSkill("写作助手", "writer", true);
     const container = renderSkillSelector({
+      skills: [installedSkill],
       onRefreshSkills,
     });
+
+    await openSkillSelector(container);
 
     const refreshButton = container.querySelector(
       '[data-testid="skill-selector-refresh"]',
@@ -255,11 +311,14 @@ describe("SkillSelector", () => {
     expect(onRefreshSkills).toHaveBeenCalledTimes(1);
   });
 
-  it("加载中且无技能时应显示加载状态", () => {
+  it("加载中且无技能时应显示加载状态", async () => {
     const container = renderSkillSelector({
       isLoading: true,
       skills: [],
+      onRefreshSkills: vi.fn(),
     });
+
+    await openSkillSelector(container);
 
     expect(container.textContent).toContain("技能加载中");
   });

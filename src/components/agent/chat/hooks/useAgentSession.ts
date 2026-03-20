@@ -9,6 +9,8 @@ import {
 import { toast } from "sonner";
 import type {
   AsterExecutionStrategy,
+  AsterSubagentParentContext,
+  AsterSubagentSessionInfo,
   AsterTodoItem,
   QueuedTurnSnapshot,
 } from "@/lib/api/agentRuntime";
@@ -148,12 +150,18 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   );
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurnSnapshot[]>([]);
   const [todoItems, setTodoItems] = useState<AsterTodoItem[]>([]);
+  const [childSubagentSessions, setChildSubagentSessions] = useState<
+    AsterSubagentSessionInfo[]
+  >([]);
+  const [subagentParentContext, setSubagentParentContext] =
+    useState<AsterSubagentParentContext | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [topicsReady, setTopicsReady] = useState(false);
 
   const restoredWorkspaceRef = useRef<string | null>(null);
   const hydratedSessionRef = useRef<string | null>(null);
   const skipAutoRestoreRef = useRef(false);
+  const missingSessionVerificationRef = useRef<string | null>(null);
   const messagesRef = useRef<Message[]>(messages);
   const threadTurnsRef = useRef<AgentThreadTurn[]>(threadTurns);
   const threadItemsRef = useRef<AgentThreadItem[]>(threadItems);
@@ -253,6 +261,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setCurrentTurnId(null);
       setQueuedTurns([]);
       setTodoItems([]);
+      setChildSubagentSessions([]);
+      setSubagentParentContext(null);
       resetPendingActions();
       resetStreamingRefs();
       restoredWorkspaceRef.current = null;
@@ -286,6 +296,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     setCurrentTurnId(scopedCurrentTurnId);
     setQueuedTurns([]);
     setTodoItems([]);
+    setChildSubagentSessions([]);
+    setSubagentParentContext(null);
     resetPendingActions();
     resetStreamingRefs();
     restoredWorkspaceRef.current = null;
@@ -423,6 +435,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setCurrentTurnId(null);
         setQueuedTurns([]);
         setTodoItems([]);
+        setChildSubagentSessions([]);
+        setSubagentParentContext(null);
         setTopics((prev) => [
           {
             id: newSessionId,
@@ -514,6 +528,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setCurrentTurnId(null);
       setQueuedTurns([]);
       setTodoItems([]);
+      setChildSubagentSessions([]);
+      setSubagentParentContext(null);
       setSessionId(null);
       resetPendingActions();
       restoredWorkspaceRef.current = null;
@@ -575,6 +591,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setThreadItems(nextItems);
       setQueuedTurns(normalizeQueuedTurnSnapshots(detail.queued_turns));
       setTodoItems(detail.todo_items ?? []);
+      setChildSubagentSessions(detail.child_subagent_sessions ?? []);
+      setSubagentParentContext(detail.subagent_parent_context ?? null);
       setCurrentTurnId(
         nextTurns.length > 0
           ? nextTurns[nextTurns.length - 1]?.id || null
@@ -654,6 +672,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           setCurrentTurnId(null);
           setQueuedTurns([]);
           setTodoItems([]);
+          setChildSubagentSessions([]);
+          setSubagentParentContext(null);
           setSessionId(null);
           saveTransient(scopedKeys.currentSessionKey, null);
           savePersisted(scopedKeys.persistedSessionKey, null);
@@ -666,6 +686,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setCurrentTurnId(null);
         setQueuedTurns([]);
         setTodoItems([]);
+        setChildSubagentSessions([]);
+        setSubagentParentContext(null);
         setSessionId(null);
         saveTransient(scopedKeys.currentSessionKey, null);
         savePersisted(scopedKeys.persistedSessionKey, null);
@@ -791,6 +813,34 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     if (!topicsReady) return;
 
     if (topics.length > 0 && !topics.some((topic) => topic.id === sessionId)) {
+      const shouldVerifyMissingSession =
+        currentTurnId !== null ||
+        threadTurns.length > 0 ||
+        threadItems.length > 0 ||
+        queuedTurns.length > 0;
+
+      if (!shouldVerifyMissingSession) {
+        setSessionId(null);
+        setMessages([]);
+        setThreadTurns([]);
+        setThreadItems([]);
+        setCurrentTurnId(null);
+        setQueuedTurns([]);
+        setTodoItems([]);
+        setChildSubagentSessions([]);
+        setSubagentParentContext(null);
+        saveTransient(scopedKeys.currentSessionKey, null);
+        savePersisted(scopedKeys.persistedSessionKey, null);
+        hydratedSessionRef.current = null;
+        missingSessionVerificationRef.current = null;
+        return;
+      }
+
+      if (missingSessionVerificationRef.current === sessionId) {
+        return;
+      }
+
+      missingSessionVerificationRef.current = sessionId;
       logAgentDebug(
         "useAgentSession",
         "hydrateSession.sessionMissingFromTopics",
@@ -801,18 +851,67 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         },
         { level: "warn" },
       );
-      setSessionId(null);
-      setMessages([]);
-      setThreadTurns([]);
-      setThreadItems([]);
-      setCurrentTurnId(null);
-      setQueuedTurns([]);
-      setTodoItems([]);
-      saveTransient(scopedKeys.currentSessionKey, null);
-      savePersisted(scopedKeys.persistedSessionKey, null);
-      hydratedSessionRef.current = null;
+
+      runtime
+        .getSession(sessionId)
+        .then((detail) => {
+          if (sessionIdRef.current !== sessionId) {
+            return;
+          }
+
+          setTopics((prev) => {
+            if (prev.some((topic) => topic.id === sessionId)) {
+              return prev;
+            }
+
+            return [
+              mapSessionToTopic({
+                id: detail.id,
+                name: detail.name,
+                created_at: detail.created_at,
+                updated_at: detail.updated_at,
+                model: detail.model,
+                messages_count: detail.messages.length,
+                execution_strategy: detail.execution_strategy,
+                workspace_id: detail.workspace_id,
+                working_dir: detail.working_dir,
+              }),
+              ...prev,
+            ];
+          });
+        })
+        .catch((error) => {
+          if (!isAsterSessionNotFoundError(error)) {
+            console.warn("[AsterChat] 校验当前会话存在性失败:", error);
+            return;
+          }
+
+          if (sessionIdRef.current !== sessionId) {
+            return;
+          }
+
+          setSessionId(null);
+          setMessages([]);
+          setThreadTurns([]);
+          setThreadItems([]);
+          setCurrentTurnId(null);
+          setQueuedTurns([]);
+          setTodoItems([]);
+          setChildSubagentSessions([]);
+          setSubagentParentContext(null);
+          saveTransient(scopedKeys.currentSessionKey, null);
+          savePersisted(scopedKeys.persistedSessionKey, null);
+          hydratedSessionRef.current = null;
+        })
+        .finally(() => {
+          if (missingSessionVerificationRef.current === sessionId) {
+            missingSessionVerificationRef.current = null;
+          }
+        });
       return;
     }
+
+    missingSessionVerificationRef.current = null;
 
     if (
       messages.length > 0 &&
@@ -856,9 +955,13 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     });
   }, [
     messages.length,
+    currentTurnId,
     preserveRestoredMessages,
+    queuedTurns.length,
+    runtime,
     scopedKeys,
     sessionId,
+    sessionIdRef,
     switchTopic,
     threadItems.length,
     threadTurns.length,
@@ -923,6 +1026,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           setCurrentTurnId(null);
           setQueuedTurns([]);
           setTodoItems([]);
+          setChildSubagentSessions([]);
+          setSubagentParentContext(null);
           resetPendingActions();
           resetStreamingRefs();
           hydratedSessionRef.current = null;
@@ -1048,6 +1153,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     currentTurnId,
     setCurrentTurnId,
     todoItems,
+    childSubagentSessions,
+    subagentParentContext,
     queuedTurns,
     setQueuedTurns,
     topics,

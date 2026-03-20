@@ -230,6 +230,24 @@ impl Default for ToolPermissionChecker {
 mod tests {
     use super::*;
 
+    struct TestDynamicChecker;
+
+    impl DynamicPermissionCheck for TestDynamicChecker {
+        fn check_permissions(
+            &self,
+            tool_name: &str,
+            _input: &serde_json::Value,
+        ) -> PermissionBehavior {
+            if tool_name == "bash" {
+                PermissionBehavior::Deny {
+                    reason: "dynamic deny".to_string(),
+                }
+            } else {
+                PermissionBehavior::Allow
+            }
+        }
+    }
+
     #[test]
     fn test_default_permissions_loaded() {
         let checker = ToolPermissionChecker::new();
@@ -382,6 +400,20 @@ mod tests {
         assert_eq!(
             checker.check_permission("bash", None),
             PermissionBehavior::Allow
+        );
+    }
+
+    #[test]
+    fn test_set_dynamic_checker_overrides_static_decision() {
+        let mut checker = ToolPermissionChecker::new();
+        checker.set_dynamic_checker(Box::new(TestDynamicChecker));
+
+        let result = checker.check_permission("bash", Some(&serde_json::json!({})));
+        assert_eq!(
+            result,
+            PermissionBehavior::Deny {
+                reason: "dynamic deny".to_string(),
+            }
         );
     }
 }

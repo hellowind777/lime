@@ -10,13 +10,16 @@ interface TaskFilesPanelProps {
   onFileClick?: (file: TaskFile) => void;
 }
 
-const Area = styled.div`
+const Area = styled.div.attrs({
+  "data-testid": "task-files-panel-area",
+})`
+  position: relative;
   display: flex;
   justify-content: flex-end;
-  padding: 0 8px 8px 8px;
-  width: 100%;
-  max-width: none;
+  width: auto;
+  max-width: 100%;
   margin: 0;
+  padding: 0;
 `;
 
 const Wrapper = styled.div`

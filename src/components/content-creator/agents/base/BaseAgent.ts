@@ -4,7 +4,6 @@
  * @module components/content-creator/agents/base/BaseAgent
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import type { AgentConfig, AgentInput, AgentOutput } from "./types";
 import { activityLogger } from "../../utils/activityLogger";
 
@@ -76,25 +75,9 @@ export abstract class BaseAgent {
     const startTime = Date.now();
 
     try {
-      // 调用后端 LLM 服务
-      const response = await invoke<string>("agent_chat", {
-        agentId: this.config.id,
-        message: prompt,
-        model: this.config.model,
-        temperature: this.config.temperature,
-      });
-
-      const duration = Date.now() - startTime;
-
-      // 记录Agent调用成功
-      activityLogger.updateLog(logId, {
-        status: 'success',
-        duration,
-        description: `响应长度: ${response.length} 字符，耗时: ${(duration / 1000).toFixed(1)}s`,
-      });
-
-      // 尝试解析 JSON 响应
-      return this.parseResponse(response);
+      throw new Error(
+        "旧 content-creator BaseAgent 的 agent_chat 命令链路已废弃，请迁移到现役 Agent Runtime 或专用服务。",
+      );
     } catch (error) {
       const duration = Date.now() - startTime;
 

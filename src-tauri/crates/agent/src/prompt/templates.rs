@@ -41,7 +41,8 @@ pub const TOOL_GUIDELINES: &str = r#"# 工具使用策略
 - **EnterPlanMode** / **ExitPlanMode**: 显式进入或结束规划阶段
 
 ### 委派工具
-- **SubAgentTask**: 将独立子问题委派给隔离上下文的子代理执行
+- **spawn_agent / send_input / wait_agent / resume_agent / close_agent**: 当前 team runtime 主路径
+- **SubAgentTask**: 兼容入口，仅用于历史 prompt/schema 仍输出旧格式时兜底
 
 ### 人在环工具
 - **ask**: 向用户请求确认或补充信息
@@ -52,7 +53,7 @@ pub const TOOL_GUIDELINES: &str = r#"# 工具使用策略
 2. **并行调用**：如果多个工具调用之间没有依赖关系，应该并行调用
 3. **先读后改**：修改文件前必须先读取文件内容
 4. **最小权限**：只执行必要的操作，避免不必要的文件修改
-5. **独立子问题再委派**：只有当任务需要隔离上下文、并行探索或分离执行时，才使用 SubAgentTask"#;
+5. **独立子问题再委派**：只有当任务需要隔离上下文、并行探索或分离执行时，才使用 team runtime 工具；优先 `spawn_agent`，不要默认走 `SubAgentTask`"#;
 
 /// 代码编写指南
 pub const CODING_GUIDELINES: &str = r#"# 代码编写指南
@@ -61,7 +62,7 @@ pub const CODING_GUIDELINES: &str = r#"# 代码编写指南
 
 1. **先理解再修改**：在修改代码之前，先阅读相关文件理解现有模式和架构
 2. **使用 TodoWrite 规划**：对于复杂任务，先用 TodoWrite 工具规划步骤
-3. **需要隔离上下文时委派**：对于可以独立完成的研究、规划或执行子问题，使用 SubAgentTask
+3. **需要隔离上下文时委派**：对于可以独立完成的研究、规划或执行子问题，使用 `spawn_agent` 创建真实子代理；对强依赖既有上下文的延续任务，优先 `send_input`
 4. **安全第一**：避免引入安全漏洞（命令注入、XSS、SQL 注入等）
 5. **避免过度工程**：只做必要的修改，保持解决方案简单
 
@@ -96,7 +97,7 @@ pub const TASK_MANAGEMENT: &str = r#"# 任务管理
 
 不要批量完成多个任务后再标记，应该完成一个标记一个。
 
-如果某个子问题可以独立分析、规划或执行，并且不需要持续共享主对话上下文，可以使用 SubAgentTask 委派出去。"#;
+如果某个子问题可以独立分析、规划或执行，并且不需要持续共享主对话上下文，可以使用 `spawn_agent` 委派出去；`SubAgentTask` 只保留给兼容旧 schema 的场景。"#;
 
 /// Git 操作指南
 pub const GIT_GUIDELINES: &str = r#"# Git 操作

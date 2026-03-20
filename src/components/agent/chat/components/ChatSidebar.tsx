@@ -1,8 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowUpLeft,
+  Bot,
   ChevronDown,
   Clock3,
+  GitBranch,
   Globe,
+  ListTodo,
   Loader2,
   MoreHorizontal,
   PencilLine,
@@ -21,6 +25,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import type {
+  AsterSubagentParentContext,
+  AsterSubagentSessionInfo,
+} from "@/lib/api/agentRuntime";
 import {
   deriveTaskLiveState,
   extractTaskPreviewFromMessages,
@@ -32,6 +40,8 @@ import type { Message } from "../types";
 
 const RECENT_TASK_WINDOW_MS = 1000 * 60 * 60 * 24 * 3;
 const OLDER_TASKS_INITIAL_COUNT = 8;
+const TEAM_SECTION_INITIAL_CHILD_COUNT = 3;
+const TEAM_SECTION_INITIAL_SIBLING_COUNT = 2;
 const PINNED_TASK_IDS_STORAGE_KEY = "lime_task_sidebar_pinned_ids";
 
 const STATUS_META: Record<
@@ -117,6 +127,10 @@ interface ChatSidebarProps {
   pendingActionCount?: number;
   queuedTurnCount?: number;
   workspaceError?: boolean;
+  childSubagentSessions?: AsterSubagentSessionInfo[];
+  subagentParentContext?: AsterSubagentParentContext | null;
+  onOpenSubagentSession?: (sessionId: string) => void | Promise<void>;
+  onReturnToParentSession?: () => void | Promise<void>;
 }
 
 function isResumableStatusReason(statusReason?: TaskStatusReason) {
@@ -344,6 +358,107 @@ function buildTaskSections(items: TaskCardViewModel[]) {
   ] satisfies TaskSection[];
 }
 
+const SUBAGENT_STATUS_META: Record<
+  NonNullable<AsterSubagentSessionInfo["runtime_status"]> | "idle",
+  {
+    label: string;
+    badgeClassName: string;
+  }
+> = {
+  idle: {
+    label: "待开始",
+    badgeClassName:
+      "border border-slate-200 bg-white text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-300",
+  },
+  queued: {
+    label: "排队中",
+    badgeClassName:
+      "border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200",
+  },
+  running: {
+    label: "运行中",
+    badgeClassName:
+      "border border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200",
+  },
+  completed: {
+    label: "已完成",
+    badgeClassName:
+      "border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200",
+  },
+  failed: {
+    label: "失败",
+    badgeClassName:
+      "border border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200",
+  },
+  aborted: {
+    label: "已中止",
+    badgeClassName:
+      "border border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200",
+  },
+  closed: {
+    label: "已关闭",
+    badgeClassName:
+      "border border-slate-200 bg-slate-100 text-slate-600 dark:border-white/10 dark:bg-white/5 dark:text-slate-300",
+  },
+};
+
+const TEAM_STATUS_SUMMARY_ORDER: Array<
+  NonNullable<AsterSubagentSessionInfo["runtime_status"]> | "idle"
+> = ["running", "queued", "completed", "failed", "aborted", "closed", "idle"];
+
+function resolveSubagentStatusMeta(
+  status?: AsterSubagentSessionInfo["runtime_status"],
+) {
+  return SUBAGENT_STATUS_META[status ?? "idle"];
+}
+
+function resolveSubagentSessionTypeLabel(value?: string) {
+  switch (value) {
+    case "sub_agent":
+      return "子代理";
+    case "fork":
+      return "分支会话";
+    case "user":
+    default:
+      return value?.trim() || "会话";
+  }
+}
+
+function resolveUnixDate(value?: number) {
+  if (!value) {
+    return null;
+  }
+
+  const timestamp = new Date(value * 1000);
+  return Number.isNaN(timestamp.getTime()) ? null : timestamp;
+}
+
+function buildCollapsedTeamSummary(
+  sessions: AsterSubagentSessionInfo[],
+  label: string,
+) {
+  const counts = new Map<
+    NonNullable<AsterSubagentSessionInfo["runtime_status"]> | "idle",
+    number
+  >();
+
+  for (const session of sessions) {
+    const key = session.runtime_status ?? "idle";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+
+  const statusSummary = TEAM_STATUS_SUMMARY_ORDER.map((status) => {
+    const count = counts.get(status) ?? 0;
+    if (count <= 0) {
+      return null;
+    }
+
+    return `${count} 个${SUBAGENT_STATUS_META[status].label}`;
+  }).filter((item): item is string => Boolean(item));
+
+  return ["已收起", label, ...statusSummary].join(" · ");
+}
+
 export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   onNewChat,
   topics,
@@ -357,6 +472,10 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   pendingActionCount = 0,
   queuedTurnCount = 0,
   workspaceError = false,
+  childSubagentSessions = [],
+  subagentParentContext = null,
+  onOpenSubagentSession,
+  onReturnToParentSession,
 }) => {
   const [editingTopicId, setEditingTopicId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
@@ -377,7 +496,13 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     recent: false,
     older: false,
   });
+  const [teamSectionCollapsedOverride, setTeamSectionCollapsedOverride] = useState<
+    boolean | null
+  >(null);
+  const [showAllChildSubagents, setShowAllChildSubagents] = useState(false);
+  const [showAllSiblingSubagents, setShowAllSiblingSubagents] = useState(false);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const taskSectionAnchorRef = useRef<HTMLDivElement>(null);
 
   const currentTaskPreview = useMemo(
     () => resolveCurrentTaskPreview(currentMessages),
@@ -438,6 +563,78 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     topics,
     workspaceError,
   ]);
+  const currentTaskItem = useMemo(
+    () => taskItems.find((item) => item.id === currentTopicId) ?? null,
+    [currentTopicId, taskItems],
+  );
+  const sortedChildSubagentSessions = useMemo(
+    () =>
+      [...childSubagentSessions].sort(
+        (left, right) => right.updated_at - left.updated_at,
+      ),
+    [childSubagentSessions],
+  );
+  const siblingSubagentSessions = useMemo(
+    () =>
+      [...(subagentParentContext?.sibling_subagent_sessions ?? [])].sort(
+        (left, right) => right.updated_at - left.updated_at,
+      ),
+    [subagentParentContext?.sibling_subagent_sessions],
+  );
+  const visibleChildSubagentSessions = useMemo(
+    () =>
+      showAllChildSubagents
+        ? sortedChildSubagentSessions
+        : sortedChildSubagentSessions.slice(0, TEAM_SECTION_INITIAL_CHILD_COUNT),
+    [showAllChildSubagents, sortedChildSubagentSessions],
+  );
+  const visibleSiblingSubagentSessions = useMemo(
+    () =>
+      showAllSiblingSubagents
+        ? siblingSubagentSessions
+        : siblingSubagentSessions.slice(0, TEAM_SECTION_INITIAL_SIBLING_COUNT),
+    [showAllSiblingSubagents, siblingSubagentSessions],
+  );
+  const hiddenChildSubagentCount = Math.max(
+    0,
+    sortedChildSubagentSessions.length - visibleChildSubagentSessions.length,
+  );
+  const hiddenSiblingSubagentCount = Math.max(
+    0,
+    siblingSubagentSessions.length - visibleSiblingSubagentSessions.length,
+  );
+  const shouldShowTeamSection =
+    Boolean(subagentParentContext) || sortedChildSubagentSessions.length > 0;
+  const teamSummarySessions = subagentParentContext
+    ? siblingSubagentSessions
+    : sortedChildSubagentSessions;
+  const shouldAutoCollapseTeamSection = subagentParentContext
+    ? siblingSubagentSessions.length > TEAM_SECTION_INITIAL_SIBLING_COUNT
+    : sortedChildSubagentSessions.length > TEAM_SECTION_INITIAL_CHILD_COUNT;
+  const teamSectionIdentity = subagentParentContext
+    ? `child:${subagentParentContext.parent_session_id}:${siblingSubagentSessions
+        .map((session) => session.id)
+        .join(",")}`
+    : `parent:${sortedChildSubagentSessions
+        .map((session) => session.id)
+        .join(",")}`;
+  const teamSectionCollapsed =
+    teamSectionCollapsedOverride ?? shouldAutoCollapseTeamSection;
+  const collapsedTeamSummary = useMemo(
+    () =>
+      buildCollapsedTeamSummary(
+        teamSummarySessions,
+        subagentParentContext
+          ? `${siblingSubagentSessions.length} 个同级子代理`
+          : `${sortedChildSubagentSessions.length} 个子代理`,
+      ),
+    [
+      siblingSubagentSessions,
+      sortedChildSubagentSessions,
+      subagentParentContext,
+      teamSummarySessions,
+    ],
+  );
 
   const filteredTaskItems = useMemo(() => {
     const keyword = searchKeyword.trim().toLowerCase();
@@ -515,6 +712,24 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   }, [searchKeyword, statusFilter]);
 
   useEffect(() => {
+    setTeamSectionCollapsedOverride(null);
+    setShowAllChildSubagents(false);
+    setShowAllSiblingSubagents(false);
+  }, [teamSectionIdentity]);
+
+  useEffect(() => {
+    if (sortedChildSubagentSessions.length <= TEAM_SECTION_INITIAL_CHILD_COUNT) {
+      setShowAllChildSubagents(false);
+    }
+  }, [sortedChildSubagentSessions.length]);
+
+  useEffect(() => {
+    if (siblingSubagentSessions.length <= TEAM_SECTION_INITIAL_SIBLING_COUNT) {
+      setShowAllSiblingSubagents(false);
+    }
+  }, [siblingSubagentSessions.length]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -551,6 +766,16 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     void onSwitchTopic(item.id);
   };
 
+  const handleJumpToTaskSection = () => {
+    setTeamSectionCollapsedOverride(true);
+    setShowAllChildSubagents(false);
+    setShowAllSiblingSubagents(false);
+    taskSectionAnchorRef.current?.scrollIntoView({
+      block: "start",
+      behavior: "smooth",
+    });
+  };
+
   const handleSaveEdit = () => {
     if (editingTopicId && editTitle.trim() && onRenameTopic) {
       onRenameTopic(editingTopicId, editTitle.trim());
@@ -570,6 +795,65 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
     } else if (event.key === "Escape") {
       handleCancelEdit();
     }
+  };
+
+  const renderSubagentSessionCard = (
+    session: AsterSubagentSessionInfo,
+    options?: {
+      highlightCurrent?: boolean;
+      subtitle?: string;
+    },
+  ) => {
+    const statusMeta = resolveSubagentStatusMeta(session.runtime_status);
+    const updatedAt = resolveUnixDate(session.updated_at);
+    const canOpen = Boolean(onOpenSubagentSession);
+
+    return (
+      <button
+        key={session.id}
+        type="button"
+        onClick={() => {
+          if (!canOpen) {
+            return;
+          }
+          void onOpenSubagentSession?.(session.id);
+        }}
+        className={cn(
+          "w-full rounded-[20px] border px-3.5 py-3 text-left shadow-sm shadow-slate-950/5 transition",
+          options?.highlightCurrent
+            ? "border-slate-300 bg-white/98 ring-1 ring-slate-100 dark:border-white/15 dark:bg-white/10"
+            : "border-slate-200/80 bg-white/86 hover:border-slate-300 hover:bg-white dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
+          !canOpen ? "cursor-default" : "",
+        )}
+        disabled={!canOpen}
+      >
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-200">
+            <Bot className="h-4 w-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                {session.name || "未命名子代理"}
+              </div>
+              <Badge className={statusMeta.badgeClassName}>
+                {statusMeta.label}
+              </Badge>
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+              <span>{options?.subtitle ?? resolveSubagentSessionTypeLabel(session.session_type)}</span>
+              {session.role_hint ? <span>角色 · {session.role_hint}</span> : null}
+              {updatedAt ? <span>更新于 {formatRelativeTime(updatedAt)}</span> : null}
+            </div>
+            {session.task_summary ? (
+              <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                {session.task_summary}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      </button>
+    );
   };
 
   return (
@@ -694,42 +978,245 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-between px-1">
-          <div className="text-[11px] font-semibold tracking-[0.12em] text-slate-500">
-            任务
-          </div>
-          <div className="text-xs text-slate-400">
-            {searchKeyword.trim()
-              ? `${filteredTaskItems.length} 条结果`
-              : `${topics.length} 条`}
-          </div>
-        </div>
+        <div
+          className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-width:thin]"
+          data-testid="chat-sidebar-scroll-area"
+        >
+          <div className="space-y-4 pb-1">
+            {shouldShowTeamSection ? (
+              <section
+                className="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.94)_0%,rgba(248,250,252,0.9)_100%)] px-3.5 py-3.5 shadow-sm shadow-slate-950/5 dark:border-white/10 dark:bg-white/5"
+                data-testid="team-runtime-section"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                      <GitBranch className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                        Team Runtime
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                        {teamSectionCollapsed
+                          ? collapsedTeamSummary
+                          : subagentParentContext
+                            ? "当前线程来自父会话，可直接返回主线程并切换同级子代理。"
+                            : "这里展示真实 child session，而不是 synthetic timeline。"}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Badge className="border border-slate-200 bg-white text-slate-600 dark:border-white/10 dark:bg-white/10 dark:text-slate-200">
+                      {subagentParentContext
+                        ? "子线程"
+                        : `${sortedChildSubagentSessions.length} 个子代理`}
+                    </Badge>
+                    {hasAnyTasks ? (
+                      <button
+                        type="button"
+                        aria-label="跳转到任务列表"
+                        title="跳转到任务列表"
+                        onClick={handleJumpToTaskSection}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200/80 bg-white/90 text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/10 dark:text-slate-300 dark:hover:bg-white/15 dark:hover:text-slate-100"
+                      >
+                        <ListTodo className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      aria-label={
+                        teamSectionCollapsed
+                          ? "展开 Team Runtime"
+                          : "收起 Team Runtime"
+                      }
+                      onClick={() =>
+                        setTeamSectionCollapsedOverride(
+                          (collapsed) =>
+                            !(collapsed ?? shouldAutoCollapseTeamSection),
+                        )
+                      }
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200/80 bg-white/90 text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/10 dark:text-slate-300 dark:hover:bg-white/15 dark:hover:text-slate-100"
+                    >
+                      <ChevronDown
+                        className={cn(
+                          "h-4 w-4 transition-transform",
+                          teamSectionCollapsed ? "-rotate-90" : "",
+                        )}
+                      />
+                    </button>
+                  </div>
+                </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1 [scrollbar-width:thin]">
-          {!hasAnyTasks ? (
-            <div className="rounded-[26px] border border-dashed border-slate-200/90 bg-white/82 px-4 py-8 text-center shadow-sm shadow-slate-950/5 dark:border-white/10 dark:bg-white/5">
-              <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300">
-                <Clock3 className="h-5 w-5" />
+                {teamSectionCollapsed ? null : subagentParentContext ? (
+                  <div className="mt-4 space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onReturnToParentSession?.();
+                      }}
+                      disabled={!onReturnToParentSession}
+                      className={cn(
+                        "w-full rounded-[20px] border border-slate-200/80 bg-white/88 px-3.5 py-3 text-left shadow-sm shadow-slate-950/5 transition dark:border-white/10 dark:bg-white/5",
+                        onReturnToParentSession
+                          ? "hover:border-slate-300 hover:bg-white dark:hover:bg-white/10"
+                          : "cursor-default",
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-200">
+                          <ArrowUpLeft className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                              {subagentParentContext.parent_session_name}
+                            </div>
+                            <Badge className="border border-slate-200 bg-white text-slate-600 dark:border-white/10 dark:bg-white/10 dark:text-slate-200">
+                              父会话
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                            返回主线程，查看完整 team 视图和原始上下文。
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+
+                    <div className="rounded-[20px] border border-slate-200/80 bg-white/86 px-3.5 py-3 shadow-sm shadow-slate-950/5 dark:border-white/10 dark:bg-white/5">
+                      <div className="flex items-center gap-2">
+                        <div className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          {currentTaskItem?.title || "当前子代理"}
+                        </div>
+                        <Badge className="border border-slate-900 bg-slate-900 text-white dark:border-white dark:bg-white dark:text-slate-900">
+                          当前子代理
+                        </Badge>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span>来自父会话委派</span>
+                        {subagentParentContext.role_hint ? (
+                          <span>角色 · {subagentParentContext.role_hint}</span>
+                        ) : null}
+                        {currentTaskItem?.updatedAt ? (
+                          <span>
+                            更新于 {formatRelativeTime(currentTaskItem.updatedAt)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {subagentParentContext.task_summary ? (
+                        <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-600 dark:text-slate-300">
+                          {subagentParentContext.task_summary}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    {visibleSiblingSubagentSessions.length > 0 ? (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between px-1">
+                          <div className="text-[11px] font-semibold tracking-[0.12em] text-slate-500">
+                            同级子代理
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {siblingSubagentSessions.length} 个
+                          </div>
+                        </div>
+                        {visibleSiblingSubagentSessions.map((session) =>
+                          renderSubagentSessionCard(session),
+                        )}
+                        {hiddenSiblingSubagentCount > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllSiblingSubagents(true)}
+                            className="w-full rounded-2xl border border-dashed border-slate-200/80 bg-white/70 px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-slate-100"
+                          >
+                            展开剩余 {hiddenSiblingSubagentCount} 个同级子代理
+                          </button>
+                        ) : null}
+                        {showAllSiblingSubagents &&
+                        siblingSubagentSessions.length >
+                          TEAM_SECTION_INITIAL_SIBLING_COUNT ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllSiblingSubagents(false)}
+                            className="w-full rounded-2xl border border-slate-200/80 bg-white/78 px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-slate-100"
+                          >
+                            收起同级子代理列表
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-2">
+                    {visibleChildSubagentSessions.map((session) =>
+                      renderSubagentSessionCard(session, {
+                        highlightCurrent: session.id === currentTopicId,
+                      }),
+                    )}
+                    {hiddenChildSubagentCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllChildSubagents(true)}
+                        className="w-full rounded-2xl border border-dashed border-slate-200/80 bg-white/70 px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-slate-100"
+                      >
+                        展开剩余 {hiddenChildSubagentCount} 个子代理
+                      </button>
+                    ) : null}
+                    {showAllChildSubagents &&
+                    sortedChildSubagentSessions.length >
+                      TEAM_SECTION_INITIAL_CHILD_COUNT ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllChildSubagents(false)}
+                        className="w-full rounded-2xl border border-slate-200/80 bg-white/78 px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-slate-300 hover:bg-white hover:text-slate-900 dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10 dark:hover:text-slate-100"
+                      >
+                        收起子代理列表
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            <div
+              ref={taskSectionAnchorRef}
+              className="flex items-center justify-between px-1"
+              data-testid="task-section-heading"
+            >
+              <div className="text-[11px] font-semibold tracking-[0.12em] text-slate-500">
+                任务
               </div>
-              <div className="mt-4 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                还没有任务
+              <div className="text-xs text-slate-400">
+                {searchKeyword.trim()
+                  ? `${filteredTaskItems.length} 条结果`
+                  : `${topics.length} 条`}
               </div>
-              <p className="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400">
-                从“新建任务”开始输入需求，创建后会出现在这里。
-              </p>
             </div>
-          ) : !hasFilteredResults ? (
-            <div className="rounded-[26px] border border-dashed border-slate-200/90 bg-white/82 px-4 py-8 text-center shadow-sm shadow-slate-950/5 dark:border-white/10 dark:bg-white/5">
-              <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                没有匹配的任务
+
+            {!hasAnyTasks ? (
+              <div className="rounded-[26px] border border-dashed border-slate-200/90 bg-white/82 px-4 py-8 text-center shadow-sm shadow-slate-950/5 dark:border-white/10 dark:bg-white/5">
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300">
+                  <Clock3 className="h-5 w-5" />
+                </div>
+                <div className="mt-4 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  还没有任务
+                </div>
+                <p className="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400">
+                  从“新建任务”开始输入需求，创建后会出现在这里。
+                </p>
               </div>
-              <p className="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400">
-                试试搜索标题、执行摘要或状态关键词。
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {sections.map((section) => {
+            ) : !hasFilteredResults ? (
+              <div className="rounded-[26px] border border-dashed border-slate-200/90 bg-white/82 px-4 py-8 text-center shadow-sm shadow-slate-950/5 dark:border-white/10 dark:bg-white/5">
+                <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  没有匹配的任务
+                </div>
+                <p className="mt-2 text-xs leading-6 text-slate-500 dark:text-slate-400">
+                  试试搜索标题、执行摘要或状态关键词。
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {sections.map((section) => {
                 const isOlderSection = section.key === "older";
                 const isResumableSection = section.key === "resumable";
                 const isSectionCollapsed = isResumableSection
@@ -1008,9 +1495,10 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     )}
                   </section>
                 );
-              })}
-            </div>
-          )}
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </aside>

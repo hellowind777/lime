@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import styled, { keyframes } from "styled-components";
 import {
   ArrowRight,
@@ -30,9 +30,11 @@ import {
 } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { ChatModelSelector } from "./ChatModelSelector";
+import { TeamSuggestionBar } from "./TeamSuggestionBar";
 import { CharacterMention } from "./Inputbar/components/CharacterMention";
 import { SkillBadge } from "./Inputbar/components/SkillBadge";
 import { SkillSelector } from "./Inputbar/components/SkillSelector";
+import { TeamSelector } from "./Inputbar/components/TeamSelector";
 import { CREATION_MODE_CONFIG } from "./constants";
 import type {
   CreationMode,
@@ -43,6 +45,7 @@ import type {
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
 import type { MessageImage } from "../types";
+import type { TeamDefinition } from "../utils/teamDefinitions";
 
 import iconXhs from "@/assets/platforms/xhs.png";
 import iconGzh from "@/assets/platforms/gzh.png";
@@ -57,6 +60,8 @@ import {
   EMPTY_STATE_SELECT_TRIGGER_CLASSNAME,
   getEmptyStateIconToolButtonClassName,
 } from "./emptyStateSurfaceTokens";
+import type { ModelSelectorProps } from "@/components/input-kit";
+import { getTeamSuggestion } from "../utils/teamSuggestion";
 
 const composerReveal = keyframes`
   from {
@@ -479,6 +484,7 @@ interface EmptyStateComposerPanelProps {
     strategy: "react" | "code_orchestrated" | "auto",
   ) => void;
   onManageProviders?: () => void;
+  modelSelectorBackgroundPreload?: ModelSelectorProps["backgroundPreload"];
   isGeneralTheme: boolean;
   isEntryTheme: boolean;
   entryTaskType: EntryTaskType;
@@ -519,6 +525,9 @@ interface EmptyStateComposerPanelProps {
   onTaskEnabledChange?: (enabled: boolean) => void;
   subagentEnabled: boolean;
   onSubagentEnabledChange?: (enabled: boolean) => void;
+  selectedTeam?: TeamDefinition | null;
+  onSelectTeam?: (team: TeamDefinition | null) => void;
+  onEnableSuggestedTeam?: (suggestedPresetId?: string) => void;
   webSearchEnabled: boolean;
   onWebSearchEnabledChange?: (enabled: boolean) => void;
   pendingImages: MessageImage[];
@@ -541,6 +550,7 @@ export function EmptyStateComposerPanel({
   executionStrategyLabel,
   setExecutionStrategy,
   onManageProviders,
+  modelSelectorBackgroundPreload = "immediate",
   isGeneralTheme,
   isEntryTheme,
   entryTaskType,
@@ -581,6 +591,9 @@ export function EmptyStateComposerPanel({
   onTaskEnabledChange,
   subagentEnabled,
   onSubagentEnabledChange,
+  selectedTeam,
+  onSelectTeam,
+  onEnableSuggestedTeam,
   webSearchEnabled,
   onWebSearchEnabledChange,
   pendingImages,
@@ -590,6 +603,9 @@ export function EmptyStateComposerPanel({
 }: EmptyStateComposerPanelProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const [dismissedSuggestionKey, setDismissedSuggestionKey] = useState<
+    string | null
+  >(null);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === "Enter" && !event.shiftKey) {
@@ -601,6 +617,31 @@ export function EmptyStateComposerPanel({
   const getPlatformIcon = (value: string) => PLATFORM_ICON_MAP[value];
   const getPlatformLabel = (value: string) =>
     PLATFORM_LABEL_MAP[value] || value;
+  const suggestionKey = `${activeTheme}:${input.trim().toLowerCase()}`;
+  const teamSuggestion = useMemo(
+    () =>
+      getTeamSuggestion({
+        input,
+        activeTheme,
+        subagentEnabled,
+      }),
+    [activeTheme, input, subagentEnabled],
+  );
+  const shouldShowTeamSuggestion =
+    isGeneralTheme &&
+    Boolean(onSubagentEnabledChange) &&
+    teamSuggestion.shouldSuggest &&
+    dismissedSuggestionKey !== suggestionKey;
+
+  const handleEnableTeamSuggestion = () => {
+    onSubagentEnabledChange?.(true);
+    onEnableSuggestedTeam?.(teamSuggestion.suggestedPresetId);
+    setDismissedSuggestionKey(suggestionKey);
+  };
+
+  const handleContinueSingleAgent = () => {
+    setDismissedSuggestionKey(suggestionKey);
+  };
 
   return (
     <InputCard>
@@ -714,6 +755,17 @@ export function EmptyStateComposerPanel({
         </>
       ) : null}
 
+      {shouldShowTeamSuggestion ? (
+        <TeamSuggestionBar
+          score={teamSuggestion.score}
+          reasons={teamSuggestion.reasons}
+          suggestedRoles={teamSuggestion.suggestedRoles}
+          suggestedPresetLabel={teamSuggestion.suggestedPresetLabel}
+          onEnableTeam={handleEnableTeamSuggestion}
+          onContinueSingleAgent={handleContinueSingleAgent}
+        />
+      ) : null}
+
       <Toolbar>
         <ToolLoginLeft>
           {isGeneralTheme ? (
@@ -728,6 +780,14 @@ export function EmptyStateComposerPanel({
               onRefreshSkills={onRefreshSkills}
             />
           ) : null}
+          {subagentEnabled ? (
+            <TeamSelector
+              activeTheme={activeTheme}
+              input={input}
+              selectedTeam={selectedTeam}
+              onSelectTeam={(team) => onSelectTeam?.(team)}
+            />
+          ) : null}
 
           <ChatModelSelector
             providerType={providerType}
@@ -738,6 +798,7 @@ export function EmptyStateComposerPanel({
             compactTrigger
             popoverSide="top"
             onManageProviders={onManageProviders}
+            backgroundPreload={modelSelectorBackgroundPreload}
           />
 
           {activeTheme === "social-media" ? (

@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import type { A2UISubmissionNoticeData } from "../components/A2UISubmissionNotice";
 import { SkillBadge } from "../components/SkillBadge";
 import { useActiveSkill } from "./useActiveSkill";
@@ -15,7 +15,9 @@ import type {
   ThemeWorkbenchGateState,
   ThemeWorkbenchWorkflowStep,
 } from "./useThemeWorkbenchInputState";
+import { TeamSuggestionBar } from "@/components/agent/chat/components/TeamSuggestionBar";
 import type { A2UIResponse } from "@/components/content-creator/a2ui/types";
+import { getTeamSuggestion } from "@/components/agent/chat/utils/teamSuggestion";
 import type { MessageImage } from "../../../types";
 
 interface UseInputbarControllerParams {
@@ -50,6 +52,7 @@ interface UseInputbarControllerParams {
   themeWorkbenchRunState?: "idle" | "auto_running" | "await_user_decision";
   pendingA2UIForm?: A2UIResponse | null;
   a2uiSubmissionNotice?: A2UISubmissionNoticeData | null;
+  onEnableSuggestedTeam?: (suggestedPresetId?: string) => void;
 }
 
 export function useInputbarController({
@@ -76,6 +79,7 @@ export function useInputbarController({
   themeWorkbenchRunState,
   pendingA2UIForm,
   a2uiSubmissionNotice,
+  onEnableSuggestedTeam,
 }: UseInputbarControllerParams) {
   const { activeSkill, setActiveSkill, clearActiveSkill } = useActiveSkill();
   const {
@@ -95,6 +99,7 @@ export function useInputbarController({
   const {
     activeTools,
     handleToolClick,
+    setSubagentEnabled,
     isFullscreen,
     thinkingEnabled,
     taskEnabled,
@@ -169,12 +174,56 @@ export function useInputbarController({
     a2uiSubmissionNotice,
   });
 
-  const topExtra = activeSkill
-    ? React.createElement(SkillBadge, {
-        skill: activeSkill,
-        onClear: clearActiveSkill,
-      })
-    : undefined;
+  const [dismissedTeamSuggestionKey, setDismissedTeamSuggestionKey] = useState<
+    string | null
+  >(null);
+  const teamSuggestionKey = `${activeTheme ?? "default"}:${input
+    .trim()
+    .toLowerCase()}`;
+  const teamSuggestion = useMemo(
+    () =>
+      getTeamSuggestion({
+        input,
+        activeTheme,
+        subagentEnabled,
+      }),
+    [activeTheme, input, subagentEnabled],
+  );
+  const shouldShowTeamSuggestion =
+    activeTheme === "general" &&
+    teamSuggestion.shouldSuggest &&
+    dismissedTeamSuggestionKey !== teamSuggestionKey;
+
+  const topExtra =
+    activeSkill || shouldShowTeamSuggestion
+      ? React.createElement(
+          React.Fragment,
+          null,
+          activeSkill
+            ? React.createElement(SkillBadge, {
+                skill: activeSkill,
+                onClear: clearActiveSkill,
+              })
+            : null,
+          shouldShowTeamSuggestion
+            ? React.createElement(TeamSuggestionBar, {
+                compact: true,
+                score: teamSuggestion.score,
+                reasons: teamSuggestion.reasons,
+                suggestedRoles: teamSuggestion.suggestedRoles,
+                suggestedPresetLabel: teamSuggestion.suggestedPresetLabel,
+                onEnableTeam: () => {
+                  setSubagentEnabled(true);
+                  onEnableSuggestedTeam?.(teamSuggestion.suggestedPresetId);
+                  setDismissedTeamSuggestionKey(teamSuggestionKey);
+                },
+                onContinueSingleAgent: () => {
+                  setDismissedTeamSuggestionKey(teamSuggestionKey);
+                },
+              })
+            : null,
+        )
+      : undefined;
 
   return {
     textareaRef,

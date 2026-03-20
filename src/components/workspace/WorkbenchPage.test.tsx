@@ -28,6 +28,7 @@ const {
   mockListProjects,
   mockListContents,
   mockGetContent,
+  mockGetProject,
   mockCreateProject,
   mockCreateContent,
   mockUpdateContent,
@@ -39,6 +40,7 @@ const {
   mockListProjects: vi.fn(),
   mockListContents: vi.fn(),
   mockGetContent: vi.fn(),
+  mockGetProject: vi.fn(),
   mockCreateProject: vi.fn(),
   mockCreateContent: vi.fn(),
   mockUpdateContent: vi.fn(),
@@ -136,6 +138,7 @@ vi.mock("@/lib/api/project", () => ({
   listProjects: mockListProjects,
   listContents: mockListContents,
   getContent: mockGetContent,
+  getProject: mockGetProject,
   createProject: mockCreateProject,
   createContent: mockCreateContent,
   updateContent: mockUpdateContent,
@@ -269,6 +272,14 @@ beforeEach(() => {
     id: "content-1",
     metadata: { creationMode: "guided" },
   });
+  mockGetProject.mockResolvedValue(
+    createWorkspaceProjectFixture({
+      id: "project-1",
+      name: "社媒项目A",
+      workspaceType: "social-media",
+      rootPath: "/tmp/workspace/project-1",
+    }),
+  );
   mockCreateContent.mockResolvedValue({
     id: "content-new",
     project_id: "project-1",
@@ -342,7 +353,10 @@ describe("WorkbenchPage 左侧栏模式行为", () => {
     await flushEffects(6);
 
     expect(mockCreateContent).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("补充信息");
+    expect(container.textContent).toContain("确认创作方式");
+    expect(container.textContent).toContain(
+      "为你准备了以下选项，补充所需信息后我们将立即开始。",
+    );
     expect(
       container.querySelector(
         "[data-testid='workspace-create-confirmation-card']",
@@ -350,8 +364,7 @@ describe("WorkbenchPage 左侧栏模式行为", () => {
     ).not.toBeNull();
     expect(
       container.querySelector("[data-testid='workbench-right-rail-expanded']"),
-    ).not.toBeNull();
-    expect(findButtonByTitle(container, "折叠能力面板")).toBeDefined();
+    ).toBeNull();
     expect(container.textContent).not.toContain("选择创作模式");
     expect(container.textContent).not.toContain("填写创作意图");
   });
@@ -369,7 +382,8 @@ describe("WorkbenchPage 左侧栏模式行为", () => {
       container.querySelector("[data-testid='agent-chat-page']"),
     ).toBeNull();
     expectProjectManagementLandingVisible(container);
-    expect(container.textContent).toContain("当前项目：社媒项目A");
+    expect(container.textContent).toContain("社媒项目A");
+    expect(container.textContent).toContain("社媒内容项目已就绪");
   });
 
   it("作业模式存在文稿时应优先打开已有内容，而不是停留在新建首页", async () => {

@@ -3,7 +3,6 @@ import { WorkbenchCreateEntryHome } from "./WorkbenchCreateEntryHome";
 import {
   cleanupMountedRoots,
   clickButtonByText,
-  clickByTestId,
   fillTextInput,
   findButtonByText,
   findInputByPlaceholder,
@@ -55,10 +54,11 @@ describe("WorkbenchCreateEntryHome", () => {
     expect(container.querySelector("[data-testid='workspace-create-entry-home']")).not.toBeNull();
     expect(container.querySelector("[data-testid='workspace-create-confirmation-card']")).toBeNull();
     expect(container.textContent).toContain("当前没有待处理任务");
-    expect(container.textContent).toContain("社媒项目A · 创作首页");
+    expect(container.textContent).toContain("社媒项目A");
+    expect(container.textContent).toContain("创作首页");
   });
 
-  it("待确认任务默认展开任务卡，并支持收起后通过底部任务条重新展开", async () => {
+  it("待确认任务时展示创建确认卡片与原始需求", async () => {
     const { container } = mountHarness(
       WorkbenchCreateEntryHome,
       {
@@ -75,18 +75,12 @@ describe("WorkbenchCreateEntryHome", () => {
     );
 
     expect(container.querySelector("[data-testid='workspace-create-confirmation-card']")).not.toBeNull();
-    expect(container.querySelector("[data-testid='workspace-create-confirmation-dock']")).not.toBeNull();
-
-    clickButtonByText(container, "收起任务");
-    await flushEffects();
-
-    expect(container.querySelector("[data-testid='workspace-create-confirmation-card']")).toBeNull();
-    expect(container.querySelector("[data-testid='workspace-create-confirmation-dock']")).not.toBeNull();
-
-    clickByTestId(container, "workspace-create-confirmation-dock");
-    await flushEffects();
-
-    expect(container.querySelector("[data-testid='workspace-create-confirmation-card']")).not.toBeNull();
+    expect(container.textContent).toContain("确认创作方式");
+    expect(container.textContent).toContain("原始需求");
+    expect(container.textContent).toContain(
+      "请帮我生成一篇关于 AI Agent 行业趋势的文章",
+    );
+    expect(findButtonByText(container, "开始处理")).toBeDefined();
   });
 
   it("A2UI 按需显示补充说明，并在提交时回传用户选择", async () => {

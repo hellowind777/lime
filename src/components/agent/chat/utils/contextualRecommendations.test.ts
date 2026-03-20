@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildRecommendationPrompt,
   getContextualRecommendations,
+  isTeamRuntimeRecommendation,
 } from "./contextualRecommendations";
 
 describe("getContextualRecommendations", () => {
@@ -83,7 +84,43 @@ describe("getContextualRecommendations", () => {
     });
 
     expect(recommendations.length).toBeGreaterThan(0);
-    expect(recommendations[0]?.[0]).toContain("需求");
+    expect(recommendations[0]?.[0]).toContain("Team");
+  });
+
+  it("开启多代理偏好后应优先返回 team runtime 测试提示词", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "general",
+      input: "实现 team workspace UI 和实时订阅",
+      creationMode: "guided",
+      entryTaskType: "direct",
+      platform: "xiaohongshu",
+      hasCanvasContent: false,
+      hasContentId: false,
+      selectedText: "",
+      subagentEnabled: true,
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("Team");
+    expect(recommendations[0]?.[1]).toContain("team runtime");
+  });
+
+  it("未开启多代理偏好时也应给出 team 测试入口，并提示先开启开关", () => {
+    const recommendations = getContextualRecommendations({
+      activeTheme: "general",
+      input: "",
+      creationMode: "guided",
+      entryTaskType: "direct",
+      platform: "xiaohongshu",
+      hasCanvasContent: false,
+      hasContentId: false,
+      selectedText: "",
+      subagentEnabled: false,
+    });
+
+    expect(recommendations.length).toBeGreaterThan(0);
+    expect(recommendations[0]?.[0]).toContain("Team");
+    expect(recommendations[0]?.[1]).toContain("多代理");
   });
 
   it("文档主题应返回办公文档推荐", () => {
@@ -144,5 +181,23 @@ describe("getContextualRecommendations", () => {
       false,
     );
     expect(prompt).toBe("请润色文稿。");
+  });
+
+  it("应识别 team runtime 类推荐", () => {
+    expect(
+      isTeamRuntimeRecommendation(
+        "Team 冒烟测试",
+        "请按 team runtime 方式做一次冒烟测试：创建 explorer 与 executor 两个子代理并行处理。",
+      ),
+    ).toBe(true);
+  });
+
+  it("普通推荐不应被识别为 team runtime", () => {
+    expect(
+      isTeamRuntimeRecommendation(
+        "需求澄清助手",
+        "请先帮我澄清当前问题：目标是什么、已知条件是什么、缺失信息是什么。",
+      ),
+    ).toBe(false);
   });
 });

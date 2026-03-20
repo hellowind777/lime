@@ -1,4 +1,5 @@
 import React, { type ChangeEvent, type RefObject } from "react";
+import styled from "styled-components";
 import type { TaskFile } from "../../TaskFiles";
 import type { A2UIResponse, A2UIFormData } from "@/components/content-creator/a2ui/types";
 import {
@@ -20,6 +21,7 @@ interface InputbarOverlayShellProps {
   taskFilesExpanded?: boolean;
   onToggleTaskFiles?: () => void;
   onTaskFileClick?: (file: TaskFile) => void;
+  overlayAccessory?: React.ReactNode;
   submissionNotice?: A2UISubmissionNoticeData | null;
   isSubmissionNoticeVisible: boolean;
   pendingA2UIForm?: A2UIResponse | null;
@@ -27,6 +29,27 @@ interface InputbarOverlayShellProps {
   fileInputRef: RefObject<HTMLInputElement>;
   onFileSelect: (event: ChangeEvent<HTMLInputElement>) => void;
 }
+
+const SecondaryControlsRow = styled.div.attrs({
+  "data-testid": "inputbar-secondary-controls",
+})`
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  left: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 80;
+
+  > * {
+    pointer-events: auto;
+    max-width: 100%;
+  }
+`;
 
 export const InputbarOverlayShell: React.FC<InputbarOverlayShellProps> = ({
   showHintPopup,
@@ -38,6 +61,7 @@ export const InputbarOverlayShell: React.FC<InputbarOverlayShellProps> = ({
   taskFilesExpanded = false,
   onToggleTaskFiles,
   onTaskFileClick,
+  overlayAccessory,
   submissionNotice,
   isSubmissionNoticeVisible,
   pendingA2UIForm,
@@ -53,13 +77,18 @@ export const InputbarOverlayShell: React.FC<InputbarOverlayShellProps> = ({
         onSelect={onHintSelect}
       />
     ) : null}
-    <TaskFilesPanel
-      files={taskFiles}
-      selectedFileId={selectedFileId}
-      expanded={taskFilesExpanded}
-      onToggle={onToggleTaskFiles}
-      onFileClick={onTaskFileClick}
-    />
+    {taskFiles.length > 0 || overlayAccessory ? (
+      <SecondaryControlsRow>
+        <TaskFilesPanel
+          files={taskFiles}
+          selectedFileId={selectedFileId}
+          expanded={taskFilesExpanded}
+          onToggle={onToggleTaskFiles}
+          onFileClick={onTaskFileClick}
+        />
+        {overlayAccessory}
+      </SecondaryControlsRow>
+    ) : null}
     {submissionNotice ? (
       <A2UISubmissionNotice
         notice={submissionNotice}

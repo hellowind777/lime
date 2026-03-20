@@ -94,6 +94,7 @@ const mountedRoots: MountedHarness[] = [];
 
 interface MountOptions {
   onManageProviders?: () => void;
+  chatModelSelectorProps?: Partial<React.ComponentProps<typeof ChatModelSelector>>;
 }
 
 function createModel(id: string, providerId: string) {
@@ -133,7 +134,7 @@ function mount(
   workspaceId: string,
   options: MountOptions = {},
 ): HTMLDivElement {
-  const { onManageProviders } = options;
+  const { onManageProviders, chatModelSelectorProps } = options;
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
@@ -165,6 +166,7 @@ function mount(
           setModel={chat.setModel}
           activeTheme="general"
           onManageProviders={onManageProviders}
+          {...chatModelSelectorProps}
         />
         <div data-testid="current-model">
           {chat.providerType}/{chat.model}
@@ -431,5 +433,53 @@ describe("ChatModelSelector + useAsterAgentChat 集成", () => {
     });
 
     expect(onManageProviders).toHaveBeenCalledTimes(1);
+  });
+
+  it("关闭后台预加载时，应在打开选择器后再加载 Provider 和模型", async () => {
+    const container = mount("ws-model-selector-lazy-provider-load", {
+      chatModelSelectorProps: {
+        backgroundPreload: "disabled",
+      },
+    });
+
+    await flushEffects();
+
+    expect(
+      mockUseConfiguredProviders.mock.calls.some(
+        ([options]) => options?.autoLoad === false,
+      ),
+    ).toBe(true);
+    expect(
+      mockUseConfiguredProviders.mock.calls.some(
+        ([options]) => options?.autoLoad === true,
+      ),
+    ).toBe(false);
+
+    expect(
+      mockUseProviderModels.mock.calls.some(
+        ([, options]) => options?.autoLoad === false,
+      ),
+    ).toBe(true);
+    expect(
+      mockUseProviderModels.mock.calls.some(
+        ([, options]) => options?.autoLoad === true,
+      ),
+    ).toBe(false);
+
+    await act(async () => {
+      getComboboxTrigger(container).click();
+    });
+    await flushEffects();
+
+    expect(
+      mockUseConfiguredProviders.mock.calls.some(
+        ([options]) => options?.autoLoad === true,
+      ),
+    ).toBe(true);
+    expect(
+      mockUseProviderModels.mock.calls.some(
+        ([, options]) => options?.autoLoad === true,
+      ),
+    ).toBe(true);
   });
 });

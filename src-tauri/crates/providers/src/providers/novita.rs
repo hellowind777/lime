@@ -142,13 +142,10 @@ impl NovitaProvider {
 
         let url = self.build_url("chat/completions");
 
-        eprintln!(
-            "[NOVITA] call_api URL: {url} model: {}",
-            request.model
-        );
+        eprintln!("[NOVITA] call_api URL: {url} model: {}", request.model);
 
-        let payload = serde_json::to_value(request)
-            .map_err(|e| format!("序列化 Novita 请求失败: {e}"))?;
+        let payload =
+            serde_json::to_value(request).map_err(|e| format!("序列化 Novita 请求失败: {e}"))?;
 
         let resp = self
             .client
@@ -367,10 +364,7 @@ mod tests {
             Some("https://proxy.example.com/novita/v1".to_string()),
         );
         let url = provider.build_url("chat/completions");
-        assert_eq!(
-            url,
-            "https://proxy.example.com/novita/v1/chat/completions"
-        );
+        assert_eq!(url, "https://proxy.example.com/novita/v1/chat/completions");
     }
 
     #[test]

@@ -172,6 +172,27 @@ const importSurfaceMonitors = [
     targets: ["src/lib/api/contextMemory.ts"],
     allowedPaths: [],
   },
+  {
+    id: "team-subagent-scheduler-hook",
+    classification: "compat",
+    description: "旧 SubAgent scheduler Hook 只允许停留在 compat 展示层",
+    targets: ["src/hooks/useSubAgentScheduler.ts"],
+    allowedPaths: [
+      "src/components/agent/chat/hooks/useCompatSubagentRuntime.ts",
+      "src/components/subagent/SubAgentProgress.tsx",
+      "src/components/subagent/index.ts",
+    ],
+  },
+  {
+    id: "team-subagent-scheduler-api",
+    classification: "compat",
+    description: "旧 SubAgent scheduler API 只允许被 compat Hook 与降级展示层引用",
+    targets: ["src/lib/api/subAgentScheduler.ts"],
+    allowedPaths: [
+      "src/hooks/useSubAgentScheduler.ts",
+      "src/components/agent/chat/utils/compatSubagentRuntime.ts",
+    ],
+  },
 ];
 
 const commandSurfaceMonitors = [
@@ -293,10 +314,24 @@ const commandSurfaceMonitors = [
     ],
     allowedPaths: [],
   },
+  {
+    id: "team-subagent-scheduler-commands",
+    classification: "compat",
+    description: "旧 execute_subagent_tasks/cancel_subagent_tasks 只允许通过 compat API 网关暴露",
+    commands: ["execute_subagent_tasks", "cancel_subagent_tasks"],
+    allowedPaths: ["src/lib/api/subAgentScheduler.ts"],
+  },
 ];
 
 const frontendTextSurfaceMonitors = [
   ...agentLegacyHelperSurfaceMonitors,
+  {
+    id: "frontend-subagent-scheduler-event-bus",
+    classification: "compat",
+    description: "旧 subagent scheduler 事件名只允许 compat Hook 持有",
+    patterns: ["subagent-scheduler-event"],
+    allowedPaths: ["src/hooks/useSubAgentScheduler.ts"],
+  },
   {
     id: "frontend-assistant-settings-surfaces",
     classification: "dead-candidate",
@@ -323,6 +358,13 @@ const frontendTextSurfaceMonitors = [
 ];
 
 const rustTextSurfaceMonitors = [
+  {
+    id: "rust-subagent-scheduler-event-bus",
+    classification: "compat",
+    description: "旧 subagent scheduler 事件名只允许 compat Rust emitter 持有",
+    patterns: ["subagent-scheduler-event"],
+    allowedPaths: ["src-tauri/src/agent/subagent_scheduler.rs"],
+  },
   {
     id: "rust-general-chat-dao",
     classification: "dead-candidate",
@@ -378,7 +420,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-legacy-general-module-imports",
     classification: "dead-candidate",
-    description: "已零引用的 Rust 外部模块 direct pending/legacy general 子模块",
+    description:
+      "已零引用的 Rust 外部模块 direct pending/legacy general 子模块",
     patterns: [
       "crate::database::legacy_general_chat::",
       "lime_core::database::legacy_general_chat::",
@@ -441,7 +484,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-memory-profile-prompt-helper-leak",
     classification: "deprecated",
-    description: "低层 build_memory_profile_prompt helper 泄漏到统一装配边界之外",
+    description:
+      "低层 build_memory_profile_prompt helper 泄漏到统一装配边界之外",
     patterns: ["build_memory_profile_prompt("],
     includePathPrefixes: ["src-tauri/src"],
     allowedPaths: ["src-tauri/src/services/memory_profile_prompt_service.rs"],
@@ -449,7 +493,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-memory-sources-prompt-helper-leak",
     classification: "deprecated",
-    description: "低层 build_memory_sources_prompt helper 泄漏到统一装配边界之外",
+    description:
+      "低层 build_memory_sources_prompt helper 泄漏到统一装配边界之外",
     patterns: ["build_memory_sources_prompt("],
     includePathPrefixes: ["src-tauri/src"],
     allowedPaths: [
@@ -525,7 +570,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-skill-runtime-command-bootstrap-leak",
     classification: "dead-candidate",
-    description: "已零引用的 skill runtime 准备与 provider fallback 回流到 skill_exec_cmd 命令层",
+    description:
+      "已零引用的 skill runtime 准备与 provider fallback 回流到 skill_exec_cmd 命令层",
     patterns: [
       "ensure_browser_mcp_tools_registered(",
       "ensure_social_image_tool_registered(",
@@ -540,7 +586,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-skill-catalog-command-leak",
     classification: "dead-candidate",
-    description: "已零引用的 skill catalog 枚举与详情装配回流到 skill_exec_cmd 命令层",
+    description:
+      "已零引用的 skill catalog 枚举与详情装配回流到 skill_exec_cmd 命令层",
     patterns: [
       "get_skill_roots(",
       "load_skills_from_directory(",
@@ -557,9 +604,10 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-skill-mode-branch-command-leak",
     classification: "dead-candidate",
-    description: "已零引用的 skill execution_mode 分支回流到 skill_exec_cmd 命令层",
+    description:
+      "已零引用的 skill execution_mode 分支回流到 skill_exec_cmd 命令层",
     patterns: [
-      "skill.execution_mode == \"workflow\"",
+      'skill.execution_mode == "workflow"',
       "!skill.workflow_steps.is_empty()",
       "execute_skill_workflow(",
       "execute_skill_prompt(",
@@ -581,7 +629,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-service-agent-table-query-leak",
     classification: "dead-candidate",
-    description: "已零引用的 Tauri service 层 direct agent_sessions/agent_messages 查询回流",
+    description:
+      "已零引用的 Tauri service 层 direct agent_sessions/agent_messages 查询回流",
     patterns: [
       "FROM agent_sessions s",
       "FROM agent_messages m",
@@ -593,8 +642,12 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-service-model-usage-table-query-leak",
     classification: "dead-candidate",
-    description: "已零引用的 Tauri service 层 direct model_usage_stats 查询回流",
-    patterns: ["FROM model_usage_stats", "SELECT COUNT(*) FROM model_usage_stats"],
+    description:
+      "已零引用的 Tauri service 层 direct model_usage_stats 查询回流",
+    patterns: [
+      "FROM model_usage_stats",
+      "SELECT COUNT(*) FROM model_usage_stats",
+    ],
     includePathPrefixes: ["src-tauri/src/services"],
     allowedPaths: [],
   },
@@ -617,12 +670,15 @@ const rustTextSurfaceMonitors = [
     description: "legacy runtime queue 表名从数据库迁移边界向外扩散",
     patterns: ["agent_runtime_queued_turns"],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
-    allowedPaths: ["src-tauri/crates/core/src/database/agent_runtime_queue_repository.rs"],
+    allowedPaths: [
+      "src-tauri/crates/core/src/database/agent_runtime_queue_repository.rs",
+    ],
   },
   {
     id: "rust-agent-runtime-legacy-queue-migration-leak",
     classification: "dead-candidate",
-    description: "已零引用的 legacy runtime queue 启动迁移 helper 回流到其他模块",
+    description:
+      "已零引用的 legacy runtime queue 启动迁移 helper 回流到其他模块",
     patterns: ["migrate_legacy_runtime_queue_to_aster_store("],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
     allowedPaths: [],
@@ -638,15 +694,20 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-agent-session-structured-todo-helper-bypass",
     classification: "dead-candidate",
-    description: "已零引用的 Lime 业务层绕过 unified todo helper 直接读取 TodoListState",
-    patterns: ["TodoListState::from_extension_data(", "TodoListState::from_markdown("],
+    description:
+      "已零引用的 Lime 业务层绕过 unified todo helper 直接读取 TodoListState",
+    patterns: [
+      "TodoListState::from_extension_data(",
+      "TodoListState::from_markdown(",
+    ],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
     allowedPaths: [],
   },
   {
     id: "rust-services-default-workspace-query-leak",
     classification: "dead-candidate",
-    description: "已零引用的 services crate direct 默认 workspace root 查询回流",
+    description:
+      "已零引用的 services crate direct 默认 workspace root 查询回流",
     patterns: ["SELECT root_path FROM workspaces WHERE is_default = 1 LIMIT 1"],
     includePathPrefixes: ["src-tauri/crates/services/src"],
     allowedPaths: [],
@@ -670,7 +731,9 @@ const rustTextSurfaceMonitors = [
       "AgentDao::update_working_dir(",
       "AgentDao::update_execution_strategy(",
     ],
-    allowedPaths: ["src-tauri/crates/core/src/database/agent_session_repository.rs"],
+    allowedPaths: [
+      "src-tauri/crates/core/src/database/agent_session_repository.rs",
+    ],
   },
   {
     id: "rust-agent-session-direct-delete",
@@ -684,7 +747,9 @@ const rustTextSurfaceMonitors = [
     classification: "deprecated",
     description: "Rust 业务层 direct AgentDao::create_session 回流",
     patterns: ["AgentDao::create_session("],
-    allowedPaths: ["src-tauri/crates/core/src/database/agent_session_repository.rs"],
+    allowedPaths: [
+      "src-tauri/crates/core/src/database/agent_session_repository.rs",
+    ],
   },
   {
     id: "rust-agent-dao-row-type-leak",
@@ -747,6 +812,92 @@ const rustTextSurfaceMonitors = [
     allowedPaths: [],
   },
   {
+    id: "rust-agent-tool-permission-public-module-leak",
+    classification: "dead-candidate",
+    description: "lime-agent 重新对 crate 外暴露旧 tool_permissions 模块",
+    patterns: ["pub mod tool_permissions;"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-shell-security-public-module-leak",
+    classification: "dead-candidate",
+    description: "lime-agent 重新对 crate 外暴露旧 shell_security 模块",
+    patterns: ["pub mod shell_security;"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-tool-permission-module-compiled-leak",
+    classification: "dead-candidate",
+    description: "旧 tool_permissions 模块重新回到 lime-agent lib.rs 编译图",
+    patterns: ["mod tool_permissions;"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-shell-security-module-compiled-leak",
+    classification: "dead-candidate",
+    description: "旧 shell_security 模块重新回到 lime-agent lib.rs 编译图",
+    patterns: ["mod shell_security;"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-tool-permission-root-export-leak",
+    classification: "dead-candidate",
+    description: "lime-agent crate 根重新暴露旧 tool_permissions 类型出口",
+    patterns: ["pub use tool_permissions::"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-shell-security-root-export-leak",
+    classification: "dead-candidate",
+    description: "lime-agent crate 根重新暴露旧 shell_security 类型出口",
+    patterns: ["pub use shell_security::"],
+    includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-tool-permission-direct-module-usage",
+    classification: "dead-candidate",
+    description:
+      "上层模块重新 direct 依赖 lime_agent::tool_permissions 模块路径",
+    patterns: ["lime_agent::tool_permissions::"],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-shell-security-direct-module-usage",
+    classification: "dead-candidate",
+    description: "上层模块重新 direct 依赖 lime_agent::shell_security 模块路径",
+    patterns: ["lime_agent::shell_security::"],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-tool-permission-root-type-usage",
+    classification: "dead-candidate",
+    description: "上层模块重新 direct 依赖 lime_agent 根导出的旧权限类型",
+    patterns: [
+      "lime_agent::DynamicPermissionCheck",
+      "lime_agent::PermissionBehavior",
+      "lime_agent::ShellSecurityChecker",
+    ],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-tool-permission-internal-module-usage",
+    classification: "dead-candidate",
+    description:
+      "lime-agent 内部除兼容壳外重新扩散 crate::tool_permissions 模块依赖",
+    patterns: ["crate::tool_permissions::"],
+    includePathPrefixes: ["src-tauri/crates/agent/src"],
+    allowedPaths: ["src-tauri/crates/agent/src/shell_security.rs"],
+  },
+  {
     id: "rust-agent-integration-public-module-leak",
     classification: "dead-candidate",
     description: "agent 集成模块重新对外暴露 integration 模块路径",
@@ -773,7 +924,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-agent-subagent-direct-module-usage",
     classification: "dead-candidate",
-    description: "应用层重新 direct 依赖 crate::agent::subagent_scheduler 模块路径",
+    description:
+      "应用层重新 direct 依赖 crate::agent::subagent_scheduler 模块路径",
     patterns: ["crate::agent::subagent_scheduler::"],
     includePathPrefixes: ["src-tauri/src"],
     allowedPaths: [],
@@ -781,7 +933,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-aster-runtime-snapshot-helper-leak",
     classification: "dead-candidate",
-    description: "已零引用的 Lime 业务层 direct Aster runtime snapshot helper 回流",
+    description:
+      "已零引用的 Lime 业务层 direct Aster runtime snapshot helper 回流",
     patterns: ["load_session_runtime_snapshot("],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
     allowedPaths: [],
@@ -789,7 +942,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-aster-runtime-store-leak",
     classification: "dead-candidate",
-    description: "已零引用的 Lime 业务层 direct Aster shared runtime store 回流",
+    description:
+      "已零引用的 Lime 业务层 direct Aster shared runtime store 回流",
     patterns: [
       "shared_thread_runtime_store(",
       "initialize_shared_thread_runtime_store(",
@@ -801,33 +955,43 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-aster-runtime-store-public-require-api-leak",
     classification: "dead-candidate",
-    description: "Aster runtime support 重新对 crate 外暴露 require_aster_thread_runtime_store",
+    description:
+      "Aster runtime support 重新对 crate 外暴露 require_aster_thread_runtime_store",
     patterns: ["pub fn require_aster_thread_runtime_store("],
-    includePathPrefixes: ["src-tauri/crates/agent/src/aster_runtime_support.rs"],
+    includePathPrefixes: [
+      "src-tauri/crates/agent/src/aster_runtime_support.rs",
+    ],
     allowedPaths: [],
   },
   {
     id: "rust-aster-runtime-init-return-store-api-leak",
     classification: "dead-candidate",
-    description: "Aster runtime 启动初始化 API 重新向 crate 外返回 runtime store",
+    description:
+      "Aster runtime 启动初始化 API 重新向 crate 外返回 runtime store",
     patterns: [
       "pub fn initialize_aster_thread_runtime_store() -> Result<Arc<dyn ThreadRuntimeStore>, String>",
     ],
-    includePathPrefixes: ["src-tauri/crates/agent/src/aster_runtime_support.rs"],
+    includePathPrefixes: [
+      "src-tauri/crates/agent/src/aster_runtime_support.rs",
+    ],
     allowedPaths: [],
   },
   {
     id: "rust-aster-runtime-public-legacy-init-helper-leak",
     classification: "dead-candidate",
-    description: "Aster runtime support 重新对 crate 外暴露旧 initialize_aster_thread_runtime_store helper",
+    description:
+      "Aster runtime support 重新对 crate 外暴露旧 initialize_aster_thread_runtime_store helper",
     patterns: ["pub fn initialize_aster_thread_runtime_store("],
-    includePathPrefixes: ["src-tauri/crates/agent/src/aster_runtime_support.rs"],
+    includePathPrefixes: [
+      "src-tauri/crates/agent/src/aster_runtime_support.rs",
+    ],
     allowedPaths: [],
   },
   {
     id: "rust-aster-runtime-snapshot-root-export-leak",
     classification: "dead-candidate",
-    description: "lime-agent crate 根重新暴露 load_aster_runtime_snapshot helper",
+    description:
+      "lime-agent crate 根重新暴露 load_aster_runtime_snapshot helper",
     patterns: ["load_aster_runtime_snapshot"],
     includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
     allowedPaths: [],
@@ -835,16 +999,20 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-aster-runtime-queue-service-leak",
     classification: "dead-candidate",
-    description: "已零引用的 Lime 业务层 direct Aster shared runtime queue service 回流",
+    description:
+      "已零引用的 Lime 业务层 direct Aster shared runtime queue service 回流",
     patterns: [],
-    regexPatterns: [String.raw`(?<!require_)shared_session_runtime_queue_service\(`],
+    regexPatterns: [
+      String.raw`(?<!require_)shared_session_runtime_queue_service\(`,
+    ],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
     allowedPaths: [],
   },
   {
     id: "rust-aster-path-root-env-leak",
     classification: "dead-candidate",
-    description: "已零引用的 Lime 业务层 direct ASTER_PATH_ROOT 环境变量处理回流",
+    description:
+      "已零引用的 Lime 业务层 direct ASTER_PATH_ROOT 环境变量处理回流",
     patterns: ['"ASTER_PATH_ROOT"'],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
     allowedPaths: [],
@@ -852,7 +1020,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-aster-global-session-store-leak",
     classification: "dead-candidate",
-    description: "已零引用的 Aster 全局 session store 注册回流到统一 runtime support 边界之外",
+    description:
+      "已零引用的 Aster 全局 session store 注册回流到统一 runtime support 边界之外",
     patterns: ["set_global_session_store("],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
     allowedPaths: [],
@@ -1038,7 +1207,8 @@ const rustTextSurfaceMonitors = [
   {
     id: "rust-hardcoded-memory-path-leak",
     classification: "dead-candidate",
-    description: "已零引用的 memory 相关模块硬编码 legacy memory 或 AGENTS 路径",
+    description:
+      "已零引用的 memory 相关模块硬编码 legacy memory 或 AGENTS 路径",
     patterns: [
       "~/.lime/AGENTS.md",
       'join(".lime").join("AGENTS.md")',
@@ -1699,10 +1869,7 @@ const classificationDriftCandidates = [
     ),
   ...frontendTextResults
     .filter((result) =>
-      isStatusClassificationDrift(
-        getTextStatus(result),
-        result.classification,
-      ),
+      isStatusClassificationDrift(getTextStatus(result), result.classification),
     )
     .map(
       (result) =>
@@ -1710,10 +1877,7 @@ const classificationDriftCandidates = [
     ),
   ...rustTextResults
     .filter((result) =>
-      isStatusClassificationDrift(
-        getTextStatus(result),
-        result.classification,
-      ),
+      isStatusClassificationDrift(getTextStatus(result), result.classification),
     )
     .map(
       (result) =>

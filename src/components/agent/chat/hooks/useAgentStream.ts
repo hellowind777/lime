@@ -94,6 +94,7 @@ interface UseAgentStreamOptions {
   modelRef: MutableRefObject<string>;
   currentAssistantMsgIdRef: MutableRefObject<string | null>;
   currentStreamingSessionIdRef: MutableRefObject<string | null>;
+  currentStreamingEventNameRef: MutableRefObject<string | null>;
   warnedKeysRef: MutableRefObject<Set<string>>;
   getRequiredWorkspaceId: () => string;
   setWorkspacePathMissing: Dispatch<
@@ -120,6 +121,7 @@ export function useAgentStream(options: UseAgentStreamOptions) {
     modelRef,
     currentAssistantMsgIdRef,
     currentStreamingSessionIdRef,
+    currentStreamingEventNameRef,
     warnedKeysRef,
     getRequiredWorkspaceId,
     setWorkspacePathMissing,
@@ -165,9 +167,14 @@ export function useAgentStream(options: UseAgentStreamOptions) {
       activeStreamRef.current = nextActive;
       currentAssistantMsgIdRef.current = nextActive?.assistantMsgId ?? null;
       currentStreamingSessionIdRef.current = nextActive?.sessionId ?? null;
+      currentStreamingEventNameRef.current = nextActive?.eventName ?? null;
       setIsSending(Boolean(nextActive));
     },
-    [currentAssistantMsgIdRef, currentStreamingSessionIdRef],
+    [
+      currentAssistantMsgIdRef,
+      currentStreamingEventNameRef,
+      currentStreamingSessionIdRef,
+    ],
   );
 
   const clearActiveStreamIfMatch = useCallback(
@@ -797,10 +804,55 @@ export function useAgentStream(options: UseAgentStreamOptions) {
     [runtime, sessionIdRef, setQueuedTurns],
   );
 
+  const promoteQueuedTurn = useCallback(
+    async (queuedTurnId: string) => {
+      const activeSessionId = sessionIdRef.current;
+      if (!activeSessionId || !queuedTurnId.trim()) {
+        return false;
+      }
+
+      setQueuedTurns((prev) =>
+        prev
+          .filter((item) => item.queued_turn_id !== queuedTurnId)
+          .map((item, index) => ({
+            ...item,
+            position: index + 1,
+          })),
+      );
+
+      try {
+        const promoted = await runtime.promoteQueuedTurn(
+          activeSessionId,
+          queuedTurnId,
+        );
+        if (!promoted) {
+          const detail = await runtime.getSession(activeSessionId);
+          setQueuedTurns(detail.queued_turns ?? []);
+          return false;
+        }
+
+        toast.info("正在切换到该排队任务");
+        return true;
+      } catch (error) {
+        console.error("[AsterChat] 立即执行排队消息失败:", error);
+        toast.error("立即执行排队消息失败");
+        try {
+          const detail = await runtime.getSession(activeSessionId);
+          setQueuedTurns(detail.queued_turns ?? []);
+        } catch (refreshError) {
+          console.error("[AsterChat] 刷新排队状态失败:", refreshError);
+        }
+        return false;
+      }
+    },
+    [runtime, sessionIdRef, setQueuedTurns],
+  );
+
   return {
     isSending,
     sendMessage,
     stopSending,
+    promoteQueuedTurn,
     removeQueuedTurn,
   };
 }

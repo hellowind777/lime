@@ -13,12 +13,6 @@ fn arb_lead_time_mins() -> impl Strategy<Value = i64> {
     1i64..30i64
 }
 
-/// Generate a random offset from now in seconds (-3600 to +7200)
-/// Negative means past, positive means future
-fn arb_time_offset_secs() -> impl Strategy<Value = i64> {
-    -3600i64..7200i64
-}
-
 /// 生成不会与 lead_time 边界冲突的时间偏移
 /// 避免 time_offset_secs 恰好等于 lead_time_mins * 60 的情况
 #[allow(dead_code)]

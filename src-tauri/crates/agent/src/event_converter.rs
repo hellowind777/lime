@@ -1741,7 +1741,7 @@ mod tests {
         let extracted = extract_tool_result_data(&payload);
         assert_eq!(extracted.diagnostics.output_chars, 5);
         assert_eq!(extracted.diagnostics.image_count, 0);
-        assert_eq!(extracted.diagnostics.text_truncated, false);
+        assert!(!extracted.diagnostics.text_truncated);
         assert!(extracted.diagnostics.raw_json_bytes.is_some());
     }
 

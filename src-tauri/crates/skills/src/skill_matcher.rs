@@ -321,7 +321,7 @@ mod tests {
         let matcher = SkillMatcher::new(skills);
         let results = matcher.match_skills("review code quality and commit");
         // code-review 应该有更高的 confidence（匹配了更多 trigger）
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
     }
 
     #[test]

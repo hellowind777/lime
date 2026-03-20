@@ -6,7 +6,7 @@
 //!
 //! | 模型 | 字段名 | 多轮对话处理 |
 //! |------|--------|--------------|
-//! | DeepSeek R1/Reasoner | `reasoning_content` | 丢弃，只保留 `content` |
+//! | DeepSeek R1/Reasoner | `reasoning_content` | 新 user 回合前清空，当前回合保留 |
 //! | OpenAI o1/o3/o4 | `reasoning` | 通过 `previous_response_id` 引用 |
 //!
 //! # 设计原则
@@ -18,11 +18,8 @@
 //!
 //! # 使用状态
 //!
-//! 此模块为预留功能，将在 Proxy 层集成推理模型时启用。
-//! 目前代码已完成，等待在 `proxy_handler.rs` 中调用 `ReasoningHandler::preprocess_messages`。
-
-// 预留功能模块，暂未在主流程中调用
-#![allow(dead_code)]
+//! 当前已在 OpenAI 兼容 Provider 请求归一化阶段接入。
+//! 主要用于 DeepSeek R1/Reasoner 的 tool calls + thinking 场景。
 
 use lime_core::models::openai::ChatMessage;
 
@@ -66,9 +63,9 @@ impl ReasoningHandler {
     /// # DeepSeek 处理规则
     ///
     /// 根据 DeepSeek API 文档：
-    /// - 多轮对话时，历史消息中的 `reasoning_content` 应该被丢弃
-    /// - 只保留 `content` 字段用于上下文
-    /// - 这样可以节省网络带宽，避免 400 错误
+    /// - 新 user 回合开始后，上一轮 assistant 的 `reasoning_content` 应被清理
+    /// - 同一 user 回合中的 tool call 链路需要保留 assistant 的 `reasoning_content`
+    /// - 否则 DeepSeek Reasoner 在继续 tool calls 时可能返回 400 错误
     ///
     /// # 参数
     ///
@@ -90,28 +87,22 @@ impl ReasoningHandler {
 
     /// 处理 DeepSeek 消息
     ///
-    /// 清除历史消息中的 reasoning_content，只保留最后一条 assistant 消息的 reasoning_content
+    /// 清除最近一个 user 消息之前的 assistant reasoning_content，
+    /// 保留当前 user 回合内的 reasoning_content，以支持连续 tool calls。
     fn process_deepseek_messages(mut messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
-        // 先找出最后一条 assistant 消息的索引
-        let last_assistant_idx = messages
+        let last_user_idx = messages
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, m)| m.role == "assistant")
+            .find(|(_, m)| m.role == "user")
             .map(|(i, _)| i);
 
         for (i, msg) in messages.iter_mut().enumerate() {
-            // 只处理 assistant 消息
-            if msg.role != "assistant" {
+            if msg.role != "assistant" || msg.reasoning_content.is_none() {
                 continue;
             }
 
-            // 保留最后一条 assistant 消息的 reasoning_content（如果有 tool_calls）
-            // 因为 DeepSeek 在 tool calls 场景下需要这个字段
-            let is_last_assistant = Some(i) == last_assistant_idx;
-
-            if !is_last_assistant {
-                // 清除非最后一条 assistant 消息的 reasoning_content
+            if last_user_idx.is_some_and(|idx| i < idx) {
                 msg.reasoning_content = None;
             }
         }
@@ -220,5 +211,50 @@ mod tests {
         assert!(processed[1].reasoning_content.is_none());
         // 最后一条 assistant 消息的 reasoning_content 应该保留
         assert!(processed[3].reasoning_content.is_some());
+    }
+
+    #[test]
+    fn test_deepseek_keeps_reasoning_within_same_user_tool_chain() {
+        let messages = vec![
+            ChatMessage {
+                role: "user".to_string(),
+                content: Some(MessageContent::Text("帮我查天气".to_string())),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Some(MessageContent::Text(String::new())),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: Some("先确定城市".to_string()),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: Some(MessageContent::Text("上海".to_string())),
+                tool_calls: None,
+                tool_call_id: Some("call_1".to_string()),
+                reasoning_content: None,
+            },
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: Some(MessageContent::Text(String::new())),
+                tool_calls: None,
+                tool_call_id: None,
+                reasoning_content: Some("继续查询具体天气".to_string()),
+            },
+        ];
+
+        let processed = ReasoningHandler::preprocess_messages(messages, "deepseek-reasoner");
+
+        assert_eq!(
+            processed[1].reasoning_content.as_deref(),
+            Some("先确定城市")
+        );
+        assert_eq!(
+            processed[3].reasoning_content.as_deref(),
+            Some("继续查询具体天气")
+        );
     }
 }

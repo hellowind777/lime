@@ -181,6 +181,7 @@ export interface AgentThreadSubagentActivityItem extends AgentThreadItemBase {
   summary?: string;
   role?: string;
   model?: string;
+  session_id?: string;
 }
 
 export interface AgentThreadWarningItem extends AgentThreadItemBase {
@@ -239,6 +240,7 @@ export type StreamEvent =
   | StreamEventQueueRemoved
   | StreamEventQueueStarted
   | StreamEventQueueCleared
+  | StreamEventSubagentStatusChanged
   | StreamEventDone
   | StreamEventFinalDone
   | StreamEventWarning
@@ -402,6 +404,22 @@ export interface StreamEventQueueCleared {
   type: "queue_cleared";
   session_id: string;
   queued_turn_ids: string[];
+}
+
+export interface StreamEventSubagentStatusChanged {
+  type: "subagent_status_changed";
+  session_id: string;
+  root_session_id: string;
+  parent_session_id?: string;
+  status:
+    | "idle"
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "aborted"
+    | "closed"
+    | "not_found";
 }
 
 /**
@@ -690,6 +708,23 @@ export function parseStreamEvent(data: unknown): StreamEvent | null {
         queued_turn_ids: Array.isArray(event.queued_turn_ids)
           ? (event.queued_turn_ids as string[])
           : [],
+      };
+    case "subagent_status_changed":
+      return {
+        type: "subagent_status_changed",
+        session_id: (event.session_id as string) || "",
+        root_session_id: (event.root_session_id as string) || "",
+        parent_session_id: event.parent_session_id as string | undefined,
+        status:
+          (event.status as
+            | "idle"
+            | "queued"
+            | "running"
+            | "completed"
+            | "failed"
+            | "aborted"
+            | "closed"
+            | "not_found") || "idle",
       };
     case "final_done":
       return {

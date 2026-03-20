@@ -375,11 +375,12 @@ describe("PluginManager 任务可观测", () => {
       ),
     ).not.toBeNull();
     expect(container.textContent).toContain(
-      "部分已加载插件要求 Lime >= 0.89.0",
+      "建议先升级主程序，再继续安装或排查插件",
     );
     expect(container.textContent).toContain(
       "当前已加载插件中有 1 个插件要求更高主程序版本",
     );
+    expect(container.textContent).toContain("最高要求 Lime >= 0.89.0");
   });
 
   it("展示插件任务状态和队列统计", async () => {

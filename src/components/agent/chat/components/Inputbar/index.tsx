@@ -18,6 +18,7 @@ import type {
 } from "./hooks/useThemeWorkbenchInputState";
 import { type InputbarToolStates } from "./hooks/useInputbarToolState";
 import { useInputbarController } from "./hooks/useInputbarController";
+import type { TeamDefinition } from "../../utils/teamDefinitions";
 
 interface InputbarProps {
   input: string;
@@ -48,6 +49,8 @@ interface InputbarProps {
   onToggleTaskFiles?: () => void;
   /** 文件点击回调 */
   onTaskFileClick?: (file: TaskFile) => void;
+  /** 输入区上方并排浮层控件 */
+  overlayAccessory?: React.ReactNode;
   /** 角色列表（用于 @ 引用） */
   characters?: Character[];
   /** 技能列表（用于 @ 引用） */
@@ -85,7 +88,11 @@ interface InputbarProps {
   /** A2UI 表单已提交提示 */
   a2uiSubmissionNotice?: A2UISubmissionNoticeData | null;
   queuedTurns?: QueuedTurnSnapshot[];
+  onPromoteQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
   onRemoveQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
+  selectedTeam?: TeamDefinition | null;
+  onSelectTeam?: (team: TeamDefinition | null) => void;
+  onEnableSuggestedTeam?: (suggestedPresetId?: string) => void;
 }
 
 export const Inputbar: React.FC<InputbarProps> = ({
@@ -103,6 +110,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
   taskFilesExpanded = false,
   onToggleTaskFiles,
   onTaskFileClick,
+  overlayAccessory,
   characters = [],
   skills = [],
   isSkillsLoading = false,
@@ -128,7 +136,11 @@ export const Inputbar: React.FC<InputbarProps> = ({
   onA2UISubmit,
   a2uiSubmissionNotice,
   queuedTurns = [],
+  onPromoteQueuedTurn,
   onRemoveQueuedTurn,
+  selectedTeam,
+  onSelectTeam,
+  onEnableSuggestedTeam,
 }) => {
   const {
     textareaRef,
@@ -183,6 +195,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
     themeWorkbenchRunState,
     pendingA2UIForm,
     a2uiSubmissionNotice,
+    onEnableSuggestedTeam,
   });
 
   return (
@@ -202,6 +215,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
         taskFilesExpanded={taskFilesExpanded}
         onToggleTaskFiles={onToggleTaskFiles}
         onTaskFileClick={onTaskFileClick}
+        overlayAccessory={overlayAccessory}
         submissionNotice={visibleA2UISubmissionNotice}
         isSubmissionNoticeVisible={isA2UISubmissionNoticeVisible}
         pendingA2UIForm={pendingA2UIForm}
@@ -229,6 +243,8 @@ export const Inputbar: React.FC<InputbarProps> = ({
         onNavigateToSettings={onNavigateToSettings}
         onImportSkill={onImportSkill}
         onRefreshSkills={onRefreshSkills}
+        selectedTeam={selectedTeam}
+        onSelectTeam={onSelectTeam}
         onSend={handleSend}
         onToolClick={handleToolClick}
         activeTools={activeTools}
@@ -244,6 +260,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
         setExecutionStrategy={setExecutionStrategy}
         topExtra={topExtra}
         queuedTurns={queuedTurns}
+        onPromoteQueuedTurn={onPromoteQueuedTurn}
         onRemoveQueuedTurn={onRemoveQueuedTurn}
       />
     </InputbarSurface>

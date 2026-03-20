@@ -10,7 +10,7 @@ pub mod dispatcher;
 #[cfg(debug_assertions)]
 use axum::{
     extract::State,
-    http::{HeaderValue, Method},
+    http::{request::Parts as RequestParts, HeaderValue, Method},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[cfg(debug_assertions)]
 use tokio::sync::RwLock;
 #[cfg(debug_assertions)]
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 #[cfg(debug_assertions)]
 use crate::{app, database::DbConnection};
@@ -90,6 +90,23 @@ impl Default for DevBridgeConfig {
 pub struct DevBridgeServer;
 
 #[cfg(debug_assertions)]
+fn is_allowed_loopback_origin(origin: &HeaderValue, _request_parts: &RequestParts) -> bool {
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+
+    let Ok(parsed) = url::Url::parse(origin) else {
+        return false;
+    };
+
+    matches!(parsed.scheme(), "http" | "https")
+        && matches!(
+            parsed.host_str(),
+            Some("localhost") | Some("127.0.0.1") | Some("[::1]") | Some("::1")
+        )
+}
+
+#[cfg(debug_assertions)]
 impl DevBridgeServer {
     /// 启动开发桥接服务器
     ///
@@ -124,20 +141,13 @@ impl DevBridgeServer {
             shared_stats,
         };
 
-        let allowed_origins = vec![
-            HeaderValue::from_static("http://localhost:1420"),
-            HeaderValue::from_static("http://127.0.0.1:1420"),
-            HeaderValue::from_static("http://localhost:5173"),
-            HeaderValue::from_static("http://127.0.0.1:5173"),
-        ];
-
         let app = Router::new()
             .route("/invoke", post(invoke_command))
             .route("/health", get(health_check).post(health_check))
             .layer(
                 // CORS 配置 - 允许本地开发前端访问
                 CorsLayer::new()
-                    .allow_origin(allowed_origins)
+                    .allow_origin(AllowOrigin::predicate(is_allowed_loopback_origin))
                     .allow_methods([Method::POST, Method::GET, Method::OPTIONS])
                     .allow_headers([axum::http::header::CONTENT_TYPE]),
             )
@@ -195,4 +205,48 @@ async fn health_check() -> impl IntoResponse {
         "service": "DevBridge",
         "version": "1.0.0"
     }))
+}
+
+#[cfg(all(test, debug_assertions))]
+mod tests {
+    use super::is_allowed_loopback_origin;
+    use axum::http::{request::Parts as RequestParts, HeaderValue, Request};
+
+    fn empty_parts() -> RequestParts {
+        let request = Request::builder().uri("/invoke").body(()).unwrap();
+        let (parts, _) = request.into_parts();
+        parts
+    }
+
+    #[test]
+    fn allows_loopback_dev_origins_with_any_port() {
+        let parts = empty_parts();
+
+        assert!(is_allowed_loopback_origin(
+            &HeaderValue::from_static("http://127.0.0.1:1421"),
+            &parts,
+        ));
+        assert!(is_allowed_loopback_origin(
+            &HeaderValue::from_static("http://localhost:5173"),
+            &parts,
+        ));
+        assert!(is_allowed_loopback_origin(
+            &HeaderValue::from_static("https://localhost:3000"),
+            &parts,
+        ));
+    }
+
+    #[test]
+    fn rejects_non_loopback_origins() {
+        let parts = empty_parts();
+
+        assert!(!is_allowed_loopback_origin(
+            &HeaderValue::from_static("https://example.com"),
+            &parts,
+        ));
+        assert!(!is_allowed_loopback_origin(
+            &HeaderValue::from_static("http://192.168.1.10:1420"),
+            &parts,
+        ));
+    }
 }

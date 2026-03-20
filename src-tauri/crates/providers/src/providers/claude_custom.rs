@@ -140,35 +140,12 @@ impl ClaudeCustomProvider {
                     .parameters
                     .clone()
                     .unwrap_or_else(|| serde_json::json!({"type":"object","properties":{}}));
-                let extension = input_schema
-                    .get("x-lime")
-                    .or_else(|| input_schema.get("x_lime"))
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({}));
-                let mut input_examples = extension
-                    .get("input_examples")
-                    .or_else(|| extension.get("inputExamples"))
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                if input_examples.is_empty() {
-                    input_examples = lime_core::tool_calling::resolve_tool_input_examples(
-                        &function.name,
-                        &input_schema,
-                    );
-                }
-                let allowed_callers = extension
-                    .get("allowed_callers")
-                    .or_else(|| extension.get("allowedCallers"))
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .map(|v| v.trim().to_string())
-                            .filter(|v| !v.is_empty())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
+                let metadata = lime_core::tool_calling::extract_tool_surface_metadata(
+                    &function.name,
+                    &input_schema,
+                );
+                let input_examples = metadata.input_examples;
+                let allowed_callers = metadata.allowed_callers.unwrap_or_default();
 
                 let mut description = function.description.clone().unwrap_or_default();
                 if !input_examples.is_empty() && !description.contains("[InputExamples]") {
@@ -842,5 +819,76 @@ mod tests {
             .and_then(|v| v.as_array())
             .map(|arr| !arr.is_empty())
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn test_convert_openai_tool_to_anthropic_supports_x_lime_alias() {
+        let tool = Tool::Function {
+            function: FunctionDef {
+                name: "create_ticket".to_string(),
+                description: Some("Create support ticket".to_string()),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"}
+                    },
+                    "x_lime": {
+                        "inputExamples": [{"title":"Billing issue"}],
+                        "allowedCallers": ["tool_search"]
+                    }
+                })),
+            },
+        };
+
+        let converted = ClaudeCustomProvider::convert_openai_tool_to_anthropic(&tool)
+            .expect("tool should be converted");
+        let description = converted
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        assert!(description.contains("[InputExamples]"));
+        assert!(description.contains("[AllowedCallers]"));
+        assert_eq!(
+            converted["input_examples"],
+            serde_json::json!([{"title":"Billing issue"}])
+        );
+        assert_eq!(
+            converted["allowed_callers"],
+            serde_json::json!(["tool_search"])
+        );
+    }
+
+    #[test]
+    fn test_convert_openai_tool_to_anthropic_does_not_duplicate_markers() {
+        let tool = Tool::Function {
+            function: FunctionDef {
+                name: "create_ticket".to_string(),
+                description: Some(
+                    "Create support ticket\n\n[InputExamples] {\"title\":\"Preset\"}\n\n[AllowedCallers] assistant"
+                        .to_string(),
+                ),
+                parameters: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"}
+                    },
+                    "x-lime": {
+                        "input_examples": [{"title":"Billing issue"}],
+                        "allowed_callers": ["assistant"]
+                    }
+                })),
+            },
+        };
+
+        let converted = ClaudeCustomProvider::convert_openai_tool_to_anthropic(&tool)
+            .expect("tool should be converted");
+        let description = converted
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+
+        assert_eq!(description.matches("[InputExamples]").count(), 1);
+        assert_eq!(description.matches("[AllowedCallers]").count(), 1);
     }
 }

@@ -209,9 +209,32 @@ export function useInputbarToolState({
     ],
   );
 
+  const setSubagentEnabled = useCallback(
+    (enabled: boolean) => {
+      if (enabled === subagentEnabled) {
+        return;
+      }
+      updateToolStates({
+        webSearch: webSearchEnabled,
+        thinking: thinkingEnabled,
+        task: taskEnabled,
+        subagent: enabled,
+      });
+      toast.info(`多代理${enabled ? "偏好已开启" : "偏好已关闭"}`);
+    },
+    [
+      subagentEnabled,
+      taskEnabled,
+      thinkingEnabled,
+      updateToolStates,
+      webSearchEnabled,
+    ],
+  );
+
   return {
     activeTools,
     handleToolClick,
+    setSubagentEnabled,
     isFullscreen,
     thinkingEnabled,
     taskEnabled,

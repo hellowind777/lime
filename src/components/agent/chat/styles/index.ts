@@ -28,7 +28,7 @@ export const Navbar = styled.div<{ $compact?: boolean }>`
 
 export const MessageListContainer = styled(ScrollArea)`
   flex: 1;
-  padding: 12px 0 18px;
+  padding: 6px 0 14px;
   background:
     linear-gradient(
       180deg,

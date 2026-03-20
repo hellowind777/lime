@@ -492,6 +492,81 @@ impl Default for WorkspaceSandboxConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolExecutionWarningPolicyConfig {
+    #[default]
+    None,
+    ShellCommandRisk,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolExecutionRestrictionProfileConfig {
+    #[default]
+    None,
+    WorkspacePathRequired,
+    WorkspacePathOptional,
+    WorkspaceAbsolutePathRequired,
+    WorkspaceShellCommand,
+    AnalyzeImageInput,
+    SafeHttpsUrlRequired,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolExecutionSandboxProfileConfig {
+    #[default]
+    None,
+    WorkspaceCommand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ToolExecutionOverrideConfig {
+    #[serde(
+        default,
+        alias = "warningPolicy",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub warning_policy: Option<ToolExecutionWarningPolicyConfig>,
+    #[serde(
+        default,
+        alias = "restrictionProfile",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub restriction_profile: Option<ToolExecutionRestrictionProfileConfig>,
+    #[serde(
+        default,
+        alias = "sandboxProfile",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sandbox_profile: Option<ToolExecutionSandboxProfileConfig>,
+}
+
+impl ToolExecutionOverrideConfig {
+    pub fn is_default(value: &Self) -> bool {
+        value.warning_policy.is_none()
+            && value.restriction_profile.is_none()
+            && value.sandbox_profile.is_none()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ToolExecutionPolicyConfig {
+    #[serde(
+        default,
+        alias = "toolOverrides",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub tool_overrides: HashMap<String, ToolExecutionOverrideConfig>,
+}
+
+impl ToolExecutionPolicyConfig {
+    pub fn is_default(value: &Self) -> bool {
+        value.tool_overrides.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NativeAgentConfig {
     /// 是否使用默认系统提示词
@@ -518,6 +593,9 @@ pub struct NativeAgentConfig {
     /// workspace 本地 sandbox 配置（可选安全增强）
     #[serde(default, skip_serializing_if = "WorkspaceSandboxConfig::is_default")]
     pub workspace_sandbox: WorkspaceSandboxConfig,
+    /// 工具执行权限覆盖配置（默认策略之上的持久化覆盖）
+    #[serde(default, skip_serializing_if = "ToolExecutionPolicyConfig::is_default")]
+    pub tool_execution: ToolExecutionPolicyConfig,
 }
 
 fn default_use_default_prompt() -> bool {
@@ -546,6 +624,7 @@ impl Default for NativeAgentConfig {
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
             workspace_sandbox: WorkspaceSandboxConfig::default(),
+            tool_execution: ToolExecutionPolicyConfig::default(),
         }
     }
 }
@@ -573,7 +652,7 @@ fn current_workspace_preferences_schema_version() -> u8 {
 }
 
 fn default_enabled_themes() -> Vec<String> {
-    vec!["social-media".to_string(), "poster".to_string()]
+    vec!["social-media".to_string()]
 }
 
 impl Default for ContentCreatorConfig {
@@ -2637,7 +2716,7 @@ mod unit_tests {
         assert_eq!(config.content_creator.schema_version, 1);
         assert_eq!(
             config.content_creator.enabled_themes,
-            vec!["social-media".to_string(), "poster".to_string()]
+            vec!["social-media".to_string()]
         );
         assert_eq!(config.navigation.schema_version, 1);
         assert_eq!(
@@ -2654,6 +2733,70 @@ mod unit_tests {
                 "memory".to_string(),
             ]
         );
+        assert!(config.agent.tool_execution.tool_overrides.is_empty());
+    }
+
+    #[test]
+    fn test_tool_execution_policy_config_supports_camel_case_runtime_shape() {
+        let value = serde_json::json!({
+            "toolOverrides": {
+                "bash": {
+                    "warningPolicy": "none",
+                    "restrictionProfile": "workspace_path_required",
+                    "sandboxProfile": "none"
+                },
+                "Task": {
+                    "warning_policy": "shell_command_risk"
+                }
+            }
+        });
+
+        let parsed: ToolExecutionPolicyConfig =
+            serde_json::from_value(value).expect("tool execution config should deserialize");
+
+        assert_eq!(
+            parsed
+                .tool_overrides
+                .get("bash")
+                .and_then(|item| item.warning_policy),
+            Some(ToolExecutionWarningPolicyConfig::None)
+        );
+        assert_eq!(
+            parsed
+                .tool_overrides
+                .get("bash")
+                .and_then(|item| item.restriction_profile),
+            Some(ToolExecutionRestrictionProfileConfig::WorkspacePathRequired)
+        );
+        assert_eq!(
+            parsed
+                .tool_overrides
+                .get("Task")
+                .and_then(|item| item.warning_policy),
+            Some(ToolExecutionWarningPolicyConfig::ShellCommandRisk)
+        );
+    }
+
+    #[test]
+    fn test_tool_execution_policy_config_roundtrip_preserves_non_default_overrides() {
+        let config = ToolExecutionPolicyConfig {
+            tool_overrides: HashMap::from([(
+                "bash".to_string(),
+                ToolExecutionOverrideConfig {
+                    warning_policy: Some(ToolExecutionWarningPolicyConfig::None),
+                    restriction_profile: Some(
+                        ToolExecutionRestrictionProfileConfig::WorkspacePathRequired,
+                    ),
+                    sandbox_profile: Some(ToolExecutionSandboxProfileConfig::None),
+                },
+            )]),
+        };
+
+        let value = serde_json::to_value(&config).expect("tool execution config should serialize");
+        let parsed: ToolExecutionPolicyConfig =
+            serde_json::from_value(value).expect("tool execution config should deserialize");
+
+        assert_eq!(parsed, config);
     }
 
     #[test]
@@ -2682,7 +2825,7 @@ mod unit_tests {
         assert_eq!(config.content_creator.schema_version, 1);
         assert_eq!(
             config.content_creator.enabled_themes,
-            vec!["social-media".to_string(), "poster".to_string()]
+            vec!["social-media".to_string()]
         );
         assert_eq!(config.navigation.schema_version, 1);
         assert_eq!(

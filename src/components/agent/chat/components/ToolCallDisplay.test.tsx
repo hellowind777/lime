@@ -155,10 +155,173 @@ describe("ToolCallDisplay", () => {
 
     mountedRoots.push({ container, root });
 
-    expect(container.textContent).toContain("已搜索 2 组查询");
+    expect(container.textContent).toContain("已搜索");
+    expect(container.textContent).toContain("2");
     expect(container.textContent).toContain("3月13日国际新闻");
     expect(container.textContent).toContain("March 13 2026 world headlines");
+    expect(container.textContent).toContain("搜索 3月13日国际新闻");
+    expect(container.textContent).toContain("搜索 March 13 2026 world headlines");
     expect(container.textContent).toContain("中文日期检索");
     expect(container.textContent).toContain("头条检索");
+  });
+
+  it("连续完成的命令工具应聚合成一个 work group", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <ToolCallList
+          toolCalls={[
+            {
+              id: "tool-exec-1",
+              name: "bash",
+              arguments: JSON.stringify({ command: "pwd" }),
+              status: "completed",
+              result: { success: true, output: "/workspace\n" },
+              startTime: new Date("2026-03-20T12:00:00.000Z"),
+              endTime: new Date("2026-03-20T12:00:01.000Z"),
+            },
+            {
+              id: "tool-exec-2",
+              name: "bash",
+              arguments: JSON.stringify({ command: "ls -la" }),
+              status: "completed",
+              result: { success: true, output: "file-a\nfile-b\n" },
+              startTime: new Date("2026-03-20T12:00:02.000Z"),
+              endTime: new Date("2026-03-20T12:00:03.000Z"),
+            },
+          ]}
+        />,
+      );
+    });
+
+    mountedRoots.push({ container, root });
+
+    const groups = container.querySelectorAll('[data-testid="tool-call-work-group"]');
+    expect(groups).toHaveLength(1);
+    expect(container.textContent).toContain("已执行 2 条命令");
+    expect(container.textContent).toContain("2");
+    expect(container.textContent).toContain("pwd");
+    expect(container.textContent).toContain("ls -la");
+
+    act(() => {
+      const groupToggle = groups[0]?.querySelector("button") as HTMLButtonElement | null;
+      groupToggle?.click();
+    });
+
+    expect(container.textContent).toContain("执行 pwd");
+    expect(container.textContent).toContain("执行 ls -la");
+    expect(container.textContent).not.toContain("pwd · ls -la");
+  });
+
+  it("命令结果应进入代码块渲染，而不是裸文本标题重复", () => {
+    const { container } = renderTool({
+      id: "tool-exec-render-1",
+      name: "bash",
+      arguments: JSON.stringify({ command: "ls -la" }),
+      status: "completed",
+      result: {
+        success: true,
+        output: "/tmp\nfile-a\nfile-b\nfile-c\n",
+        metadata: {
+          exit_code: 0,
+          stdout_length: 24,
+          stderr_length: 0,
+        },
+      },
+      startTime: new Date("2026-03-20T12:10:00.000Z"),
+      endTime: new Date("2026-03-20T12:10:01.000Z"),
+    });
+
+    act(() => {
+      const toggle = container.querySelector(
+        'button[title="展开详情"]',
+      ) as HTMLButtonElement | null;
+      toggle?.click();
+    });
+
+    expect(container.textContent).toContain("已执行 ls -la");
+    expect(container.textContent).not.toContain("已执行已执行");
+    expect(
+      container.querySelector('[data-testid="tool-call-rendered-result"]'),
+    ).toBeTruthy();
+    expect(container.textContent).toContain("text");
+    expect(container.textContent).toContain("Copy");
+  });
+
+  it("应为浏览器、委派、任务输出与交互类工具生成具体动作句", () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    act(() => {
+      root.render(
+        <ToolCallList
+          toolCalls={[
+            {
+              id: "tool-browser-1",
+              name: "mcp__lime-browser__browser_navigate",
+              arguments: JSON.stringify({ url: "https://example.com/docs" }),
+              status: "completed",
+              result: { success: true, output: "ok" },
+              startTime: new Date("2026-03-20T12:20:00.000Z"),
+              endTime: new Date("2026-03-20T12:20:01.000Z"),
+            },
+            {
+              id: "tool-subagent-1",
+              name: "spawn_agent",
+              arguments: JSON.stringify({ description: "修复登录页" }),
+              status: "running",
+              startTime: new Date("2026-03-20T12:20:02.000Z"),
+            },
+            {
+              id: "tool-output-1",
+              name: "TaskOutput",
+              arguments: JSON.stringify({ task_id: "video-task-1" }),
+              status: "completed",
+              result: { success: true, output: "done" },
+              startTime: new Date("2026-03-20T12:20:03.000Z"),
+              endTime: new Date("2026-03-20T12:20:04.000Z"),
+            },
+            {
+              id: "tool-skill-1",
+              name: "load_skill",
+              arguments: JSON.stringify({ name: "lime-governance" }),
+              status: "completed",
+              result: { success: true, output: "loaded" },
+              startTime: new Date("2026-03-20T12:20:05.000Z"),
+              endTime: new Date("2026-03-20T12:20:06.000Z"),
+            },
+            {
+              id: "tool-glob-1",
+              name: "glob",
+              arguments: JSON.stringify({ pattern: "src/**/*.tsx" }),
+              status: "completed",
+              result: { success: true, output: "matched" },
+              startTime: new Date("2026-03-20T12:20:07.000Z"),
+              endTime: new Date("2026-03-20T12:20:08.000Z"),
+            },
+            {
+              id: "tool-input-1",
+              name: "request_user_input",
+              arguments: JSON.stringify({ question: "需要继续吗？" }),
+              status: "running",
+              startTime: new Date("2026-03-20T12:20:09.000Z"),
+            },
+          ]}
+        />,
+      );
+    });
+
+    mountedRoots.push({ container, root });
+
+    expect(container.textContent).toContain("已打开 https://example.com/docs");
+    expect(container.textContent).toContain("正在委派 修复登录页");
+    expect(container.textContent).toContain("已读取输出 video-task-1");
+    expect(container.textContent).toContain("已加载技能 lime-governance");
+    expect(container.textContent).toContain("已列出 src/**/*.tsx");
+    expect(container.textContent).toContain("等待输入 需要继续吗？");
   });
 });

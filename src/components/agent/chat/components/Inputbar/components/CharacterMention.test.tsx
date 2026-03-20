@@ -208,6 +208,17 @@ function typeAt(textarea: HTMLTextAreaElement) {
   });
 }
 
+async function typeAtAndWait(textarea: HTMLTextAreaElement) {
+  await act(async () => {
+    await import("./CharacterMentionPanel");
+  });
+
+  typeAt(textarea);
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 function createSkill(name: string, key: string, installed: boolean): Skill {
   return {
     key,
@@ -241,19 +252,19 @@ function createCharacter(name: string): Character {
 }
 
 describe("CharacterMention", () => {
-  it("输入 @ 当次应弹出提及面板（不依赖受控 value 同步）", () => {
+  it("输入 @ 当次应弹出提及面板（不依赖受控 value 同步）", async () => {
     const container = renderHarness({
       characters: [createCharacter("测试角色")],
       syncValue: false,
     });
     const textarea = getTextarea(container);
 
-    typeAt(textarea);
+    await typeAtAndWait(textarea);
 
     expect(document.body.textContent).toContain("测试角色");
   });
 
-  it("无角色和技能时仍显示空态，并可跳转技能设置", () => {
+  it("无角色和技能时仍显示空态，并可跳转技能设置", async () => {
     const onNavigateToSettings = vi.fn<() => void>();
     const container = renderHarness({
       characters: [],
@@ -262,7 +273,7 @@ describe("CharacterMention", () => {
     });
     const textarea = getTextarea(container);
 
-    typeAt(textarea);
+    await typeAtAndWait(textarea);
 
     expect(document.body.textContent).toContain("暂无可用角色或技能");
     const settingsButton = Array.from(document.body.querySelectorAll("button")).find(
@@ -276,7 +287,7 @@ describe("CharacterMention", () => {
     expect(onNavigateToSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("未提供 onSelectSkill 时，选择已安装技能应回填到输入框", () => {
+  it("未提供 onSelectSkill 时，选择已安装技能应回填到输入框", async () => {
     const onChangeSpy = vi.fn<(value: string) => void>();
     const container = renderHarness({
       skills: [createSkill("技能A", "skill-a", true)],
@@ -284,7 +295,7 @@ describe("CharacterMention", () => {
     });
     const textarea = getTextarea(container);
 
-    typeAt(textarea);
+    await typeAtAndWait(textarea);
 
     const skillButton = Array.from(document.body.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("技能A"),

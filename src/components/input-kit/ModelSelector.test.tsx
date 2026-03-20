@@ -131,8 +131,10 @@ afterEach(() => {
 });
 
 describe("ModelSelector", () => {
-  it("关闭状态下应延后加载模型选择数据", () => {
-    renderModelSelector();
+  it("禁用后台预加载时，关闭状态下应延后加载模型选择数据", () => {
+    renderModelSelector({
+      backgroundPreload: "disabled",
+    });
 
     expect(mockUseConfiguredProviders).toHaveBeenCalledWith({
       autoLoad: false,

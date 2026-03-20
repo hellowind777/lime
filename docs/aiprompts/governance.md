@@ -120,13 +120,20 @@ compat 层禁止：
 
 ```bash
 npm run governance:legacy-report
+npm run test:contracts
 ```
 
-它用于扫描：
+- `npm run governance:legacy-report` 用于扫描：
+  - 已被判定为 `deprecated` / `dead-candidate` 的前端入口
+  - 旧 Tauri 命令是否仍然只收口在指定 API 网关
+  - 哪些兼容壳层已经零引用，可以进入删除候选
+- `npm run test:contracts` 用于检查跨层命令契约：
+  - 前端 `safeInvoke(...)` / `invoke(...)` 的实际命令调用
+  - Rust `tauri::generate_handler!` 的实际注册表
+  - `agentCommandCatalog` 中的 `deprecated` 命令与 `runtime gateway` 命令边界
+  - `mockPriorityCommands` 与 `defaultMocks` 是否仍然同步
 
-- 已被判定为 `deprecated` / `dead-candidate` 的前端入口
-- 旧 Tauri 命令是否仍然只收口在指定 API 网关
-- 哪些兼容壳层已经零引用，可以进入删除候选
+只看其中一侧都不够。只要能力仍然依赖命令边界，至少要同时看前端调用、Rust 注册、deprecated 目录、mock 集合这四个面。
 
 原则只有一句：
 
@@ -195,6 +202,11 @@ npm run governance:legacy-report
 
 至少加一条能自动失败的规则，阻止旧路径继续增长。
 
+如果改动涉及 Tauri 命令、前端 API 网关、bridge 或 mock，优先补：
+
+- `npm run test:contracts`
+- `npm run governance:legacy-report`
+
 ### 第五步：迁旁路
 
 确认统计、记忆、搜索、报表、审计、任务系统不再依赖旧实现。
@@ -209,6 +221,7 @@ npm run governance:legacy-report
 
 - 前端唯一入口是不是 `useAgentChatUnified -> useAsterAgentChat`，还是 `useChat` / `useAgentChat` / `useUnifiedChat` 还在继续长逻辑？
 - Rust 唯一入口是不是 `agent_runtime_*`，还是 `chat_*` / `general_chat_*` / `agent_*` / `aster_agent_*` 还在平行演进？
+- 前端 `safeInvoke(...)` / `invoke(...)`、Rust `tauri::generate_handler!`、`agentCommandCatalog`、`mockPriorityCommands` / `defaultMocks` 这四个命令边界是不是仍然一致，还是已经产生漂移？
 - 数据事实源是不是同一组表 / 同一套 Repository，还是还在同时写 `agent_*` 与 `general_chat_*`？
 - 统计、记忆等旁路是不是已经切到新路径，还是还在读旧表？
 

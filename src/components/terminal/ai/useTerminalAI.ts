@@ -16,10 +16,6 @@ import {
   startAgentProcess,
   getAgentProcessStatus,
   submitAgentRuntimeTurn,
-  sendTerminalCommandResponse,
-  sendTermScrollbackResponse,
-  type TerminalCommandRequest,
-  type TermScrollbackRequest,
 } from "@/lib/api/agentRuntime";
 import { parseStreamEvent, type StreamEvent } from "@/lib/api/agentStream";
 import { requireDefaultProjectId } from "@/lib/api/project";
@@ -181,9 +177,8 @@ export function useTerminalAI(
 
     try {
       const resolvedWorkspaceId = await ensureWorkspaceId();
-      const createdSessionId = await createAgentRuntimeSession(
-        resolvedWorkspaceId,
-      );
+      const createdSessionId =
+        await createAgentRuntimeSession(resolvedWorkspaceId);
 
       setSessionId(createdSessionId);
       return createdSessionId;
@@ -512,162 +507,6 @@ export function useTerminalAI(
   }, []);
 
   /**
-   * 监听后端发送的终端命令请求
-   */
-  useEffect(() => {
-    if (!terminalSessionId) return;
-
-    let unlisten: UnlistenFn | null = null;
-
-    const setupListener = async () => {
-      unlisten = await safeListen<TerminalCommandRequest>(
-        "terminal_command_request",
-        (event) => {
-          const request = event.payload;
-          console.log("[useTerminalAI] 收到终端命令请求:", request);
-
-          // 创建待审批命令
-          const pendingCommand: PendingTerminalCommand = {
-            id: request.request_id,
-            command: request.command,
-            status: "pending",
-            createdAt: new Date(),
-            workingDir: request.working_dir,
-            timeoutSecs: request.timeout_secs,
-          };
-
-          pendingCommandsRef.current.set(pendingCommand.id, pendingCommand);
-          setPendingCommands(Array.from(pendingCommandsRef.current.values()));
-
-          // 如果开启了自动执行，直接批准命令
-          if (configRef.current.autoExecute) {
-            console.log("[useTerminalAI] 自动执行模式已启用，自动批准命令");
-            // 使用 setTimeout 确保状态更新后再执行
-            setTimeout(() => {
-              if (approveCommandRef.current) {
-                approveCommandRef.current(pendingCommand.id);
-              }
-            }, 0);
-            // 不显示 toast，避免遮挡终端输出
-            console.log("[useTerminalAI] AI 命令自动执行:", request.command);
-          } else {
-            // 显示通知，需要手动批准（这个保留，因为需要用户注意）
-            toast.info("AI 请求执行命令，请审批", {
-              description:
-                request.command.slice(0, 50) +
-                (request.command.length > 50 ? "..." : ""),
-            });
-          }
-        },
-      );
-    };
-
-    setupListener();
-
-    return () => {
-      if (unlisten) {
-        unlisten();
-      }
-    };
-  }, [terminalSessionId]);
-
-  /**
-   * 监听后端发送的终端滚动缓冲区请求
-   */
-  useEffect(() => {
-    if (!terminalSessionId) return;
-
-    let unlisten: UnlistenFn | null = null;
-
-    const setupListener = async () => {
-      unlisten = await safeListen<TermScrollbackRequest>(
-        "term_get_scrollback_request",
-        async (event) => {
-          const request = event.payload;
-          console.log("[useTerminalAI] 收到终端滚动缓冲区请求:", request);
-
-          try {
-            // 获取终端输出
-            const output = getTerminalOutput ? getTerminalOutput() : null;
-
-            if (!output) {
-              // 没有输出
-              await sendTermScrollbackResponse({
-                request_id: request.request_id,
-                success: true,
-                total_lines: 0,
-                line_start: 0,
-                line_end: 0,
-                content: "",
-                has_more: false,
-              });
-              return;
-            }
-
-            // 分割成行
-            const lines = output.split("\n");
-            const totalLines = lines.length;
-
-            // 计算实际的起始和结束行号
-            const requestedStart = request.line_start ?? 0;
-            const requestedCount = request.count ?? totalLines;
-
-            const actualStart = Math.max(
-              0,
-              Math.min(requestedStart, totalLines - 1),
-            );
-            const actualEnd = Math.min(
-              actualStart + requestedCount,
-              totalLines,
-            );
-
-            // 提取请求的行
-            const requestedLines = lines.slice(actualStart, actualEnd);
-            const content = requestedLines.join("\n");
-
-            // 发送响应
-            await sendTermScrollbackResponse({
-              request_id: request.request_id,
-              success: true,
-              total_lines: totalLines,
-              line_start: actualStart,
-              line_end: actualEnd,
-              content,
-              has_more: actualEnd < totalLines,
-            });
-
-            console.log(
-              `[useTerminalAI] 已发送滚动缓冲区响应: ${actualStart}-${actualEnd}/${totalLines} 行`,
-            );
-          } catch (error) {
-            console.error("[useTerminalAI] 处理滚动缓冲区请求失败:", error);
-
-            // 发送错误响应
-            await sendTermScrollbackResponse({
-              request_id: request.request_id,
-              success: false,
-              total_lines: 0,
-              line_start: 0,
-              line_end: 0,
-              content: "",
-              has_more: false,
-              error: error instanceof Error ? error.message : String(error),
-            });
-          }
-        },
-      );
-    };
-
-    setupListener();
-
-    return () => {
-      if (unlisten) {
-        unlisten();
-      }
-    };
-  }, [terminalSessionId, getTerminalOutput]);
-
-  /**
    * 发送命令到终端（需要用户审批）- 本地创建的命令
    */
   const sendCommandToTerminal = useCallback(
@@ -685,6 +524,12 @@ export function useTerminalAI(
 
       pendingCommandsRef.current.set(pendingCommand.id, pendingCommand);
       setPendingCommands(Array.from(pendingCommandsRef.current.values()));
+
+      if (configRef.current.autoExecute) {
+        setTimeout(() => {
+          approveCommandRef.current?.(pendingCommand.id);
+        }, 0);
+      }
 
       return pendingCommand.id;
     },
@@ -725,35 +570,6 @@ export function useTerminalAI(
         pendingCommandsRef.current.set(commandId, command);
         setPendingCommands(Array.from(pendingCommandsRef.current.values()));
 
-        // 发送响应给后端（告知 TerminalTool 命令已执行）
-        // 对于简单的 echo 命令，模拟输出以避免 AI 重复执行
-        let simulatedOutput = "";
-        const echoMatch = command.command.match(/^echo\s+(.+)$/i);
-        if (echoMatch) {
-          // 提取 echo 的内容（去除引号）
-          let echoContent = echoMatch[1];
-          // 移除外层引号
-          if (
-            (echoContent.startsWith('"') && echoContent.endsWith('"')) ||
-            (echoContent.startsWith("'") && echoContent.endsWith("'"))
-          ) {
-            echoContent = echoContent.slice(1, -1);
-          }
-          simulatedOutput = `${echoContent}`;
-        }
-
-        // 构建明确的成功响应
-        const successOutput = simulatedOutput
-          ? `[COMMAND EXECUTED SUCCESSFULLY]\nOutput:\n${simulatedOutput}\n[END OF OUTPUT]`
-          : `[COMMAND EXECUTED SUCCESSFULLY]\nThe command "${command.command}" has been executed in the user's terminal.\nNote: Output is displayed in the terminal window. Do NOT re-execute this command.\n[END OF OUTPUT]`;
-
-        await sendTerminalCommandResponse({
-          request_id: commandId,
-          success: true,
-          output: successOutput,
-          rejected: false,
-        });
-
         // 不显示 toast，避免遮挡终端输出
         // 命令执行状态已经在 AI 面板中显示
         console.log("[useTerminalAI] 命令已执行:", command.command);
@@ -768,15 +584,6 @@ export function useTerminalAI(
         command.error = error instanceof Error ? error.message : String(error);
         pendingCommandsRef.current.set(commandId, command);
         setPendingCommands(Array.from(pendingCommandsRef.current.values()));
-
-        // 发送失败响应给后端
-        await sendTerminalCommandResponse({
-          request_id: commandId,
-          success: false,
-          output: "",
-          error: command.error,
-          rejected: false,
-        });
 
         toast.error(`命令执行失败: ${command.error}`);
       }
@@ -812,15 +619,6 @@ export function useTerminalAI(
       command.status = "rejected";
       pendingCommandsRef.current.set(commandId, command);
       setPendingCommands(Array.from(pendingCommandsRef.current.values()));
-
-      // 发送拒绝响应给后端
-      await sendTerminalCommandResponse({
-        request_id: commandId,
-        success: false,
-        output: "",
-        error: "用户拒绝执行此命令",
-        rejected: true,
-      });
 
       toast.info("命令已拒绝");
 

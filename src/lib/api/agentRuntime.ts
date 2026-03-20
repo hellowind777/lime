@@ -100,6 +100,73 @@ export interface AsterTodoItem {
   active_form?: string;
 }
 
+export interface AsterSubagentSessionInfo {
+  id: string;
+  name: string;
+  created_at: number;
+  updated_at: number;
+  session_type: string;
+  model?: string;
+  provider_name?: string;
+  working_dir?: string;
+  workspace_id?: string;
+  task_summary?: string;
+  role_hint?: string;
+  origin_tool?: string;
+  created_from_turn_id?: string;
+  profile_id?: string;
+  profile_name?: string;
+  role_key?: string;
+  team_preset_id?: string;
+  theme?: string;
+  output_contract?: string;
+  skill_ids?: string[];
+  skills?: AsterSubagentSkillInfo[];
+  runtime_status?:
+    | "idle"
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "aborted"
+    | "closed";
+  latest_turn_status?:
+    | "idle"
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "aborted"
+    | "closed";
+  queued_turn_count?: number;
+}
+
+export interface AsterSubagentSkillInfo {
+  id: string;
+  name: string;
+  description?: string;
+  source?: string;
+  directory?: string;
+}
+
+export interface AsterSubagentParentContext {
+  parent_session_id: string;
+  parent_session_name: string;
+  role_hint?: string;
+  task_summary?: string;
+  origin_tool?: string;
+  created_from_turn_id?: string;
+  profile_id?: string;
+  profile_name?: string;
+  role_key?: string;
+  team_preset_id?: string;
+  theme?: string;
+  output_contract?: string;
+  skill_ids?: string[];
+  skills?: AsterSubagentSkillInfo[];
+  sibling_subagent_sessions?: AsterSubagentSessionInfo[];
+}
+
 /**
  * TauriMessageContent（匹配后端 TauriMessageContent 枚举）
  */
@@ -142,6 +209,8 @@ export interface AsterSessionDetail {
   items?: AgentThreadItem[];
   queued_turns?: QueuedTurnSnapshot[];
   todo_items?: AsterTodoItem[];
+  child_subagent_sessions?: AsterSubagentSessionInfo[];
+  subagent_parent_context?: AsterSubagentParentContext;
 }
 
 export interface AgentTurnConfigSnapshot {
@@ -176,6 +245,11 @@ export interface AgentRuntimeRemoveQueuedTurnRequest {
   queued_turn_id: string;
 }
 
+export interface AgentRuntimePromoteQueuedTurnRequest {
+  session_id: string;
+  queued_turn_id: string;
+}
+
 export interface AgentRuntimeRespondActionRequest {
   session_id: string;
   request_id: string;
@@ -184,12 +258,272 @@ export interface AgentRuntimeRespondActionRequest {
   response?: string;
   user_data?: unknown;
   metadata?: Record<string, unknown>;
+  event_name?: string;
 }
 
 export interface AgentRuntimeUpdateSessionRequest {
   session_id: string;
   name?: string;
   execution_strategy?: AsterExecutionStrategy;
+}
+
+export interface AgentRuntimeSpawnSubagentRequest {
+  parent_session_id: string;
+  message: string;
+  agent_type?: string;
+  model?: string;
+  reasoning_effort?: string;
+  fork_context?: boolean;
+  profile_id?: string;
+  profile_name?: string;
+  role_key?: string;
+  skill_ids?: string[];
+  skill_directories?: string[];
+  team_preset_id?: string;
+  theme?: string;
+  system_overlay?: string;
+  output_contract?: string;
+}
+
+export interface AgentRuntimeSpawnSubagentResponse {
+  agent_id: string;
+  nickname?: string;
+}
+
+export interface AgentRuntimeSendSubagentInputRequest {
+  id: string;
+  message: string;
+  interrupt?: boolean;
+}
+
+export interface AgentRuntimeSendSubagentInputResponse {
+  submission_id: string;
+}
+
+export interface AgentRuntimeStatusSnapshot {
+  session_id: string;
+  kind:
+    | "idle"
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "aborted"
+    | "closed"
+    | "not_found";
+  latest_turn_id?: string;
+  latest_turn_status?:
+    | "idle"
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "aborted"
+    | "closed"
+    | "not_found";
+  queued_turn_count?: number;
+  closed?: boolean;
+}
+
+export interface AgentRuntimeWaitSubagentsRequest {
+  ids: string[];
+  timeout_ms?: number;
+}
+
+export interface AgentRuntimeWaitSubagentsResponse {
+  status: Record<string, AgentRuntimeStatusSnapshot>;
+  timed_out: boolean;
+}
+
+export interface AgentRuntimeResumeSubagentRequest {
+  id: string;
+}
+
+export interface AgentRuntimeResumeSubagentResponse {
+  status: AgentRuntimeStatusSnapshot;
+  cascade_session_ids: string[];
+  changed_session_ids: string[];
+}
+
+export interface AgentRuntimeCloseSubagentRequest {
+  id: string;
+}
+
+export interface AgentRuntimeCloseSubagentResponse {
+  previous_status: AgentRuntimeStatusSnapshot;
+  cascade_session_ids: string[];
+  changed_session_ids: string[];
+}
+
+export type AgentToolSurfaceProfile = "core" | "creator" | "browser_assist";
+
+export type AgentToolCapability =
+  | "planning"
+  | "delegation"
+  | "web_search"
+  | "skill_execution"
+  | "session_control"
+  | "content_creation"
+  | "browser_runtime"
+  | "workspace_io"
+  | "execution"
+  | "vision";
+
+export type AgentToolLifecycle = "current" | "compat" | "deprecated";
+
+export type AgentToolSourceKind =
+  | "aster_builtin"
+  | "lime_injected"
+  | "browser_compatibility";
+
+export type AgentToolPermissionPlane =
+  | "session_allowlist"
+  | "parameter_restricted"
+  | "caller_filtered";
+
+export type AgentToolExecutionWarningPolicy = "none" | "shell_command_risk";
+
+export type AgentToolExecutionRestrictionProfile =
+  | "none"
+  | "workspace_path_required"
+  | "workspace_path_optional"
+  | "workspace_absolute_path_required"
+  | "workspace_shell_command"
+  | "analyze_image_input"
+  | "safe_https_url_required";
+
+export type AgentToolExecutionSandboxProfile = "none" | "workspace_command";
+export type AgentToolExecutionPolicySource =
+  | "default"
+  | "persisted"
+  | "runtime";
+
+export type AgentRuntimeExtensionSourceKind =
+  | "mcp_bridge"
+  | "runtime_extension";
+
+export interface AgentRuntimeToolInventoryRequest {
+  caller?: string;
+  creator?: boolean;
+  browserAssist?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AgentRuntimeToolInventorySurface {
+  creator: boolean;
+  browser_assist: boolean;
+}
+
+export interface AgentRuntimeToolInventoryCatalogEntry {
+  name: string;
+  profiles: AgentToolSurfaceProfile[];
+  capabilities: AgentToolCapability[];
+  lifecycle: AgentToolLifecycle;
+  source: AgentToolSourceKind;
+  permission_plane: AgentToolPermissionPlane;
+  workspace_default_allow: boolean;
+  execution_warning_policy: AgentToolExecutionWarningPolicy;
+  execution_warning_policy_source: AgentToolExecutionPolicySource;
+  execution_restriction_profile: AgentToolExecutionRestrictionProfile;
+  execution_restriction_profile_source: AgentToolExecutionPolicySource;
+  execution_sandbox_profile: AgentToolExecutionSandboxProfile;
+  execution_sandbox_profile_source: AgentToolExecutionPolicySource;
+}
+
+export interface AgentRuntimeToolInventoryRegistryEntry {
+  name: string;
+  description: string;
+  catalog_entry_name?: string;
+  catalog_source?: AgentToolSourceKind;
+  catalog_lifecycle?: AgentToolLifecycle;
+  catalog_permission_plane?: AgentToolPermissionPlane;
+  catalog_workspace_default_allow?: boolean;
+  catalog_execution_warning_policy?: AgentToolExecutionWarningPolicy;
+  catalog_execution_warning_policy_source?: AgentToolExecutionPolicySource;
+  catalog_execution_restriction_profile?: AgentToolExecutionRestrictionProfile;
+  catalog_execution_restriction_profile_source?: AgentToolExecutionPolicySource;
+  catalog_execution_sandbox_profile?: AgentToolExecutionSandboxProfile;
+  catalog_execution_sandbox_profile_source?: AgentToolExecutionPolicySource;
+  deferred_loading: boolean;
+  always_visible: boolean;
+  allowed_callers: string[];
+  tags: string[];
+  input_examples_count: number;
+  caller_allowed: boolean;
+  visible_in_context: boolean;
+}
+
+export interface AgentRuntimeToolInventoryExtensionSurfaceEntry {
+  extension_name: string;
+  description: string;
+  source_kind: AgentRuntimeExtensionSourceKind;
+  deferred_loading: boolean;
+  allowed_caller?: string;
+  available_tools: string[];
+  always_expose_tools: string[];
+  loaded_tools: string[];
+  searchable_tools: string[];
+}
+
+export interface AgentRuntimeToolInventoryExtensionToolEntry {
+  name: string;
+  description: string;
+  extension_name?: string;
+  source_kind: AgentRuntimeExtensionSourceKind;
+  deferred_loading: boolean;
+  allowed_caller?: string;
+  status: string;
+  caller_allowed: boolean;
+  visible_in_context: boolean;
+}
+
+export interface AgentRuntimeToolInventoryMcpEntry {
+  server_name: string;
+  name: string;
+  description: string;
+  deferred_loading: boolean;
+  always_visible: boolean;
+  allowed_callers: string[];
+  tags: string[];
+  input_examples_count: number;
+  caller_allowed: boolean;
+  visible_in_context: boolean;
+}
+
+export interface AgentRuntimeToolInventoryCounts {
+  catalog_total: number;
+  catalog_current_total: number;
+  catalog_compat_total: number;
+  catalog_deprecated_total: number;
+  default_allowed_total: number;
+  registry_total: number;
+  registry_visible_total: number;
+  registry_catalog_unmapped_total: number;
+  extension_surface_total: number;
+  extension_mcp_bridge_total: number;
+  extension_runtime_total: number;
+  extension_tool_total: number;
+  extension_tool_visible_total: number;
+  mcp_server_total: number;
+  mcp_tool_total: number;
+  mcp_tool_visible_total: number;
+}
+
+export interface AgentRuntimeToolInventory {
+  request: {
+    caller: string;
+    surface: AgentRuntimeToolInventorySurface;
+  };
+  agent_initialized: boolean;
+  warnings: string[];
+  mcp_servers: string[];
+  default_allowed_tools: string[];
+  counts: AgentRuntimeToolInventoryCounts;
+  catalog_tools: AgentRuntimeToolInventoryCatalogEntry[];
+  registry_tools: AgentRuntimeToolInventoryRegistryEntry[];
+  extension_surfaces: AgentRuntimeToolInventoryExtensionSurfaceEntry[];
+  extension_tools: AgentRuntimeToolInventoryExtensionToolEntry[];
+  mcp_tools: AgentRuntimeToolInventoryMcpEntry[];
 }
 
 export async function submitAgentRuntimeTurn(
@@ -208,6 +542,12 @@ export async function removeAgentRuntimeQueuedTurn(
   request: AgentRuntimeRemoveQueuedTurnRequest,
 ): Promise<boolean> {
   return await safeInvoke("agent_runtime_remove_queued_turn", { request });
+}
+
+export async function promoteAgentRuntimeQueuedTurn(
+  request: AgentRuntimePromoteQueuedTurnRequest,
+): Promise<boolean> {
+  return await safeInvoke("agent_runtime_promote_queued_turn", { request });
 }
 
 export async function respondAgentRuntimeAction(
@@ -295,10 +635,46 @@ export async function getAgentRuntimeSession(
   };
 }
 
+export async function getAgentRuntimeToolInventory(
+  request: AgentRuntimeToolInventoryRequest = {},
+): Promise<AgentRuntimeToolInventory> {
+  return await safeInvoke("agent_runtime_get_tool_inventory", { request });
+}
+
 export async function updateAgentRuntimeSession(
   request: AgentRuntimeUpdateSessionRequest,
 ): Promise<void> {
   return await safeInvoke("agent_runtime_update_session", { request });
+}
+
+export async function spawnAgentRuntimeSubagent(
+  request: AgentRuntimeSpawnSubagentRequest,
+): Promise<AgentRuntimeSpawnSubagentResponse> {
+  return await safeInvoke("agent_runtime_spawn_subagent", { request });
+}
+
+export async function sendAgentRuntimeSubagentInput(
+  request: AgentRuntimeSendSubagentInputRequest,
+): Promise<AgentRuntimeSendSubagentInputResponse> {
+  return await safeInvoke("agent_runtime_send_subagent_input", { request });
+}
+
+export async function waitAgentRuntimeSubagents(
+  request: AgentRuntimeWaitSubagentsRequest,
+): Promise<AgentRuntimeWaitSubagentsResponse> {
+  return await safeInvoke("agent_runtime_wait_subagents", { request });
+}
+
+export async function resumeAgentRuntimeSubagent(
+  request: AgentRuntimeResumeSubagentRequest,
+): Promise<AgentRuntimeResumeSubagentResponse> {
+  return await safeInvoke("agent_runtime_resume_subagent", { request });
+}
+
+export async function closeAgentRuntimeSubagent(
+  request: AgentRuntimeCloseSubagentRequest,
+): Promise<AgentRuntimeCloseSubagentResponse> {
+  return await safeInvoke("agent_runtime_close_subagent", { request });
 }
 
 export async function deleteAgentRuntimeSession(
@@ -365,111 +741,5 @@ export async function configureAsterProvider(
   return await safeInvoke("aster_agent_configure_provider", {
     request: config,
     session_id: sessionId,
-  });
-}
-
-/**
- * 终端命令请求（从后端发送到前端）
- */
-export interface TerminalCommandRequest {
-  /** 请求 ID */
-  request_id: string;
-  /** 要执行的命令 */
-  command: string;
-  /** 工作目录（可选） */
-  working_dir?: string;
-  /** 超时时间（秒） */
-  timeout_secs: number;
-}
-
-/**
- * 终端命令响应（从前端发送到后端）
- */
-export interface TerminalCommandResponse {
-  /** 请求 ID */
-  request_id: string;
-  /** 是否成功 */
-  success: boolean;
-  /** 输出内容 */
-  output: string;
-  /** 错误信息 */
-  error?: string;
-  /** 退出码 */
-  exit_code?: number;
-  /** 是否被用户拒绝 */
-  rejected: boolean;
-}
-
-/**
- * 发送终端命令响应到后端
- *
- * 当用户批准或拒绝命令后，调用此函数将结果发送给 TerminalTool
- */
-export async function sendTerminalCommandResponse(
-  response: TerminalCommandResponse,
-): Promise<void> {
-  return await safeInvoke("agent_terminal_command_response", {
-    requestId: response.request_id,
-    success: response.success,
-    output: response.output,
-    error: response.error,
-    exitCode: response.exit_code,
-    rejected: response.rejected,
-  });
-}
-
-/**
- * 终端滚动缓冲区请求（从后端发送到前端）
- */
-export interface TermScrollbackRequest {
-  /** 请求 ID */
-  request_id: string;
-  /** 终端会话 ID */
-  session_id: string;
-  /** 起始行号（可选，从 0 开始） */
-  line_start?: number;
-  /** 读取行数（可选） */
-  count?: number;
-}
-
-/**
- * 终端滚动缓冲区响应（从前端发送到后端）
- */
-export interface TermScrollbackResponse {
-  /** 请求 ID */
-  request_id: string;
-  /** 是否成功 */
-  success: boolean;
-  /** 总行数 */
-  total_lines: number;
-  /** 实际返回的起始行号 */
-  line_start: number;
-  /** 实际返回的结束行号 */
-  line_end: number;
-  /** 输出内容 */
-  content: string;
-  /** 是否还有更多内容 */
-  has_more: boolean;
-  /** 错误信息 */
-  error?: string;
-}
-
-/**
- * 发送终端滚动缓冲区响应到后端
- *
- * 当前端读取终端输出历史后，调用此函数将结果发送给 TermScrollbackTool
- */
-export async function sendTermScrollbackResponse(
-  response: TermScrollbackResponse,
-): Promise<void> {
-  return await safeInvoke("agent_term_scrollback_response", {
-    requestId: response.request_id,
-    success: response.success,
-    totalLines: response.total_lines,
-    lineStart: response.line_start,
-    lineEnd: response.line_end,
-    content: response.content,
-    hasMore: response.has_more,
-    error: response.error,
   });
 }

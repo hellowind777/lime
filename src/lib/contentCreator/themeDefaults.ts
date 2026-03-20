@@ -1,4 +1,4 @@
-export const DEFAULT_ENABLED_CONTENT_THEME_IDS = ["social-media", "poster"];
+export const DEFAULT_ENABLED_CONTENT_THEME_IDS = ["social-media"];
 
 export function resolveEnabledContentThemes(savedThemes?: string[]): string[] {
   if (!savedThemes || savedThemes.length === 0) {

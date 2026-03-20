@@ -60,6 +60,13 @@ pub(super) async fn try_handle(
                 .ok_or_else(|| "模型注册服务未初始化".to_string())?;
             serde_json::to_value(service.get_sync_state().await)?
         }
+        "get_all_alias_configs" => {
+            let guard = state.model_registry.read().await;
+            let service = guard
+                .as_ref()
+                .ok_or_else(|| "模型注册服务未初始化".to_string())?;
+            serde_json::to_value(service.get_all_alias_configs().await)?
+        }
         "refresh_model_registry" => {
             let guard = state.model_registry.read().await;
             let service = guard

@@ -565,10 +565,16 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
             timestamp TEXT NOT NULL,
             tool_calls_json TEXT,
             tool_call_id TEXT,
+            reasoning_content TEXT,
             FOREIGN KEY (session_id) REFERENCES agent_sessions(id) ON DELETE CASCADE
         )",
         [],
     )?;
+
+    let _ = conn.execute(
+        "ALTER TABLE agent_messages ADD COLUMN reasoning_content TEXT",
+        [],
+    );
 
     // 创建 agent_messages 索引
     conn.execute(
@@ -1444,106 +1450,6 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn should_upgrade_legacy_browser_profile_table_with_transport_columns() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE browser_profiles (
-                id TEXT PRIMARY KEY,
-                profile_key TEXT NOT NULL UNIQUE,
-                name TEXT NOT NULL,
-                description TEXT,
-                site_scope TEXT,
-                launch_url TEXT,
-                profile_dir TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                last_used_at TEXT,
-                archived_at TEXT
-            )",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO browser_profiles (
-                id, profile_key, name, description, site_scope, launch_url, profile_dir,
-                created_at, updated_at, last_used_at, archived_at
-            ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, ?6, ?6, NULL, NULL)",
-            (
-                "profile-1",
-                "shop_us",
-                "美区资料",
-                "https://seller.example.com/",
-                "/tmp/lime/chrome_profiles/shop_us",
-                "2026-03-15T00:00:00Z",
-            ),
-        )
-        .unwrap();
-
-        create_tables(&conn).expect("应成功升级旧版 browser_profiles 表");
-
-        let mut columns = conn.prepare("PRAGMA table_info(browser_profiles)").unwrap();
-        let column_names = columns
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert!(column_names.iter().any(|name| name == "transport_kind"));
-        assert!(column_names
-            .iter()
-            .any(|name| name == "managed_profile_dir"));
-
-        let upgraded = conn
-            .query_row(
-                "SELECT transport_kind, managed_profile_dir
-                 FROM browser_profiles
-                 WHERE id = ?1",
-                ["profile-1"],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
-            )
-            .unwrap();
-        assert_eq!(upgraded.0, "managed_cdp");
-        assert_eq!(
-            upgraded.1.as_deref(),
-            Some("/tmp/lime/chrome_profiles/shop_us")
-        );
-    }
-
-    #[test]
-    fn should_upgrade_legacy_mcp_servers_table_with_enablement_columns() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute(
-            "CREATE TABLE mcp_servers (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                server_config TEXT NOT NULL,
-                description TEXT,
-                enabled_claude INTEGER DEFAULT 0
-            )",
-            [],
-        )
-        .unwrap();
-
-        create_tables(&conn).expect("应成功升级旧版 mcp_servers 表");
-
-        let mut columns = conn.prepare("PRAGMA table_info(mcp_servers)").unwrap();
-        let column_names = columns
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
-        assert!(column_names.iter().any(|name| name == "enabled_lime"));
-        assert!(column_names.iter().any(|name| name == "enabled_codex"));
-        assert!(column_names.iter().any(|name| name == "enabled_gemini"));
-        assert!(column_names.iter().any(|name| name == "created_at"));
-    }
-}
-
 /// 迁移：添加proxy_url列到provider_pool_credentials表
 /// 使用重建表结构的方式确保数据完整性
 fn migrate_add_proxy_url_column(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -1656,5 +1562,105 @@ fn migrate_add_proxy_url_column(conn: &Connection) -> Result<(), rusqlite::Error
             tracing::error!("proxy_url列迁移失败，已回滚: {}", e);
             Err(e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_upgrade_legacy_browser_profile_table_with_transport_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE browser_profiles (
+                id TEXT PRIMARY KEY,
+                profile_key TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT,
+                site_scope TEXT,
+                launch_url TEXT,
+                profile_dir TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_used_at TEXT,
+                archived_at TEXT
+            )",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO browser_profiles (
+                id, profile_key, name, description, site_scope, launch_url, profile_dir,
+                created_at, updated_at, last_used_at, archived_at
+            ) VALUES (?1, ?2, ?3, NULL, NULL, ?4, ?5, ?6, ?6, NULL, NULL)",
+            (
+                "profile-1",
+                "shop_us",
+                "美区资料",
+                "https://seller.example.com/",
+                "/tmp/lime/chrome_profiles/shop_us",
+                "2026-03-15T00:00:00Z",
+            ),
+        )
+        .unwrap();
+
+        create_tables(&conn).expect("应成功升级旧版 browser_profiles 表");
+
+        let mut columns = conn.prepare("PRAGMA table_info(browser_profiles)").unwrap();
+        let column_names = columns
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(column_names.iter().any(|name| name == "transport_kind"));
+        assert!(column_names
+            .iter()
+            .any(|name| name == "managed_profile_dir"));
+
+        let upgraded = conn
+            .query_row(
+                "SELECT transport_kind, managed_profile_dir
+                 FROM browser_profiles
+                 WHERE id = ?1",
+                ["profile-1"],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(upgraded.0, "managed_cdp");
+        assert_eq!(
+            upgraded.1.as_deref(),
+            Some("/tmp/lime/chrome_profiles/shop_us")
+        );
+    }
+
+    #[test]
+    fn should_upgrade_legacy_mcp_servers_table_with_enablement_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute(
+            "CREATE TABLE mcp_servers (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                server_config TEXT NOT NULL,
+                description TEXT,
+                enabled_claude INTEGER DEFAULT 0
+            )",
+            [],
+        )
+        .unwrap();
+
+        create_tables(&conn).expect("应成功升级旧版 mcp_servers 表");
+
+        let mut columns = conn.prepare("PRAGMA table_info(mcp_servers)").unwrap();
+        let column_names = columns
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert!(column_names.iter().any(|name| name == "enabled_lime"));
+        assert!(column_names.iter().any(|name| name == "enabled_codex"));
+        assert!(column_names.iter().any(|name| name == "enabled_gemini"));
+        assert!(column_names.iter().any(|name| name == "created_at"));
     }
 }

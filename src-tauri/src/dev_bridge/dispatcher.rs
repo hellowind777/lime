@@ -11,10 +11,12 @@ mod memory;
 mod memory_runtime;
 mod models;
 mod openclaw;
+mod plugins;
 mod project_resources;
 mod providers;
 mod runtime_queries;
 mod skills;
+mod tray;
 mod workspace;
 
 use crate::dev_bridge::DevBridgeState;
@@ -115,7 +117,15 @@ pub async fn handle_command(
         return Ok(result);
     }
 
+    if let Some(result) = plugins::try_handle(state, cmd, args.as_ref()).await? {
+        return Ok(result);
+    }
+
     if let Some(result) = agent_sessions::try_handle(state, cmd, args.as_ref()).await? {
+        return Ok(result);
+    }
+
+    if let Some(result) = tray::try_handle(state, cmd, args.as_ref()).await? {
         return Ok(result);
     }
 

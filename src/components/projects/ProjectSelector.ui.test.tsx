@@ -9,10 +9,14 @@ const {
   mockUseProjects,
   mockToastError,
   mockToastSuccess,
+  mockGetProject,
+  mockGetDefaultProject,
 } = vi.hoisted(() => ({
   mockUseProjects: vi.fn(),
   mockToastError: vi.fn(),
   mockToastSuccess: vi.fn(),
+  mockGetProject: vi.fn(),
+  mockGetDefaultProject: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -25,6 +29,18 @@ vi.mock("sonner", () => ({
 vi.mock("@/hooks/useProjects", () => ({
   useProjects: mockUseProjects,
 }));
+
+vi.mock("@/lib/api/project", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/project")>(
+    "@/lib/api/project",
+  );
+
+  return {
+    ...actual,
+    getProject: mockGetProject,
+    getDefaultProject: mockGetDefaultProject,
+  };
+});
 
 vi.mock("@/components/projects/CreateProjectDialog", () => ({
   CreateProjectDialog: ({
@@ -220,6 +236,8 @@ beforeEach(() => {
     }
   ).IS_REACT_ACT_ENVIRONMENT = true;
   vi.clearAllMocks();
+  mockGetProject.mockResolvedValue(null);
+  mockGetDefaultProject.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -338,5 +356,71 @@ describe("ProjectSelector 组件", () => {
     expect(findButton(container, "新建项目")).toBeNull();
     expect(findButton(container, "重命名")).toBeNull();
     expect(findButton(container, "删除")).toBeNull();
+  });
+
+  it("延后列表加载时应先用项目摘要渲染当前项目", async () => {
+    const selectedProject = createProject({
+      id: "general-1",
+      name: "当前项目",
+      workspaceType: "general",
+    });
+
+    mockUseProjects.mockReturnValue(
+      createUseProjectsResult({
+        projects: [],
+        generalProjects: [],
+        defaultProject: null,
+      }),
+    );
+    mockGetProject.mockResolvedValue(selectedProject);
+
+    const container = renderProjectSelector({
+      value: selectedProject.id,
+      workspaceType: "general",
+      deferProjectListLoad: true,
+    });
+
+    await flushAsync();
+    await flushAsync();
+
+    expect(mockUseProjects).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoLoad: false,
+      }),
+    );
+    expect(mockGetProject).toHaveBeenCalledWith(selectedProject.id);
+    expect(container.textContent).toContain(selectedProject.name);
+  });
+
+  it("延后列表加载且未指定项目时应回填默认项目", async () => {
+    const onChange = vi.fn();
+    const defaultProject = createProject({
+      id: "default",
+      name: "默认项目",
+      isDefault: true,
+      workspaceType: "general",
+    });
+
+    mockUseProjects.mockReturnValue(
+      createUseProjectsResult({
+        projects: [],
+        generalProjects: [],
+        defaultProject: null,
+      }),
+    );
+    mockGetDefaultProject.mockResolvedValue(defaultProject);
+
+    renderProjectSelector({
+      value: null,
+      workspaceType: "general",
+      deferProjectListLoad: true,
+      onChange,
+    });
+
+    await flushAsync();
+    await flushAsync();
+
+    expect(mockGetDefaultProject).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(defaultProject.id);
   });
 });

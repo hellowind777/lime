@@ -135,8 +135,15 @@ export interface AgentPageParams {
   contentId?: string;
   /** Agent 入口模式：新建任务或任务中心 */
   agentEntry?: "new-task" | "claw";
+  /** 首页沉浸模式提交后透传的首条图片 */
+  initialUserImages?: Array<{
+    data: string;
+    mediaType: string;
+  }>;
   /** 进入 Agent 时自动发送的首条用户消息 */
   initialUserPrompt?: string;
+  /** 进入 Agent 时透传的初始创作模式 */
+  initialCreationMode?: "guided" | "fast" | "hybrid" | "framework";
   /** 进入 Agent 时优先创建的话题名称 */
   initialSessionName?: string;
   /** 一次性入口提示文案 */
@@ -149,6 +156,8 @@ export interface AgentPageParams {
   fromResources?: boolean;
   /** 首页沉浸模式：隐藏左侧应用导航与话题列表，仅保留主工作区 */
   immersiveHome?: boolean;
+  /** 进入 Agent 后立即打开浏览器协助 */
+  openBrowserAssistOnMount?: boolean;
   /** 首页点击触发的新会话标记（时间戳） */
   newChatAt?: number;
   /** 主题工作台重置标记（时间戳） */

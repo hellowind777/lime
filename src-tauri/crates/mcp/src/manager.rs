@@ -26,7 +26,7 @@
 
 #![allow(dead_code)]
 
-use lime_core::DynEmitter;
+use lime_core::{tool_calling::ToolSurfaceMetadata, DynEmitter};
 use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -42,14 +42,7 @@ use rmcp::ServiceExt;
 use crate::client::McpClientWrapper;
 use crate::types::*;
 
-#[derive(Debug, Default)]
-struct ToolMetadataExtraction {
-    deferred_loading: Option<bool>,
-    always_visible: Option<bool>,
-    allowed_callers: Option<Vec<String>>,
-    input_examples: Option<Vec<serde_json::Value>>,
-    tags: Option<Vec<String>>,
-}
+const AUTO_DEFER_TOOL_COUNT_THRESHOLD: usize = 6;
 
 /// MCP 客户端管理器
 ///
@@ -730,7 +723,8 @@ impl McpClientManager {
                     );
                     for tool in tools {
                         let input_schema = serde_json::Value::Object((*tool.input_schema).clone());
-                        let metadata = Self::extract_tool_metadata(&input_schema);
+                        let metadata =
+                            Self::extract_tool_metadata(tool.name.as_ref(), &input_schema);
                         all_tools.push(McpToolDefinition {
                             name: tool.name.to_string(),
                             description: tool
@@ -743,7 +737,8 @@ impl McpClientManager {
                             deferred_loading: metadata.deferred_loading,
                             always_visible: metadata.always_visible,
                             allowed_callers: metadata.allowed_callers,
-                            input_examples: metadata.input_examples,
+                            input_examples: (!metadata.input_examples.is_empty())
+                                .then_some(metadata.input_examples),
                             tags: metadata.tags,
                         });
                     }
@@ -761,7 +756,8 @@ impl McpClientManager {
         drop(clients);
 
         // 3. 解决名称冲突（添加服务器前缀）
-        let resolved_tools = Self::resolve_tool_name_conflicts(all_tools);
+        let resolved_tools =
+            Self::apply_default_loading_policy(Self::resolve_tool_name_conflicts(all_tools));
 
         // 4. 更新缓存
         self.update_tool_cache(resolved_tools.clone()).await;
@@ -782,36 +778,23 @@ impl McpClientManager {
         caller: Option<&str>,
         include_deferred: bool,
     ) -> Result<Vec<McpToolDefinition>, McpError> {
-        let caller = caller
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_ascii_lowercase());
         let tools = self.list_tools().await?;
 
         let filtered = tools
             .into_iter()
             .filter(|tool| {
-                // deferred_loading=true 且不是 always_visible 时，默认不注入上下文
-                if !include_deferred
-                    && tool.deferred_loading.unwrap_or(false)
-                    && !tool.always_visible.unwrap_or(false)
-                {
+                let metadata = ToolSurfaceMetadata {
+                    deferred_loading: tool.deferred_loading,
+                    always_visible: tool.always_visible,
+                    allowed_callers: tool.allowed_callers.clone(),
+                    tags: tool.tags.clone(),
+                    input_examples: tool.input_examples.clone().unwrap_or_default(),
+                };
+
+                if !lime_core::tool_calling::tool_visible_in_context(&metadata, include_deferred) {
                     return false;
                 }
-
-                // caller 不在 allowed_callers 时，隐藏该工具
-                if let (Some(caller), Some(allowed)) = (&caller, tool.allowed_callers.as_ref()) {
-                    let allowed_set: HashSet<String> = allowed
-                        .iter()
-                        .map(|v| v.trim().to_ascii_lowercase())
-                        .filter(|v| !v.is_empty())
-                        .collect();
-                    if !allowed_set.is_empty() && !allowed_set.contains(caller) {
-                        return false;
-                    }
-                }
-
-                true
+                lime_core::tool_calling::tool_matches_caller(&metadata, caller)
             })
             .collect();
 
@@ -867,83 +850,51 @@ impl McpClientManager {
         Ok(result)
     }
 
-    fn extract_tool_metadata(input_schema: &serde_json::Value) -> ToolMetadataExtraction {
-        fn read_bool(root: &serde_json::Value, key: &str) -> Option<bool> {
-            root.get(key).and_then(|v| v.as_bool())
-        }
-
-        fn read_string_vec(root: &serde_json::Value, key: &str) -> Option<Vec<String>> {
-            let arr = root.get(key)?.as_array()?;
-            let values = arr
-                .iter()
-                .filter_map(|v| v.as_str())
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .collect::<Vec<_>>();
-            (!values.is_empty()).then_some(values)
-        }
-
-        fn read_examples(root: &serde_json::Value, key: &str) -> Option<Vec<serde_json::Value>> {
-            let arr = root.get(key)?.as_array()?;
-            let values = arr
-                .iter()
-                .filter(|v| !v.is_null())
-                .cloned()
-                .collect::<Vec<_>>();
-            (!values.is_empty()).then_some(values)
-        }
-
-        let extension = input_schema
-            .get("x-lime")
-            .or_else(|| input_schema.get("x_lime"))
-            .unwrap_or(input_schema);
-
-        ToolMetadataExtraction {
-            deferred_loading: read_bool(extension, "deferred_loading")
-                .or_else(|| read_bool(extension, "deferredLoading")),
-            always_visible: read_bool(extension, "always_visible")
-                .or_else(|| read_bool(extension, "alwaysVisible")),
-            allowed_callers: read_string_vec(extension, "allowed_callers")
-                .or_else(|| read_string_vec(extension, "allowedCallers")),
-            input_examples: read_examples(extension, "input_examples")
-                .or_else(|| read_examples(extension, "inputExamples")),
-            tags: read_string_vec(extension, "tags"),
-        }
+    fn extract_tool_metadata(
+        tool_name: &str,
+        input_schema: &serde_json::Value,
+    ) -> ToolSurfaceMetadata {
+        lime_core::tool_calling::extract_tool_surface_metadata(tool_name, input_schema)
     }
 
     fn score_tool_match(tool: &McpToolDefinition, query: &str) -> i32 {
-        let name = tool.name.to_ascii_lowercase();
-        let description = tool.description.to_ascii_lowercase();
-
-        let mut score = 0;
-        if name == query {
-            score += 120;
-        } else if name.starts_with(query) {
-            score += 90;
-        } else if name.contains(query) {
-            score += 70;
-        }
-
-        if description.contains(query) {
-            score += 40;
-        }
-
-        if let Some(tags) = tool.tags.as_ref() {
-            for tag in tags {
-                let tag = tag.to_ascii_lowercase();
-                if tag == query {
-                    score += 35;
-                } else if tag.contains(query) {
-                    score += 20;
-                }
-            }
-        }
+        let score = lime_core::tool_calling::score_tool_match(
+            &tool.name,
+            &tool.description,
+            tool.tags.as_deref().unwrap_or(&[]),
+            query,
+        );
 
         if tool.always_visible.unwrap_or(false) {
-            score += 5;
+            return score + 5;
         }
 
         score
+    }
+
+    fn apply_default_loading_policy(tools: Vec<McpToolDefinition>) -> Vec<McpToolDefinition> {
+        let mut server_tool_counts: HashMap<String, usize> = HashMap::new();
+        for tool in &tools {
+            *server_tool_counts
+                .entry(tool.server_name.clone())
+                .or_insert(0) += 1;
+        }
+
+        tools
+            .into_iter()
+            .map(|mut tool| {
+                if tool.deferred_loading.is_none() {
+                    let should_auto_defer = server_tool_counts
+                        .get(&tool.server_name)
+                        .copied()
+                        .unwrap_or_default()
+                        > AUTO_DEFER_TOOL_COUNT_THRESHOLD
+                        && !tool.always_visible.unwrap_or(false);
+                    tool.deferred_loading = Some(should_auto_defer);
+                }
+                tool
+            })
+            .collect()
     }
 
     /// 解决工具名称冲突
@@ -1975,14 +1926,14 @@ mod tests {
                 "tags": ["search", "docs"]
             }
         });
-        let meta = McpClientManager::extract_tool_metadata(&schema);
+        let meta = McpClientManager::extract_tool_metadata("docs_search", &schema);
         assert_eq!(meta.deferred_loading, Some(true));
         assert_eq!(meta.always_visible, Some(false));
         assert_eq!(
             meta.allowed_callers.unwrap_or_default(),
             vec!["assistant".to_string(), "code_execution".to_string()]
         );
-        assert_eq!(meta.input_examples.unwrap_or_default().len(), 1);
+        assert_eq!(meta.input_examples.len(), 1);
         assert_eq!(
             meta.tags.unwrap_or_default(),
             vec!["search".to_string(), "docs".to_string()]
@@ -2189,6 +2140,160 @@ mod tests {
         assert!(resolved.is_empty());
     }
 
+    #[test]
+    fn test_apply_default_loading_policy_auto_defers_large_server_tools() {
+        let tools = (0..7)
+            .map(|index| McpToolDefinition {
+                name: format!("tool_{index}"),
+                description: format!("tool {index}"),
+                input_schema: serde_json::json!({}),
+                server_name: "large-server".to_string(),
+                deferred_loading: None,
+                always_visible: if index == 0 { Some(true) } else { None },
+                allowed_callers: None,
+                input_examples: None,
+                tags: None,
+            })
+            .collect::<Vec<_>>();
+
+        let resolved = McpClientManager::apply_default_loading_policy(tools);
+        assert_eq!(resolved.len(), 7);
+        assert_eq!(resolved[0].deferred_loading, Some(false));
+        assert!(resolved
+            .iter()
+            .skip(1)
+            .all(|tool| tool.deferred_loading == Some(true)));
+    }
+
+    #[test]
+    fn test_resolve_tool_name_conflicts_preserves_metadata_fields() {
+        let mut tool_a = create_test_tool("search", "Search docs", "server1");
+        tool_a.deferred_loading = Some(true);
+        tool_a.always_visible = Some(true);
+        tool_a.allowed_callers = Some(vec!["assistant".to_string()]);
+        tool_a.tags = Some(vec!["docs".to_string()]);
+        tool_a.input_examples = Some(vec![serde_json::json!({ "query": "rust" })]);
+
+        let mut tool_b = create_test_tool("search", "Search issues", "server2");
+        tool_b.deferred_loading = Some(false);
+        tool_b.always_visible = Some(false);
+        tool_b.allowed_callers = Some(vec!["code_execution".to_string()]);
+        tool_b.tags = Some(vec!["issues".to_string()]);
+        tool_b.input_examples = Some(vec![serde_json::json!({ "query": "bug" })]);
+
+        let resolved = McpClientManager::resolve_tool_name_conflicts(vec![tool_a, tool_b]);
+        let server1 = resolved
+            .iter()
+            .find(|tool| tool.name == "server1_search")
+            .expect("server1 tool should be renamed");
+        let server2 = resolved
+            .iter()
+            .find(|tool| tool.name == "server2_search")
+            .expect("server2 tool should be renamed");
+
+        assert_eq!(server1.deferred_loading, Some(true));
+        assert_eq!(server1.always_visible, Some(true));
+        assert_eq!(server1.allowed_callers, Some(vec!["assistant".to_string()]));
+        assert_eq!(server1.tags, Some(vec!["docs".to_string()]));
+        assert_eq!(
+            server1.input_examples,
+            Some(vec![serde_json::json!({ "query": "rust" })])
+        );
+
+        assert_eq!(server2.deferred_loading, Some(false));
+        assert_eq!(server2.always_visible, Some(false));
+        assert_eq!(
+            server2.allowed_callers,
+            Some(vec!["code_execution".to_string()])
+        );
+        assert_eq!(server2.tags, Some(vec!["issues".to_string()]));
+        assert_eq!(
+            server2.input_examples,
+            Some(vec![serde_json::json!({ "query": "bug" })])
+        );
+    }
+
+    #[test]
+    fn test_apply_default_loading_policy_respects_threshold_boundary_and_explicit_values() {
+        let threshold_tools = (0..AUTO_DEFER_TOOL_COUNT_THRESHOLD)
+            .map(|index| McpToolDefinition {
+                name: format!("threshold_{index}"),
+                description: format!("threshold {index}"),
+                input_schema: serde_json::json!({}),
+                server_name: "threshold-server".to_string(),
+                deferred_loading: None,
+                always_visible: None,
+                allowed_callers: None,
+                input_examples: None,
+                tags: None,
+            })
+            .collect::<Vec<_>>();
+
+        let mut large_tools = (0..5)
+            .map(|index| McpToolDefinition {
+                name: format!("auto_{index}"),
+                description: format!("auto {index}"),
+                input_schema: serde_json::json!({}),
+                server_name: "large-server".to_string(),
+                deferred_loading: None,
+                always_visible: None,
+                allowed_callers: None,
+                input_examples: None,
+                tags: None,
+            })
+            .collect::<Vec<_>>();
+
+        large_tools.push(McpToolDefinition {
+            name: "explicit_false".to_string(),
+            description: "explicit false".to_string(),
+            input_schema: serde_json::json!({}),
+            server_name: "large-server".to_string(),
+            deferred_loading: Some(false),
+            always_visible: None,
+            allowed_callers: None,
+            input_examples: None,
+            tags: None,
+        });
+        large_tools.push(McpToolDefinition {
+            name: "explicit_true".to_string(),
+            description: "explicit true".to_string(),
+            input_schema: serde_json::json!({}),
+            server_name: "large-server".to_string(),
+            deferred_loading: Some(true),
+            always_visible: None,
+            allowed_callers: None,
+            input_examples: None,
+            tags: None,
+        });
+
+        let mut all_tools = threshold_tools;
+        all_tools.extend(large_tools);
+
+        let resolved = McpClientManager::apply_default_loading_policy(all_tools);
+
+        assert!(resolved
+            .iter()
+            .filter(|tool| tool.server_name == "threshold-server")
+            .all(|tool| tool.deferred_loading == Some(false)));
+
+        let explicit_false = resolved
+            .iter()
+            .find(|tool| tool.name == "explicit_false")
+            .expect("explicit false tool should exist");
+        assert_eq!(explicit_false.deferred_loading, Some(false));
+
+        let explicit_true = resolved
+            .iter()
+            .find(|tool| tool.name == "explicit_true")
+            .expect("explicit true tool should exist");
+        assert_eq!(explicit_true.deferred_loading, Some(true));
+
+        assert!(resolved
+            .iter()
+            .filter(|tool| tool.server_name == "large-server" && tool.name.starts_with("auto_"))
+            .all(|tool| tool.deferred_loading == Some(true)));
+    }
+
     // ========================================================================
     // 工具列表缓存测试（Task 4.3）
     // ========================================================================
@@ -2293,6 +2398,62 @@ mod tests {
             .unwrap();
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name, "weather");
+    }
+
+    #[tokio::test]
+    async fn test_search_tools_empty_query_prioritizes_always_visible_then_name() {
+        let manager = McpClientManager::new(None);
+        manager
+            .update_tool_cache(vec![
+                McpToolDefinition {
+                    name: "alpha".to_string(),
+                    description: "alpha".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_name: "s1".to_string(),
+                    deferred_loading: Some(false),
+                    always_visible: Some(false),
+                    allowed_callers: None,
+                    input_examples: None,
+                    tags: None,
+                },
+                McpToolDefinition {
+                    name: "zeta".to_string(),
+                    description: "zeta".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_name: "s1".to_string(),
+                    deferred_loading: Some(true),
+                    always_visible: Some(true),
+                    allowed_callers: None,
+                    input_examples: None,
+                    tags: None,
+                },
+                McpToolDefinition {
+                    name: "beta".to_string(),
+                    description: "beta".to_string(),
+                    input_schema: serde_json::json!({}),
+                    server_name: "s1".to_string(),
+                    deferred_loading: Some(false),
+                    always_visible: Some(true),
+                    allowed_callers: None,
+                    input_examples: None,
+                    tags: None,
+                },
+            ])
+            .await;
+
+        let tools = manager
+            .search_tools("", 2, Some("assistant"))
+            .await
+            .expect("empty query search should succeed");
+
+        assert_eq!(tools.len(), 2);
+        assert_eq!(
+            tools
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["beta", "zeta"]
+        );
     }
 
     #[tokio::test]

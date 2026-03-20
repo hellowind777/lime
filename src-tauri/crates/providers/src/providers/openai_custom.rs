@@ -1,5 +1,6 @@
 //! OpenAI Custom Provider (自定义 OpenAI 兼容 API)
-use lime_core::models::openai::ChatCompletionRequest;
+use crate::converter::ReasoningHandler;
+use lime_core::models::openai::{ChatCompletionRequest, ChatMessage};
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,23 @@ impl OpenAICustomProvider {
     }
 
     fn normalize_openai_request_payload(&self, payload: &mut serde_json::Value) {
+        let model_name = payload
+            .get("model")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned);
+
+        if let (Some(model_name), Some(messages_value)) = (model_name, payload.get_mut("messages"))
+        {
+            if let Ok(messages) = serde_json::from_value::<Vec<ChatMessage>>(messages_value.clone())
+            {
+                if let Ok(normalized_messages) = serde_json::to_value(
+                    ReasoningHandler::preprocess_messages(messages, &model_name),
+                ) {
+                    *messages_value = normalized_messages;
+                }
+            }
+        }
+
         if !Self::tool_calling_v2_enabled() {
             return;
         }
@@ -76,43 +94,15 @@ impl OpenAICustomProvider {
                 .get("parameters")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
-            let extension = parameters
-                .get("x-lime")
-                .or_else(|| parameters.get("x_lime"))
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({}));
-
-            let mut input_examples = extension
-                .get("input_examples")
-                .or_else(|| extension.get("inputExamples"))
-                .and_then(|v| v.as_array())
-                .cloned()
+            let tool_name = function
+                .get("name")
+                .and_then(|v| v.as_str())
                 .unwrap_or_default();
-            if input_examples.is_empty() {
-                let tool_name = function
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                input_examples =
-                    lime_core::tool_calling::resolve_tool_input_examples(tool_name, &parameters);
-            }
-            let allowed_callers = extension
-                .get("allowed_callers")
-                .or_else(|| extension.get("allowedCallers"))
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|v| v.trim().to_string())
-                        .filter(|v| !v.is_empty())
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let deferred_loading = extension
-                .get("deferred_loading")
-                .or_else(|| extension.get("deferredLoading"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+            let metadata =
+                lime_core::tool_calling::extract_tool_surface_metadata(tool_name, &parameters);
+            let input_examples = metadata.input_examples;
+            let allowed_callers = metadata.allowed_callers.unwrap_or_default();
+            let deferred_loading = metadata.deferred_loading.unwrap_or(false);
 
             let description = function
                 .get("description")
@@ -776,6 +766,116 @@ mod tests {
             .unwrap_or_default();
 
         assert!(description.contains("[InputExamples]"));
+    }
+
+    #[test]
+    fn test_normalize_openai_request_payload_does_not_duplicate_existing_metadata_markers() {
+        let provider = OpenAICustomProvider::default();
+        let mut payload = serde_json::json!({
+            "model": "deepseek-chat",
+            "messages": [{"role":"user","content":"hi"}],
+            "tools": [{
+                "type":"function",
+                "function": {
+                    "name":"search_docs",
+                    "description":"Search docs\n\n[InputExamples] {\"query\":\"preset\"}\n\n[AllowedCallers] assistant\n\n[DeferredLoading] true",
+                    "parameters": {
+                        "type":"object",
+                        "properties":{"query":{"type":"string"}},
+                        "x_lime": {
+                            "inputExamples":[{"query":"tool search"}],
+                            "allowedCallers":["assistant"],
+                            "deferredLoading": true
+                        }
+                    }
+                }
+            }]
+        });
+
+        provider.normalize_openai_request_payload(&mut payload);
+        let description = payload["tools"][0]["function"]["description"]
+            .as_str()
+            .unwrap_or_default();
+
+        assert_eq!(description.matches("[InputExamples]").count(), 1);
+        assert_eq!(description.matches("[AllowedCallers]").count(), 1);
+        assert_eq!(description.matches("[DeferredLoading]").count(), 1);
+    }
+
+    #[test]
+    fn test_normalize_openai_request_payload_keeps_reasoning_within_same_user_turn() {
+        let provider = OpenAICustomProvider::default();
+        let mut payload = serde_json::json!({
+            "model": "deepseek-reasoner",
+            "messages": [
+                {
+                    "role":"user",
+                    "content":"帮我查天气"
+                },
+                {
+                    "role":"assistant",
+                    "content":"",
+                    "reasoning_content":"先确定城市"
+                },
+                {
+                    "role":"tool",
+                    "content":"上海",
+                    "tool_call_id":"call_1"
+                },
+                {
+                    "role":"assistant",
+                    "content":"",
+                    "reasoning_content":"继续查询具体天气"
+                }
+            ]
+        });
+
+        provider.normalize_openai_request_payload(&mut payload);
+
+        assert_eq!(
+            payload["messages"][1]["reasoning_content"],
+            serde_json::json!("先确定城市")
+        );
+        assert_eq!(
+            payload["messages"][3]["reasoning_content"],
+            serde_json::json!("继续查询具体天气")
+        );
+    }
+
+    #[test]
+    fn test_normalize_openai_request_payload_clears_reasoning_before_latest_user() {
+        let provider = OpenAICustomProvider::default();
+        let mut payload = serde_json::json!({
+            "model": "deepseek-reasoner",
+            "messages": [
+                {
+                    "role":"user",
+                    "content":"第一轮"
+                },
+                {
+                    "role":"assistant",
+                    "content":"需要工具",
+                    "reasoning_content":"第一轮思考"
+                },
+                {
+                    "role":"user",
+                    "content":"第二轮"
+                },
+                {
+                    "role":"assistant",
+                    "content":"继续处理",
+                    "reasoning_content":"第二轮思考"
+                }
+            ]
+        });
+
+        provider.normalize_openai_request_payload(&mut payload);
+
+        assert!(payload["messages"][1].get("reasoning_content").is_none());
+        assert_eq!(
+            payload["messages"][3]["reasoning_content"],
+            serde_json::json!("第二轮思考")
+        );
     }
 
     #[test]

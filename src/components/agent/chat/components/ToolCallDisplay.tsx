@@ -15,19 +15,8 @@ import React, {
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import {
   ChevronDown,
-  Terminal,
-  FileText,
-  Edit3,
-  FolderOpen,
   ChevronRight,
   Loader2,
-  Eye,
-  FilePlus,
-  Search,
-  Globe,
-  Code2,
-  Settings,
-  Wrench,
   ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -43,331 +32,169 @@ import {
   classifySearchQuerySemantic,
   summarizeSearchQuerySemantics,
 } from "../utils/searchQueryGrouping";
+import type { ToolCallArgumentValue } from "../utils/toolDisplayInfo";
+import {
+  buildGroupedChildLine as buildGroupedChildLineFromInfo,
+  buildToolGroupHeadline as buildToolGroupHeadlineFromInfo,
+  buildToolHeadline as buildToolHeadlineFromInfo,
+  extractSearchQueryLabel as extractSearchQueryLabelFromInfo,
+  getToolDisplayInfo as getToolDisplayInfoFromInfo,
+  humanizeToolName as humanizeToolNameFromInfo,
+  normalizeToolNameKey as normalizeToolNameKeyFromInfo,
+  parseToolCallArguments as parseToolCallArgumentsFromInfo,
+  resolveToolFilePath as resolveToolFilePathFromInfo,
+  resolveToolPrimarySubject as resolveToolPrimarySubjectFromInfo,
+} from "../utils/toolDisplayInfo";
 
-// ============ 类型定义 ============
+const inferCodeLanguageFromPath = (path?: string | null): string | null => {
+  if (!path) return null;
+  const ext = path.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "ts":
+      return "ts";
+    case "tsx":
+      return "tsx";
+    case "js":
+      return "javascript";
+    case "jsx":
+      return "jsx";
+    case "rs":
+      return "rust";
+    case "py":
+      return "python";
+    case "sh":
+    case "bash":
+    case "zsh":
+      return "bash";
+    case "json":
+      return "json";
+    case "md":
+      return "markdown";
+    case "yml":
+    case "yaml":
+      return "yaml";
+    case "html":
+      return "html";
+    case "css":
+      return "css";
+    default:
+      return null;
+  }
+};
 
-export type ToolCallStatus = "pending" | "running" | "completed" | "failed";
+const looksLikeMarkdown = (value: string): boolean =>
+  /(^|\n)(#{1,6}\s|\d+\.\s|[-*]\s|>\s|\|.+\|)|```/.test(value);
 
-type ToolCallArgumentValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ToolCallArgumentValue[]
-  | { [key: string]: ToolCallArgumentValue };
-
-// ============ 工具状态指示器 ============
-
-interface ToolCallStatusIndicatorProps {
-  status: ToolCallStatus;
-  className?: string;
-}
-
-const _ToolCallStatusIndicator: React.FC<ToolCallStatusIndicatorProps> = ({
-  status,
-  className,
-}) => {
-  const getStatusStyles = () => {
-    switch (status) {
-      case "completed":
-        return "bg-green-500";
-      case "failed":
-        return "bg-red-500";
-      case "running":
-        return "bg-yellow-500 animate-pulse";
-      case "pending":
-      default:
-        return "bg-gray-400";
+const looksLikeStructuredCode = (value: string): boolean => {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
+    try {
+      JSON.parse(trimmed);
+      return true;
+    } catch {
+      // ignore
     }
-  };
+  }
 
-  return (
-    <div
-      className={cn(
-        "absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full border border-background",
-        getStatusStyles(),
-        className,
-      )}
-      aria-label={`工具状态: ${status}`}
-    />
+  return /(^|\n)\s*(import |export |const |let |var |function |class |interface |type )/.test(
+    value,
   );
 };
 
-// ============ 工具图标映射 ============
-
-const getToolIcon = (toolName: string) => {
-  const name = toolName.toLowerCase();
-  if (name.includes("subagent")) {
-    return Globe;
+const shouldRenderResultAsCodeBlock = (params: {
+  toolCall: ToolCallState;
+  content: string;
+  language?: string | null;
+}): boolean => {
+  const { toolCall, content, language } = params;
+  if (language) {
+    return true;
   }
+  if (content.includes("```")) {
+    return false;
+  }
+  if (looksLikeStructuredCode(content)) {
+    return true;
+  }
+
+  const normalizedName = normalizeToolNameKeyFromInfo(toolCall.name);
   if (
-    name.includes("bash") ||
-    name.includes("shell") ||
-    name.includes("exec")
+    normalizedName.includes("bash") ||
+    normalizedName.includes("shell") ||
+    normalizedName.includes("exec")
   ) {
-    return Terminal;
+    return true;
   }
-  if (name.includes("read")) {
-    return Eye;
+
+  return content.split("\n").length >= 4 && !looksLikeMarkdown(content);
+};
+
+const buildRenderedToolResultContent = (params: {
+  toolCall: ToolCallState;
+  content: string;
+  filePath?: string | null;
+  resultPath?: string | null;
+}): string => {
+  const { toolCall, content, filePath, resultPath } = params;
+  if (!content.trim() || content === "(无输出)") {
+    return "```text\n(无输出)\n```";
   }
-  if (name.includes("write") || name.includes("create")) {
-    return FilePlus;
+  if (content.includes("```")) {
+    return content;
   }
-  if (name.includes("edit") || name.includes("replace")) {
-    return Edit3;
-  }
-  if (name.includes("list") || name.includes("dir")) {
-    return FolderOpen;
-  }
+
+  const language = inferCodeLanguageFromPath(resultPath || filePath);
   if (
-    name.includes("search") ||
-    name.includes("find") ||
-    name.includes("grep")
+    shouldRenderResultAsCodeBlock({
+      toolCall,
+      content,
+      language,
+    })
   ) {
-    return Search;
+    return `\`\`\`${language ?? "text"}\n${content}\n\`\`\``;
   }
-  if (name.includes("web") || name.includes("fetch") || name.includes("http")) {
-    return Globe;
-  }
-  if (name.includes("code") || name.includes("eval")) {
-    return Code2;
-  }
-  if (name.includes("config") || name.includes("setting")) {
-    return Settings;
-  }
-  if (name.includes("file")) {
-    return FileText;
-  }
-  return Wrench;
+
+  return content;
 };
 
-const normalizeToolNameKey = (value: string): string =>
-  value.replace(/[\s_-]+/g, "").trim().toLowerCase();
-
-const extractSearchQueryLabel = (toolCall: ToolCallState): string => {
-  try {
-    const args = toolCall.arguments ? JSON.parse(toolCall.arguments) : {};
-    const record =
-      args && typeof args === "object" && !Array.isArray(args)
-        ? (args as Record<string, unknown>)
-        : {};
-    for (const key of ["query", "q", "pattern", "search", "url"]) {
-      const value = record[key];
-      if (typeof value === "string" && value.trim()) {
-        return value.trim();
-      }
-    }
-  } catch {
-    // ignore parse failure
+const isGroupableToolCall = (toolCall: ToolCallState): boolean => {
+  if (isUnifiedWebSearchToolName(toolCall.name)) {
+    return true;
   }
 
-  return toolCall.name;
+  return toolCall.status === "completed" || toolCall.status === "failed";
 };
 
-const PLANNING_TOOL_KEYS = new Set([
-  "todowrite",
-  "writetodos",
-  "enterplanmode",
-  "exitplanmode",
-]);
-
-// ============ 工具描述生成 ============
-
-/**
- * 获取工具操作描述（用于简洁显示）
- */
-const getToolActionLabel = (
-  toolName: string,
-  status: ToolCallStatus,
-): { action: string; icon: React.ElementType } => {
-  const name = toolName.toLowerCase();
-  const isCompleted = status === "completed";
-  const isFailed = status === "failed";
-
-  if (name.includes("write") || name.includes("create")) {
-    if (isFailed) return { action: "写入失败", icon: FilePlus };
-    return { action: isCompleted ? "已写入" : "写入文件", icon: FilePlus };
-  }
-  if (name.includes("read")) {
-    if (isFailed) return { action: "读取失败", icon: Eye };
-    return { action: isCompleted ? "已读取" : "读取文件", icon: Eye };
-  }
-  if (name.includes("edit") || name.includes("replace")) {
-    if (isFailed) return { action: "编辑失败", icon: Edit3 };
-    return { action: isCompleted ? "已编辑" : "编辑文件", icon: Edit3 };
-  }
-  if (
-    name.includes("bash") ||
-    name.includes("shell") ||
-    name.includes("exec")
-  ) {
-    if (isFailed) return { action: "执行失败", icon: Terminal };
-    return { action: isCompleted ? "已执行" : "执行命令", icon: Terminal };
-  }
-  if (name.includes("search") || name.includes("grep")) {
-    if (isFailed) return { action: "搜索失败", icon: Search };
-    return { action: isCompleted ? "已搜索" : "搜索中", icon: Search };
-  }
-  if (name.includes("list") || name.includes("dir")) {
-    if (isFailed) return { action: "列出失败", icon: FolderOpen };
-    return { action: isCompleted ? "已列出" : "列出目录", icon: FolderOpen };
+const resolveToolGroupKey = (toolCall: ToolCallState): string => {
+  if (isUnifiedWebSearchToolName(toolCall.name)) {
+    return "search";
   }
 
-  // 默认
-  const Icon = getToolIcon(toolName);
-  if (isFailed) return { action: "执行失败", icon: Icon };
-  return { action: isCompleted ? "已完成" : "执行中", icon: Icon };
+  const info = getToolDisplayInfoFromInfo(toolCall.name, toolCall.status);
+  return `${info.groupTitle}:${toolCall.status}`;
 };
 
-const getToolDisplayInfo = (
-  toolName: string,
-  status: ToolCallStatus,
-): { label: string; action: string; icon: React.ElementType } => {
-  const normalizedName = normalizeToolNameKey(toolName);
-  const isCompleted = status === "completed";
-  const isFailed = status === "failed";
+const buildToolGroupPreview = (toolCalls: ToolCallState[]): string => {
+  const previews = toolCalls
+    .slice(0, 2)
+    .map((toolCall) => {
+      const args = parseToolCallArgumentsFromInfo(toolCall.arguments);
+      const filePath = resolveToolFilePathFromInfo(args);
+      return (
+        resolveToolPrimarySubjectFromInfo(toolCall.name, args, filePath) ||
+        toolCall.name
+      );
+    })
+    .filter(Boolean);
 
-  if (normalizedName === "subagenttask") {
-    return {
-      label: "子代理协作",
-      action: isFailed ? "委派失败" : isCompleted ? "协作完成" : "正在委派",
-      icon: Globe,
-    };
-  }
-
-  if (
-    normalizedName === "task" ||
-    normalizedName.startsWith("limecreate") &&
-      normalizedName.endsWith("tasktool")
-  ) {
-    return {
-      label: "后台任务",
-      action: isFailed ? "创建失败" : isCompleted ? "已创建任务" : "创建任务中",
-      icon: FilePlus,
-    };
-  }
-
-  if (PLANNING_TOOL_KEYS.has(normalizedName)) {
-    return {
-      label: "计划",
-      action: isFailed ? "规划失败" : isCompleted ? "规划已更新" : "规划中",
-      icon: FileText,
-    };
-  }
-
-  return {
-    label: getToolActionLabel(toolName, status).action,
-    ...getToolActionLabel(toolName, status),
-  };
-};
-
-/**
- * 获取文件名（从路径中提取）
- */
-const getFileName = (filePath: string): string => {
-  const parts = filePath.split("/");
-  return parts[parts.length - 1] || filePath;
-};
-
-/**
- * 获取文件扩展名对应的标签颜色
- */
-const _getFileTypeColor = (fileName: string): string => {
-  const ext = fileName.split(".").pop()?.toLowerCase() || "";
-  switch (ext) {
-    case "ts":
-    case "tsx":
-      return "bg-blue-500/20 text-blue-400";
-    case "js":
-    case "jsx":
-      return "bg-yellow-500/20 text-yellow-400";
-    case "md":
-      return "bg-green-500/20 text-green-400";
-    case "json":
-      return "bg-orange-500/20 text-orange-400";
-    case "css":
-    case "scss":
-      return "bg-pink-500/20 text-pink-400";
-    case "html":
-      return "bg-red-500/20 text-red-400";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
-};
-
-const _getToolDescription = (
-  toolName: string,
-  args: Record<string, ToolCallArgumentValue>,
-): string => {
-  const name = toolName.toLowerCase();
-  const getStringValue = (value: ToolCallArgumentValue): string => {
-    return typeof value === "string" ? value : JSON.stringify(value);
-  };
-
-  // 根据工具类型生成描述
-  if (name.includes("bash") || name.includes("shell")) {
-    if (args.command) {
-      const cmd = getStringValue(args.command);
-      return `执行: ${cmd.length > 50 ? cmd.slice(0, 50) + "..." : cmd}`;
-    }
-    return "执行命令";
-  }
-
-  if (name.includes("read_file") || name === "read") {
-    if (args.path || args.file_path) {
-      return `读取 ${getStringValue(args.path || args.file_path)}`;
-    }
-    return "读取文件";
-  }
-
-  if (name.includes("write_file") || name === "write") {
-    if (args.path || args.file_path) {
-      return `写入 ${getStringValue(args.path || args.file_path)}`;
-    }
-    return "写入文件";
-  }
-
-  if (name.includes("edit_file") || name === "edit") {
-    if (args.path || args.file_path) {
-      return `编辑 ${getStringValue(args.path || args.file_path)}`;
-    }
-    return "编辑文件";
-  }
-
-  if (name.includes("list") || name.includes("dir")) {
-    if (args.path || args.directory) {
-      return `列出 ${getStringValue(args.path || args.directory)}`;
-    }
-    return "列出目录";
-  }
-
-  if (name.includes("search") || name.includes("grep")) {
-    if (args.pattern || args.query) {
-      return `搜索 "${getStringValue(args.pattern || args.query)}"`;
-    }
-    return "搜索";
-  }
-
-  // 通用回退：工具名 + 参数键
-  const entries = Object.entries(args);
-  if (entries.length === 0) {
-    return snakeToTitleCase(toolName);
-  }
-  if (entries.length === 1) {
-    const [_key, value] = entries[0];
-    const strValue = getStringValue(value);
-    const truncated =
-      strValue.length > 40 ? strValue.slice(0, 40) + "..." : strValue;
-    return `${snakeToTitleCase(toolName)}: ${truncated}`;
-  }
-  return snakeToTitleCase(toolName);
-};
-
-const snakeToTitleCase = (str: string): string => {
-  return str
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
-    .join(" ");
+  const hiddenCount = Math.max(toolCalls.length - previews.length, 0);
+  return hiddenCount > 0
+    ? `${previews.join(" · ")} 等 ${hiddenCount} 项`
+    : previews.join(" · ");
 };
 
 const normalizeToolResultImages = (rawImages: unknown): ToolResultImage[] => {
@@ -645,6 +472,8 @@ interface ToolCallDisplayProps {
   isMessageStreaming?: boolean;
   /** 文件点击回调 - 用于打开右边栏显示文件内容 */
   onFileClick?: (fileName: string, content: string) => void;
+  grouped?: boolean;
+  groupMarker?: string;
 }
 
 export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
@@ -652,69 +481,35 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
   defaultExpanded = false,
   isMessageStreaming = false,
   onFileClick,
+  grouped = false,
+  groupMarker = "•",
 }) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const hasUserToggledExpandedRef = useRef(false);
 
   // 解析参数
-  const parsedArgs = useMemo(() => {
-    if (!toolCall.arguments) return {};
-    try {
-      return JSON.parse(toolCall.arguments);
-    } catch {
-      return {};
-    }
-  }, [toolCall.arguments]);
+  const parsedArgs = useMemo(
+    () => parseToolCallArgumentsFromInfo(toolCall.arguments),
+    [toolCall.arguments],
+  );
 
   const toolDisplay = useMemo(
-    () => getToolDisplayInfo(toolCall.name, toolCall.status),
+    () => getToolDisplayInfoFromInfo(toolCall.name, toolCall.status),
     [toolCall.name, toolCall.status],
   );
 
   // 获取文件路径
-  const filePath = useMemo(() => {
-    const path = parsedArgs.path || parsedArgs.file_path || parsedArgs.filePath;
-    return path ? String(path) : null;
-  }, [parsedArgs]);
+  const filePath = useMemo(
+    () => resolveToolFilePathFromInfo(parsedArgs),
+    [parsedArgs],
+  );
 
   // 获取文件名
-  const fileName = useMemo(() => {
-    if (filePath) return getFileName(filePath);
-    // 对于命令，显示命令内容
-    if (parsedArgs.command) {
-      const cmd = String(parsedArgs.command);
-      return cmd.length > 40 ? cmd.slice(0, 40) + "..." : cmd;
-    }
-    // 对于搜索，显示搜索内容
-    if (parsedArgs.pattern || parsedArgs.query) {
-      const q = String(parsedArgs.pattern || parsedArgs.query);
-      return q.length > 30 ? q.slice(0, 30) + "..." : q;
-    }
-    if (
-      normalizeToolNameKey(toolCall.name) === "subagenttask" &&
-      (parsedArgs.description || parsedArgs.taskType || parsedArgs.role)
-    ) {
-      return String(
-        parsedArgs.description || parsedArgs.taskType || parsedArgs.role,
-      );
-    }
-    if (
-      normalizeToolNameKey(toolCall.name).startsWith("limecreate") &&
-      (parsedArgs.title ||
-        parsedArgs.topic ||
-        parsedArgs.keyword ||
-        parsedArgs.url)
-    ) {
-      return String(
-        parsedArgs.title ||
-          parsedArgs.topic ||
-          parsedArgs.keyword ||
-          parsedArgs.url,
-      );
-    }
-    return null;
-  }, [filePath, parsedArgs, toolCall.name]);
+  const fileName = useMemo(
+    () => resolveToolPrimarySubjectFromInfo(toolCall.name, parsedArgs, filePath),
+    [filePath, parsedArgs, toolCall.name],
+  );
 
   // 获取文件内容（用于点击打开右边栏）
   const fileContent = useMemo(() => {
@@ -815,6 +610,35 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
     () => resultPath?.value || filePath,
     [filePath, resultPath?.value],
   );
+  const renderedResultContent = useMemo(
+    () =>
+      buildRenderedToolResultContent({
+        toolCall,
+        content: resultText,
+        filePath,
+        resultPath: resultPath?.value,
+      }),
+    [filePath, resultPath?.value, resultText, toolCall],
+  );
+  const toolHeadline = useMemo(
+    () =>
+      buildToolHeadlineFromInfo({
+        toolDisplay,
+        subject: fileName,
+        toolName: toolCall.name,
+      }),
+    [fileName, toolCall.name, toolDisplay],
+  );
+  const groupedChildLine = useMemo(
+    () => buildGroupedChildLineFromInfo(toolCall),
+    [toolCall],
+  );
+  const shouldShowRawToolName = useMemo(
+    () =>
+      toolDisplay.family === "generic" &&
+      toolDisplay.label !== humanizeToolNameFromInfo(toolCall.name),
+    [toolCall.name, toolDisplay.family, toolDisplay.label],
+  );
   const searchResultItems = useMemo(() => {
     if (!isUnifiedWebSearchToolName(toolCall.name)) {
       return [];
@@ -823,7 +647,8 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
     return resolveSearchResultPreviewItemsFromText(toolCall.result?.output);
   }, [toolCall.name, toolCall.result?.output]);
   const searchSemantic = useMemo(
-    () => classifySearchQuerySemantic(extractSearchQueryLabel(toolCall)),
+    () =>
+      classifySearchQuerySemantic(extractSearchQueryLabelFromInfo(toolCall)),
     [toolCall],
   );
   const hasResultImages = resultImages.length > 0;
@@ -868,96 +693,115 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
     setIsExpanded((prev) => !prev);
   }, []);
 
-  // 简洁模式：单行显示 - Claude 风格
   return (
-    <div className="group">
-      {/* 主行 - Claude 风格卡片 */}
-      <div
-        className={cn(
-          "flex items-center gap-2 px-3 py-2 rounded-2xl transition-colors",
-          "bg-[var(--surface-tertiary)] hover:bg-[var(--surface-secondary)]",
-          isExpanded && "bg-[var(--surface-secondary)]",
-        )}
-      >
-        {/* 状态指示器 - Claude 风格 */}
-        <span className="claude-status-dot">
-          {isRunning && (
-            <span
-              className="claude-status-dot-ping"
-              style={{ backgroundColor: "var(--claude-accent)" }}
-            />
-          )}
-          <span
-            className="claude-status-dot-inner"
-            style={{
-              backgroundColor: isCompleted
-                ? "var(--success)"
-                : isFailed
-                  ? "#DC2626"
-                  : "var(--claude-accent)",
-            }}
-          />
-        </span>
-
-        {/* 工具名称 - Claude 风格 */}
-        <span className="flex items-center gap-2">
-          <toolDisplay.icon
-            className="h-4 w-4"
-            style={{ color: "var(--claude-accent)" }}
-          />
-          <span
-            className="text-sm font-medium"
-            style={{ color: "var(--claude-accent)" }}
-          >
-            {toolDisplay.label}
+    <div className={cn("group", grouped && "pl-1")}>
+      {grouped ? (
+        <div className="flex items-start gap-2 py-1.5" data-testid="tool-call-row">
+          <span className="pt-0.5 font-mono text-xs text-slate-400">
+            {groupMarker}
           </span>
-        </span>
-
-        {/* 文件名/参数 */}
-        {fileName && (
-          <span className="text-sm text-[var(--ink-600)] truncate">
-            {fileName}
-          </span>
-        )}
-
-        {/* 右侧操作按钮 */}
-        <div className="ml-auto flex items-center gap-1">
-          {/* 打开文件按钮 */}
-          {openableFilePath && onFileClick && (
-            <button
-              onClick={handleOpenFile}
-              className="p-1.5 rounded-md hover:bg-[var(--surface-secondary)] transition-colors"
-              title="在画布中打开"
-              aria-label={`在画布中打开-${openableFilePath}`}
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-[var(--ink-600)] hover:text-[var(--ink-900)]" />
-            </button>
-          )}
-
-          {/* 展开/折叠按钮 */}
-          {(hasResult || hasSearchResults) && (
-            <button
-              onClick={handleToggleExpanded}
-              className="p-1.5 rounded-md hover:bg-[var(--surface-secondary)] transition-colors"
-              title={isExpanded ? "收起详情" : "展开详情"}
-            >
-              <ChevronRight
-                className={cn(
-                  "w-3.5 h-3.5 text-[var(--ink-600)] transition-transform",
-                  isExpanded && "rotate-90",
-                )}
-              />
-            </button>
-          )}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm text-slate-700">
+              {groupedChildLine}
+            </div>
+            {shouldShowRawToolName ? (
+              <div className="mt-0.5 truncate text-xs text-slate-500">
+                {humanizeToolNameFromInfo(toolCall.name)}
+              </div>
+            ) : null}
+          </div>
+          <div className="ml-auto flex items-center gap-1 pt-0.5">
+            {openableFilePath && onFileClick && (
+              <button
+                onClick={handleOpenFile}
+                className="rounded-md p-1 transition-colors hover:bg-slate-100"
+                title="在画布中打开"
+                aria-label={`在画布中打开-${openableFilePath}`}
+              >
+                <ExternalLink className="h-3.5 w-3.5 text-slate-500 hover:text-slate-900" />
+              </button>
+            )}
+            {(hasResult || hasSearchResults) && (
+              <button
+                onClick={handleToggleExpanded}
+                className="rounded-md p-1 transition-colors hover:bg-slate-100"
+                title={isExpanded ? "收起详情" : "展开详情"}
+              >
+                <ChevronRight
+                  className={cn(
+                    "h-3.5 w-3.5 text-slate-500 transition-transform",
+                    isExpanded && "rotate-90",
+                  )}
+                />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div
+          className="flex items-start gap-2.5 py-1.5"
+          data-testid="tool-call-row"
+        >
+          <span
+            className={cn(
+              "pt-0.5 text-sm font-medium",
+              isCompleted && "text-emerald-600",
+              isFailed && "text-rose-600",
+              isRunning && "text-sky-600",
+              !isCompleted && !isFailed && !isRunning && "text-slate-400",
+            )}
+            aria-hidden="true"
+          >
+            •
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm text-slate-900">
+              {toolHeadline}
+            </div>
+            {shouldShowRawToolName ? (
+              <div className="mt-0.5 truncate text-xs text-slate-500">
+                {humanizeToolNameFromInfo(toolCall.name)}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="ml-auto flex items-center gap-1 pt-0.5">
+            {openableFilePath && onFileClick && (
+              <button
+                onClick={handleOpenFile}
+                className="rounded-md p-1 transition-colors hover:bg-slate-100"
+                title="在画布中打开"
+                aria-label={`在画布中打开-${openableFilePath}`}
+              >
+                <ExternalLink className="h-3.5 w-3.5 text-slate-500 hover:text-slate-900" />
+              </button>
+            )}
+
+            {(hasResult || hasSearchResults) && (
+              <button
+                onClick={handleToggleExpanded}
+                className="rounded-md p-1 transition-colors hover:bg-slate-100"
+                title={isExpanded ? "收起详情" : "展开详情"}
+              >
+                <ChevronRight
+                  className={cn(
+                    "h-3.5 w-3.5 text-slate-500 transition-transform",
+                    isExpanded && "rotate-90",
+                  )}
+                />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {hasResultImages && (
-        <div className="ml-4 mt-2 mb-2 flex flex-wrap gap-2">
+        <div className="mb-2 ml-4 mt-2 flex flex-wrap gap-2">
           {resultImages.map((image, index) => (
             <button
               key={`${image.src.slice(0, 48)}-${index}`}
-              className="overflow-hidden rounded-lg border border-[var(--ink-900)]/10 bg-[var(--surface-tertiary)]"
+              className="overflow-hidden rounded-lg border border-slate-200 bg-white"
               onClick={() => setPreviewImageSrc(image.src)}
               title="点击查看大图"
             >
@@ -973,9 +817,9 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
       )}
 
       {hasSearchResults && isExpanded && (
-        <div className="ml-4 mt-2 mb-2">
-          <div className="mb-2 flex flex-wrap gap-2">
-            <span className="rounded-full bg-[var(--surface-secondary)] px-2 py-1 text-[11px] text-[var(--ink-600)]">
+        <div className="mb-2 ml-6 mt-1.5">
+          <div className="mb-2 flex flex-wrap gap-2 text-[11px] text-slate-500">
+            <span>
               {searchSemantic.label}
             </span>
           </div>
@@ -988,40 +832,32 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
         </div>
       )}
 
-      {/* 展开的详情 - Claude 风格 */}
       {isExpanded && hasResult && (
-        <div className="ml-4 mt-2 mb-2 p-3 rounded-xl bg-[var(--surface-tertiary)] border border-[var(--ink-900)]/10">
-          <div
-            className="text-xs font-semibold mb-2"
-            style={{ color: "var(--claude-accent)" }}
-          >
-            {toolDisplay.action}
-          </div>
+        <div
+          className="mb-2 ml-6 mt-1.5 space-y-2"
+          data-testid="tool-call-result-panel"
+        >
           {resultMetaItems.length > 0 ? (
-            <div className="mb-2 flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
               {resultMetaItems.map((item) => (
-                <span
-                  key={item}
-                  className="rounded-full bg-[var(--surface-secondary)] px-2 py-1 text-[11px] text-[var(--ink-600)]"
-                >
-                  {item}
-                </span>
+                <span key={item}>{item}</span>
               ))}
             </div>
           ) : null}
           {resultPath ? (
-            <div className="mb-2 break-all text-[11px] text-[var(--ink-600)]">
+            <div className="break-all text-[11px] text-slate-500">
               {resultPath.label}: {resultPath.value}
             </div>
           ) : null}
-          <pre
+          <div
             className={cn(
-              "whitespace-pre-wrap font-mono text-xs break-all max-h-40 overflow-y-auto",
-              isFailed ? "text-red-500" : "text-[var(--ink-700)]",
+              "max-h-64 overflow-y-auto rounded-[14px] border border-slate-200 bg-white p-3",
+              isFailed && "border-rose-200",
             )}
+            data-testid="tool-call-rendered-result"
           >
-            {resultText}
-          </pre>
+            <MarkdownRenderer content={renderedResultContent} />
+          </div>
         </div>
       )}
 
@@ -1066,6 +902,11 @@ export const ToolCallList: React.FC<ToolCallListProps> = ({
         items: ToolCallState[];
       }
     | {
+        type: "work";
+        id: string;
+        items: ToolCallState[];
+      }
+    | {
         type: "single";
         id: string;
         item: ToolCallState;
@@ -1093,6 +934,25 @@ export const ToolCallList: React.FC<ToolCallListProps> = ({
       continue;
     }
 
+    if (
+      isGroupableToolCall(toolCall) &&
+      lastGroup &&
+      lastGroup.type === "work" &&
+      resolveToolGroupKey(lastGroup.items[0]!) === resolveToolGroupKey(toolCall)
+    ) {
+      lastGroup.items.push(toolCall);
+      continue;
+    }
+
+    if (isGroupableToolCall(toolCall)) {
+      groups.push({
+        type: "work",
+        id: `work-group:${toolCall.id}`,
+        items: [toolCall],
+      });
+      continue;
+    }
+
     groups.push({
       type: "single",
       id: toolCall.id,
@@ -1114,6 +974,28 @@ export const ToolCallList: React.FC<ToolCallListProps> = ({
           );
         }
 
+        if (group.type === "work") {
+          if (group.items.length === 1) {
+            return (
+              <ToolCallDisplay
+                key={group.id}
+                toolCall={group.items[0]!}
+                isMessageStreaming={isMessageStreaming}
+                onFileClick={onFileClick}
+              />
+            );
+          }
+
+          return (
+            <WorkToolCallGroup
+              key={group.id}
+              toolCalls={group.items}
+              isMessageStreaming={isMessageStreaming}
+              onFileClick={onFileClick}
+            />
+          );
+        }
+
         return (
           <SearchToolCallGroup
             key={group.id}
@@ -1127,6 +1009,71 @@ export const ToolCallList: React.FC<ToolCallListProps> = ({
   );
 };
 
+function WorkToolCallGroup({
+  toolCalls,
+  isMessageStreaming,
+  onFileClick,
+}: {
+  toolCalls: ToolCallState[];
+  isMessageStreaming: boolean;
+  onFileClick?: (fileName: string, content: string) => void;
+}) {
+  const hasRunning = toolCalls.some((item) => item.status === "running");
+  const hasFailed = toolCalls.some((item) => item.status === "failed");
+  const [expanded, setExpanded] = useState(hasRunning || hasFailed);
+  const headline = buildToolGroupHeadlineFromInfo(toolCalls);
+  const preview = buildToolGroupPreview(toolCalls);
+
+  useEffect(() => {
+    if (hasRunning || hasFailed) {
+      setExpanded(true);
+    }
+  }, [hasFailed, hasRunning]);
+
+  return (
+    <div className="py-0.5" data-testid="tool-call-work-group">
+      <button
+        type="button"
+        className="flex w-full items-start gap-2.5 py-1.5 text-left transition-colors hover:bg-slate-50"
+        onClick={() => setExpanded((prev) => !prev)}
+        aria-label={expanded ? "收起工具批次" : "展开工具批次"}
+      >
+        <span className="pt-0.5 text-sm text-slate-400">•</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-slate-900">
+            {headline}
+          </span>
+          {!expanded && preview ? (
+            <span className="mt-0.5 block truncate text-xs text-slate-500">
+              {preview}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className={cn(
+            "mt-0.5 h-4 w-4 text-slate-500 transition-transform",
+            expanded && "rotate-180",
+          )}
+        />
+      </button>
+      {expanded ? (
+        <div className="ml-6 space-y-1">
+          {toolCalls.map((toolCall, index) => (
+            <ToolCallDisplay
+              key={toolCall.id}
+              toolCall={toolCall}
+              isMessageStreaming={isMessageStreaming}
+              onFileClick={onFileClick}
+              grouped={true}
+              groupMarker={index === 0 ? "└" : "·"}
+            />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SearchToolCallGroup({
   toolCalls,
   isMessageStreaming,
@@ -1138,60 +1085,61 @@ function SearchToolCallGroup({
 }) {
   const [expanded, setExpanded] = useState(true);
   const semanticSummaries = summarizeSearchQuerySemantics(
-    toolCalls.map(extractSearchQueryLabel),
+    toolCalls.map(extractSearchQueryLabelFromInfo),
   );
+  const headline = buildToolGroupHeadlineFromInfo(toolCalls);
   const queryPreview = toolCalls
     .slice(0, 2)
-    .map(extractSearchQueryLabel)
+    .map(extractSearchQueryLabelFromInfo)
     .join(" · ");
   const hiddenCount = Math.max(toolCalls.length - 2, 0);
 
   return (
-    <div className="rounded-2xl border border-[var(--ink-900)]/10 bg-[var(--surface-tertiary)]/70">
+    <div className="py-0.5">
       <button
         type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+        className="flex w-full items-start gap-2.5 py-1.5 text-left transition-colors hover:bg-slate-50"
         onClick={() => setExpanded((prev) => !prev)}
         aria-label={expanded ? "收起搜索批次" : "展开搜索批次"}
       >
-        <Search className="h-4 w-4 text-[var(--claude-accent)]" />
-        <span
-          className="text-sm font-medium"
-          style={{ color: "var(--claude-accent)" }}
-        >
-          已搜索 {toolCalls.length} 组查询
-        </span>
-        <span className="min-w-0 flex-1 truncate text-xs text-[var(--ink-600)]">
-          {queryPreview}
-          {hiddenCount > 0 ? ` 等 ${hiddenCount} 组` : ""}
+        <span className="pt-0.5 text-sm text-slate-400">•</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-slate-900">
+            {headline}
+          </span>
+          {!expanded ? (
+            <span className="mt-0.5 block truncate text-xs text-slate-500">
+              {queryPreview}
+              {hiddenCount > 0 ? ` 等 ${hiddenCount} 组` : ""}
+            </span>
+          ) : null}
         </span>
         <ChevronDown
           className={cn(
-            "h-4 w-4 text-[var(--ink-600)] transition-transform",
+            "mt-0.5 h-4 w-4 text-slate-500 transition-transform",
             expanded && "rotate-180",
           )}
         />
       </button>
       {semanticSummaries.length > 0 ? (
-        <div className="flex flex-wrap gap-2 px-3 pb-2">
+        <div className="ml-6 flex flex-wrap gap-x-3 gap-y-1 pb-1 text-[11px] text-slate-500">
           {semanticSummaries.map((item) => (
-            <span
-              key={item.key}
-              className="rounded-full bg-[var(--surface-secondary)] px-2 py-1 text-[11px] text-[var(--ink-600)]"
-            >
+            <span key={item.key}>
               {item.label} {item.count}
             </span>
           ))}
         </div>
       ) : null}
       {expanded ? (
-        <div className="space-y-1 border-t border-[var(--ink-900)]/10 px-2 py-2">
-          {toolCalls.map((toolCall) => (
+        <div className="ml-6 space-y-1">
+          {toolCalls.map((toolCall, index) => (
             <ToolCallDisplay
               key={toolCall.id}
               toolCall={toolCall}
               isMessageStreaming={isMessageStreaming}
               onFileClick={onFileClick}
+              grouped={true}
+              groupMarker={index === 0 ? "└" : "·"}
             />
           ))}
         </div>
