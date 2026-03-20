@@ -902,6 +902,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           saveTransient(scopedKeys.currentSessionKey, null);
           savePersisted(scopedKeys.persistedSessionKey, null);
           hydratedSessionRef.current = null;
+          restoredWorkspaceRef.current = null;
+          skipAutoRestoreRef.current = false;
         })
         .finally(() => {
           if (missingSessionVerificationRef.current === sessionId) {
