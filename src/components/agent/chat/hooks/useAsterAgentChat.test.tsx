@@ -385,6 +385,76 @@ describe("useAsterAgentChat 首页新会话", () => {
       harness.unmount();
     }
   });
+
+  it("当前执行会话确认不存在后应清空失效执行态并恢复到有效会话", async () => {
+    const workspaceId = "ws-topic-missing-not-found";
+    const missingSessionId = "session-live-gone";
+    const activeSessionId = "session-existing";
+
+    mockCreateAgentRuntimeSession.mockResolvedValue(missingSessionId);
+    mockListAgentRuntimeSessions
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: activeSessionId,
+          name: "既有任务",
+          created_at: 1700000100,
+          updated_at: 1700000101,
+          messages_count: 1,
+        },
+      ])
+      .mockResolvedValue([
+        {
+          id: activeSessionId,
+          name: "既有任务",
+          created_at: 1700000100,
+          updated_at: 1700000101,
+          messages_count: 1,
+        },
+      ]);
+    mockGetAgentRuntimeSession.mockImplementation(async (sessionId: string) => {
+      if (sessionId === missingSessionId) {
+        throw new Error(`Session not found: ${missingSessionId}`);
+      }
+
+      return {
+        id: activeSessionId,
+        name: "既有任务",
+        created_at: 1700000100,
+        updated_at: 1700000101,
+        messages: [],
+        turns: [],
+        items: [],
+        queued_turns: [],
+      };
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("继续执行当前任务", [], false, false, false, "react");
+      });
+
+      await flushEffects();
+      await flushEffects();
+      await flushEffects();
+      await flushEffects();
+
+      expect(mockGetAgentRuntimeSession).toHaveBeenCalledWith(missingSessionId);
+      expect(harness.getValue().sessionId).toBe(activeSessionId);
+      expect(
+        harness.getValue().topics.some((topic) => topic.id === missingSessionId),
+      ).toBe(false);
+      expect(harness.getValue().messages).toHaveLength(0);
+    } finally {
+      harness.unmount();
+    }
+  });
 });
 
 describe("useAsterAgentChat 任务快照", () => {

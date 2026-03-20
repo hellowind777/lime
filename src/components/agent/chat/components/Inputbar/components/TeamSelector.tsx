@@ -78,7 +78,7 @@ export const TeamSelector: React.FC<TeamSelectorProps> = ({
       </button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-6xl overflow-hidden border-slate-200/80 bg-white p-0">
+        <DialogContent className="w-[min(1120px,calc(100vw-32px))] max-w-[1120px] overflow-hidden border-slate-200/80 bg-white p-0 shadow-2xl">
           {open ? (
             <Suspense
               fallback={

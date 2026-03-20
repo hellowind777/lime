@@ -433,315 +433,319 @@ export const TeamSelectorPanel: React.FC<TeamSelectorPanelProps> = ({
     recommendedTeam && selectedTeam?.id === recommendedTeam.id,
   );
 
-  return (
-    <div
-      className="max-h-[min(76vh,720px)] w-[min(520px,calc(100vw-24px))] overflow-y-auto bg-white"
-      data-testid="team-selector-panel"
-    >
-      <div className="border-b border-slate-200/80 bg-[linear-gradient(180deg,rgb(255,255,255)_0%,rgb(248,250,252)_100%)] px-4 py-3">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
-              TEAM 配置
-            </div>
-            <div className="mt-1 text-sm text-slate-700">
-              只在当前任务适合拆分协作时，为主代理提供团队结构参考。
-            </div>
-          </div>
-          {selectedTeam ? (
-            <button
-              type="button"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-              onClick={handleClearSelection}
-              title="清除 Team 选择"
-              aria-label="清除 Team 选择"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          ) : null}
-        </div>
-        {selectedTeam ? (
-          <div
-            className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5"
-            data-testid="team-selector-current"
-          >
-            <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
-              <Users className="h-3.5 w-3.5" />
-              当前已选 Team
-            </div>
-            <div className="mt-1 text-sm font-semibold text-slate-900">
-              {selectedTeam.label}
-            </div>
-            {currentSelectionSummary ? (
-              <div className="mt-1 text-xs leading-5 text-slate-600">
-                {currentSelectionSummary}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
+  const inspectorTeam = useMemo(() => {
+    const teamById = new Map<string, TeamDefinition>();
 
-      <div className="space-y-4 p-4">
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索 Team、角色或职责"
-          className="border-slate-200 bg-white"
-        />
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            className="bg-slate-900 text-white hover:bg-slate-800"
-            onClick={() =>
-              handleStartCreate(
-                selectedTeam || recommendedTeam || builtinTeams[0] || null,
-              )
-            }
-          >
-            <Plus className="mr-1.5 h-4 w-4" />
-            新建自定义 Team
-          </Button>
-          {selectedTeam ? (
+    for (const candidate of [
+      selectedTeam,
+      recommendedTeam,
+      ...filteredCustomTeams,
+      ...builtinTeams,
+    ]) {
+      if (candidate && !teamById.has(candidate.id)) {
+        teamById.set(candidate.id, candidate);
+      }
+    }
+
+    const preferredId =
+      expandedTeamId ||
+      selectedTeam?.id ||
+      recommendedTeam?.id ||
+      filteredCustomTeams[0]?.id ||
+      builtinTeams[0]?.id;
+
+    if (!preferredId) {
+      return null;
+    }
+
+    return teamById.get(preferredId) || null;
+  }, [
+    builtinTeams,
+    expandedTeamId,
+    filteredCustomTeams,
+    recommendedTeam,
+    selectedTeam,
+  ]);
+
+  const renderInspectorPanel = () => {
+    if (!inspectorTeam) {
+      return (
+        <div className="rounded-3xl border border-dashed border-slate-200 bg-white px-5 py-6 text-sm text-slate-500">
+          还没有可预览的 Team。你可以从左侧模板中查看详情，或新建一个自定义 Team。
+        </div>
+      );
+    }
+
+    const isCurrent = selectedTeam?.id === inspectorTeam.id;
+    const isCustom = inspectorTeam.source === "custom";
+    const badgeLabel =
+      inspectorTeam.id === recommendedTeam?.id
+        ? "按任务推荐"
+        : isCustom
+          ? "自定义"
+          : "系统模板";
+
+    return (
+      <div
+        className="space-y-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm shadow-slate-950/5"
+        data-testid="team-selector-inspector"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-lg font-semibold text-slate-900">
+                {inspectorTeam.label}
+              </span>
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                {badgeLabel}
+              </span>
+              {isCurrent ? (
+                <span className="inline-flex items-center gap-1 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                  <Check className="h-3.5 w-3.5" />
+                  当前选择
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-2 text-sm leading-6 text-slate-600">
+              {inspectorTeam.description || "该 Team 将作为主代理拆分子任务时的协作参考。"}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {!isCurrent ? (
+              <Button
+                type="button"
+                className="bg-slate-900 text-white hover:bg-slate-800"
+                onClick={() => handleSelect(inspectorTeam)}
+              >
+                采用这个 Team
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
               className="border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-              onClick={handleClearSelection}
+              onClick={() => handleStartCreate(inspectorTeam)}
             >
-              清除当前选择
+              <Copy className="mr-1.5 h-4 w-4" />
+              复制为自定义
             </Button>
-          ) : null}
+            {isCustom ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                onClick={() => handleStartEdit(inspectorTeam)}
+              >
+                <Pencil className="mr-1.5 h-4 w-4" />
+                编辑
+              </Button>
+            ) : null}
+          </div>
         </div>
 
-        {recommendedTeam ? (
-          <section className="space-y-2">
-            <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.08em] text-slate-500">
-              <Sparkles className="h-3.5 w-3.5" />
-              推荐 Team
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <div className="text-xs font-semibold tracking-[0.08em] text-slate-500">
+            TEAM 概览
+          </div>
+          <div className="mt-2 text-sm leading-6 text-slate-700">
+            {buildTeamDefinitionSummary(inspectorTeam)}
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="text-xs font-semibold tracking-[0.08em] text-slate-500">
+            角色分工
+          </div>
+          <div className="grid gap-3 xl:grid-cols-2">
+            {inspectorTeam.roles.map((role) => (
+              <div
+                key={`${inspectorTeam.id}-inspector-${role.id}`}
+                className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-900">
+                    {role.label}
+                  </span>
+                  {role.profileId ? (
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500">
+                      画像 ·{" "}
+                      {getBuiltinTeamProfileOption(role.profileId)?.label ||
+                        role.profileId}
+                    </span>
+                  ) : null}
+                  {role.roleKey ? (
+                    <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500">
+                      Role · {role.roleKey}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-2 text-sm leading-6 text-slate-600">
+                  {role.summary}
+                </div>
+                {role.skillIds?.length ? (
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {role.skillIds.map((skillId) => (
+                      <span
+                        key={`${inspectorTeam.id}-${role.id}-${skillId}`}
+                        className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-500"
+                      >
+                        技能 ·{" "}
+                        {getBuiltinTeamSkillOption(skillId)?.label || skillId}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {isCustom ? (
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-rose-200 bg-white text-rose-600 hover:bg-rose-50"
+              onClick={() => handleDeleteCustom(inspectorTeam)}
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" />
+              删除这个 Team
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderDraftEditor = () => {
+    if (!draft) {
+      return renderInspectorPanel();
+    }
+
+    return (
+      <section
+        className="space-y-4 rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm shadow-slate-950/5"
+        data-testid="team-selector-editor"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-base font-semibold text-slate-900">
+              {draft.id ? "编辑自定义 Team" : "新建自定义 Team"}
             </div>
-            <TeamCard
-              team={recommendedTeam}
-              selected={recommendedSelected}
-              expanded={expandedTeamId === recommendedTeam.id}
-              selectedLabel="已采用推荐"
-              badgeLabel="按任务推荐"
-              onSelect={() => handleSelect(recommendedTeam)}
-              onToggleDetail={() =>
-                setExpandedTeamId((currentId) =>
-                  currentId === recommendedTeam.id ? null : recommendedTeam.id,
+            <div className="mt-1 text-sm text-slate-500">
+              在右侧完整配置 Team 角色、画像和技能，左侧列表用于浏览与切换模板。
+            </div>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+            onClick={() => setDraft(null)}
+            aria-label="关闭编辑器"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-2">
+            <label className="text-xs font-medium text-slate-600">
+              Team 名称
+            </label>
+            <Input
+              value={draft.label}
+              onChange={(event) =>
+                setDraft((current) =>
+                  current
+                    ? {
+                        ...current,
+                        label: event.target.value,
+                      }
+                    : current,
                 )
               }
-              onCopy={() => handleStartCreate(recommendedTeam)}
+              placeholder="例如：前端联调团队"
+              className="border-slate-200 bg-white"
             />
-          </section>
-        ) : null}
+          </div>
 
-        <section className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
-              我的 Team
-            </div>
+          <div className="grid gap-2 md:col-span-2">
+            <label className="text-xs font-medium text-slate-600">
+              Team 描述
+            </label>
+            <Textarea
+              value={draft.description}
+              onChange={(event) =>
+                setDraft((current) =>
+                  current
+                    ? {
+                        ...current,
+                        description: event.target.value,
+                      }
+                    : current,
+                )
+              }
+              placeholder="说明这个 Team 适合什么类型任务。"
+              className="min-h-[88px] border-slate-200 bg-white"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <label className="text-xs font-medium text-slate-600">
+              角色分工
+            </label>
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="h-8 border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
               onClick={() =>
-                handleStartCreate(
-                  selectedTeam || recommendedTeam || builtinTeams[0] || null,
+                setDraft((current) =>
+                  current
+                    ? {
+                        ...current,
+                        roles: [
+                          ...current.roles,
+                          {
+                            id: `role-${current.roles.length + 1}`,
+                            label: "",
+                            summary: "",
+                            skillIds: [],
+                          },
+                        ],
+                      }
+                    : current,
                 )
               }
             >
               <Plus className="mr-1.5 h-3.5 w-3.5" />
-              新建自定义
+              添加角色
             </Button>
           </div>
-          {filteredCustomTeams.length > 0 ? (
-            <div className="space-y-2">
-              {filteredCustomTeams.map((team) => (
-                <TeamCard
-                  key={team.id}
-                  team={team}
-                  selected={selectedTeam?.id === team.id}
-                  expanded={expandedTeamId === team.id}
-                  badgeLabel="自定义"
-                  onSelect={() => handleSelect(team)}
-                  onToggleDetail={() =>
-                    setExpandedTeamId((currentId) =>
-                      currentId === team.id ? null : team.id,
-                    )
-                  }
-                  onCopy={() => handleStartCreate(team)}
-                  onEdit={() => handleStartEdit(team)}
-                  onDelete={() => handleDeleteCustom(team)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
-              <div>还没有自定义 Team。可以从推荐方案或系统模板复制一份后再改。</div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="mt-3 border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                onClick={() =>
-                  handleStartCreate(
-                    selectedTeam || recommendedTeam || builtinTeams[0] || null,
-                  )
-                }
+
+          <div className="space-y-3">
+            {draft.roles.map((role, index) => (
+              <div
+                key={`${role.id}-${index}`}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-4"
               >
-                <Plus className="mr-1.5 h-3.5 w-3.5" />
-                立即创建
-              </Button>
-            </div>
-          )}
-        </section>
+                {(() => {
+                  const selectedProfile = getBuiltinTeamProfileOption(
+                    role.profileId,
+                  );
+                  const resolvedSkillIds = role.skillIds || [];
+                  const suggestedSkillIds = selectedProfile?.skillIds || [];
 
-        <section className="space-y-2">
-          <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
-            系统模板
-          </div>
-          <div className="space-y-2">
-            {builtinTeams.map((team) => (
-              <TeamCard
-                key={team.id}
-                team={team}
-                selected={selectedTeam?.id === team.id}
-                expanded={expandedTeamId === team.id}
-                badgeLabel="系统"
-                onSelect={() => handleSelect(team)}
-                onToggleDetail={() =>
-                  setExpandedTeamId((currentId) =>
-                    currentId === team.id ? null : team.id,
-                  )
-                }
-                onCopy={() => handleStartCreate(team)}
-              />
-            ))}
-          </div>
-        </section>
-
-        {draft ? (
-          <section className="space-y-3 rounded-[22px] border border-slate-200 bg-slate-50 p-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-slate-900">
-                  {draft.id ? "编辑自定义 Team" : "新建自定义 Team"}
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  用于当前 Team mode 的角色分工建议，不会影响普通单代理任务。
-                </div>
-              </div>
-              <button
-                type="button"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-slate-700"
-                onClick={() => setDraft(null)}
-                aria-label="关闭编辑器"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            <div className="grid gap-3">
-              <div className="grid gap-2">
-                <label className="text-xs font-medium text-slate-600">
-                  Team 名称
-                </label>
-                <Input
-                  value={draft.label}
-                  onChange={(event) =>
-                    setDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            label: event.target.value,
-                          }
-                        : current,
-                    )
-                  }
-                  placeholder="例如：前端联调团队"
-                  className="border-slate-200 bg-white"
-                />
-              </div>
-
-              <div className="grid gap-2">
-                <label className="text-xs font-medium text-slate-600">
-                  Team 描述
-                </label>
-                <Textarea
-                  value={draft.description}
-                  onChange={(event) =>
-                    setDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            description: event.target.value,
-                          }
-                        : current,
-                    )
-                  }
-                  placeholder="说明这个 Team 适合什么类型任务。"
-                  className="min-h-[84px] border-slate-200 bg-white"
-                />
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <label className="text-xs font-medium text-slate-600">
-                    角色分工
-                  </label>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                    onClick={() =>
-                      setDraft((current) =>
-                        current
-                          ? {
-                              ...current,
-                              roles: [
-                                ...current.roles,
-                                {
-                                  id: `role-${current.roles.length + 1}`,
-                                  label: "",
-                                  summary: "",
-                                  skillIds: [],
-                                },
-                              ],
-                            }
-                          : current,
-                      )
-                    }
-                  >
-                    <Plus className="mr-1.5 h-3.5 w-3.5" />
-                    添加角色
-                  </Button>
-                </div>
-
-                <div className="space-y-3">
-                  {draft.roles.map((role, index) => (
-                    <div
-                      key={`${role.id}-${index}`}
-                      className="rounded-2xl border border-slate-200 bg-white p-3"
-                    >
-                      {(() => {
-                        const selectedProfile = getBuiltinTeamProfileOption(
-                          role.profileId,
-                        );
-                        const resolvedSkillIds = role.skillIds || [];
-                        const suggestedSkillIds = selectedProfile?.skillIds || [];
-
-                        return (
-                          <>
-                      <div className="mb-2 flex items-center justify-between gap-3">
+                  return (
+                    <>
+                      <div className="mb-3 flex items-center justify-between gap-3">
                         <div className="text-xs font-medium text-slate-500">
                           角色 {index + 1}
                         </div>
                         <button
                           type="button"
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                          className="inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-white hover:text-slate-700"
                           onClick={() =>
                             setDraft((current) =>
                               current
@@ -780,9 +784,9 @@ export const TeamSelectorPanel: React.FC<TeamSelectorPanelProps> = ({
                             }))
                           }
                           placeholder="说明这个角色负责什么。"
-                          className="min-h-[76px] border-slate-200 bg-white"
+                          className="min-h-[84px] border-slate-200 bg-white"
                         />
-                        <div className="grid gap-3 md:grid-cols-2">
+                        <div className="grid gap-3 xl:grid-cols-2">
                           <div className="grid gap-2">
                             <label className="text-xs font-medium text-slate-600">
                               内置画像
@@ -819,7 +823,7 @@ export const TeamSelectorPanel: React.FC<TeamSelectorPanelProps> = ({
                                 </option>
                               ))}
                             </select>
-                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-500">
+                            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] leading-5 text-slate-500">
                               {selectedProfile ? (
                                 <>
                                   <span className="font-medium text-slate-700">
@@ -849,7 +853,7 @@ export const TeamSelectorPanel: React.FC<TeamSelectorPanelProps> = ({
                               placeholder="例如：explorer / executor / reviewer"
                               className="border-slate-200 bg-white"
                             />
-                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-500">
+                            <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] leading-5 text-slate-500">
                               用于运行时和工作台标记角色职责；建议与所选画像保持一致。
                             </div>
                           </div>
@@ -897,12 +901,9 @@ export const TeamSelectorPanel: React.FC<TeamSelectorPanelProps> = ({
                             placeholder="多个 skill id 用逗号分隔，例如：source-grounding, structured-writing"
                             className="border-slate-200 bg-white"
                           />
-                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] leading-5 text-slate-500">
+                          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] leading-5 text-slate-500">
                             {selectedProfile && suggestedSkillIds.length > 0 ? (
-                              <>
-                                推荐技能：
-                                {suggestedSkillIds.join("、")}
-                              </>
+                              <>推荐技能：{suggestedSkillIds.join("、")}</>
                             ) : (
                               "skillIds 会透传给运行时，用于约束子代理的技能集。"
                             )}
@@ -910,33 +911,234 @@ export const TeamSelectorPanel: React.FC<TeamSelectorPanelProps> = ({
                         </div>
                       </div>
                     </>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
+                  );
+                })()}
               </div>
+            ))}
+          </div>
+        </div>
 
-              <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            onClick={() => setDraft(null)}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
+            className="bg-slate-900 text-white hover:bg-slate-800"
+            onClick={handleSaveDraft}
+          >
+            保存 Team
+          </Button>
+        </div>
+      </section>
+    );
+  };
+
+  return (
+    <div
+      className="flex h-[min(78vh,760px)] w-full flex-col bg-white"
+      data-testid="team-selector-panel"
+    >
+      <div className="border-b border-slate-200/80 bg-[linear-gradient(180deg,rgb(255,255,255)_0%,rgb(248,250,252)_100%)] px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
+              TEAM 配置
+            </div>
+            <div className="mt-1 text-sm text-slate-700">
+              只在当前任务适合拆分协作时，为主代理提供团队结构参考。
+            </div>
+          </div>
+          {selectedTeam ? (
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              onClick={handleClearSelection}
+              title="清除 Team 选择"
+              aria-label="清除 Team 选择"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
+        </div>
+        {selectedTeam ? (
+          <div
+            className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5"
+            data-testid="team-selector-current"
+          >
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+              <Users className="h-3.5 w-3.5" />
+              当前已选 Team
+            </div>
+            <div className="mt-1 text-sm font-semibold text-slate-900">
+              {selectedTeam.label}
+            </div>
+            {currentSelectionSummary ? (
+              <div className="mt-1 text-xs leading-5 text-slate-600">
+                {currentSelectionSummary}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
+        <div className="min-h-0 overflow-y-auto border-b border-slate-200/80 bg-white p-4 lg:border-b-0 lg:border-r">
+          <div className="space-y-4">
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索 Team、角色或职责"
+              className="border-slate-200 bg-white"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                className="bg-slate-900 text-white hover:bg-slate-800"
+                onClick={() =>
+                  handleStartCreate(
+                    selectedTeam || recommendedTeam || builtinTeams[0] || null,
+                  )
+                }
+              >
+                <Plus className="mr-1.5 h-4 w-4" />
+                新建自定义 Team
+              </Button>
+              {selectedTeam ? (
                 <Button
                   type="button"
                   variant="outline"
                   className="border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  onClick={() => setDraft(null)}
+                  onClick={handleClearSelection}
                 >
-                  取消
+                  清除当前选择
                 </Button>
+              ) : null}
+            </div>
+
+            {recommendedTeam ? (
+              <section className="space-y-2">
+                <div className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.08em] text-slate-500">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  推荐 Team
+                </div>
+                <TeamCard
+                  team={recommendedTeam}
+                  selected={recommendedSelected}
+                  expanded={expandedTeamId === recommendedTeam.id}
+                  selectedLabel="已采用推荐"
+                  badgeLabel="按任务推荐"
+                  onSelect={() => handleSelect(recommendedTeam)}
+                  onToggleDetail={() =>
+                    setExpandedTeamId((currentId) =>
+                      currentId === recommendedTeam.id
+                        ? null
+                        : recommendedTeam.id,
+                    )
+                  }
+                  onCopy={() => handleStartCreate(recommendedTeam)}
+                />
+              </section>
+            ) : null}
+
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
+                  我的 Team
+                </div>
                 <Button
                   type="button"
-                  className="bg-slate-900 text-white hover:bg-slate-800"
-                  onClick={handleSaveDraft}
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  onClick={() =>
+                    handleStartCreate(
+                      selectedTeam || recommendedTeam || builtinTeams[0] || null,
+                    )
+                  }
                 >
-                  保存 Team
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  新建自定义
                 </Button>
               </div>
-            </div>
-          </section>
-        ) : null}
+              {filteredCustomTeams.length > 0 ? (
+                <div className="space-y-2">
+                  {filteredCustomTeams.map((team) => (
+                    <TeamCard
+                      key={team.id}
+                      team={team}
+                      selected={selectedTeam?.id === team.id}
+                      expanded={expandedTeamId === team.id}
+                      badgeLabel="自定义"
+                      onSelect={() => handleSelect(team)}
+                      onToggleDetail={() =>
+                        setExpandedTeamId((currentId) =>
+                          currentId === team.id ? null : team.id,
+                        )
+                      }
+                      onCopy={() => handleStartCreate(team)}
+                      onEdit={() => handleStartEdit(team)}
+                      onDelete={() => handleDeleteCustom(team)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-sm text-slate-500">
+                  <div>
+                    还没有自定义 Team。可以从推荐方案或系统模板复制一份后再改。
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    onClick={() =>
+                      handleStartCreate(
+                        selectedTeam || recommendedTeam || builtinTeams[0] || null,
+                      )
+                    }
+                  >
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    立即创建
+                  </Button>
+                </div>
+              )}
+            </section>
+
+            <section className="space-y-2">
+              <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
+                系统模板
+              </div>
+              <div className="space-y-2">
+                {builtinTeams.map((team) => (
+                  <TeamCard
+                    key={team.id}
+                    team={team}
+                    selected={selectedTeam?.id === team.id}
+                    expanded={expandedTeamId === team.id}
+                    badgeLabel="系统"
+                    onSelect={() => handleSelect(team)}
+                    onToggleDetail={() =>
+                      setExpandedTeamId((currentId) =>
+                        currentId === team.id ? null : team.id,
+                      )
+                    }
+                    onCopy={() => handleStartCreate(team)}
+                  />
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+
+        <div className="min-h-0 overflow-y-auto bg-slate-50 p-5">
+          {renderDraftEditor()}
+        </div>
       </div>
     </div>
   );
