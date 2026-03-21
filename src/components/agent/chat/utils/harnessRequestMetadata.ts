@@ -2,6 +2,14 @@ import type { CreationMode } from "../components/types";
 import type { BrowserTaskRequirement } from "../types";
 import type { TeamRoleDefinition, TeamDefinitionSource } from "./teamDefinitions";
 
+export type HarnessTurnTeamDecision = "single_agent" | "team_prepared";
+
+export interface HarnessTurnTeamBlueprint {
+  label?: string | null;
+  description?: string | null;
+  roles?: TeamRoleDefinition[] | null;
+}
+
 export interface BuildHarnessRequestMetadataOptions {
   base?: Record<string, unknown>;
   theme: string;
@@ -25,6 +33,9 @@ export interface BuildHarnessRequestMetadataOptions {
   selectedTeamLabel?: string | null;
   selectedTeamSummary?: string | null;
   selectedTeamRoles?: TeamRoleDefinition[] | null;
+  turnTeamDecision?: HarnessTurnTeamDecision | null;
+  turnTeamReason?: string | null;
+  turnTeamBlueprint?: HarnessTurnTeamBlueprint | null;
 }
 
 export function extractExistingHarnessMetadata(
@@ -68,7 +79,25 @@ export function buildHarnessRequestMetadata(
     selectedTeamLabel,
     selectedTeamSummary,
     selectedTeamRoles,
+    turnTeamDecision,
+    turnTeamReason,
+    turnTeamBlueprint,
   } = options;
+
+  const serializeTeamRoles = (roles?: TeamRoleDefinition[] | null) =>
+    roles && roles.length > 0
+      ? roles.map((role) => ({
+          id: role.id,
+          label: role.label,
+          summary: role.summary,
+          profile_id: role.profileId || undefined,
+          role_key: role.roleKey || undefined,
+          skill_ids:
+            role.skillIds && role.skillIds.length > 0
+              ? [...role.skillIds]
+              : undefined,
+        }))
+      : undefined;
 
   return {
     ...(base || {}),
@@ -89,19 +118,19 @@ export function buildHarnessRequestMetadata(
     selected_team_source: selectedTeamSource || undefined,
     selected_team_label: selectedTeamLabel || undefined,
     selected_team_summary: selectedTeamSummary || undefined,
-    selected_team_roles:
-      selectedTeamRoles && selectedTeamRoles.length > 0
-        ? selectedTeamRoles.map((role) => ({
-            id: role.id,
-            label: role.label,
-            summary: role.summary,
-            profile_id: role.profileId || undefined,
-            role_key: role.roleKey || undefined,
-            skill_ids:
-              role.skillIds && role.skillIds.length > 0
-                ? [...role.skillIds]
-                : undefined,
-          }))
+    selected_team_roles: serializeTeamRoles(selectedTeamRoles),
+    turn_team_decision: turnTeamDecision || undefined,
+    turn_team_reason: turnTeamReason || undefined,
+    turn_team_blueprint:
+      turnTeamBlueprint &&
+      (turnTeamBlueprint.label?.trim() ||
+        turnTeamBlueprint.description?.trim() ||
+        (turnTeamBlueprint.roles?.length || 0) > 0)
+        ? {
+            label: turnTeamBlueprint.label?.trim() || undefined,
+            description: turnTeamBlueprint.description?.trim() || undefined,
+            roles: serializeTeamRoles(turnTeamBlueprint.roles),
+          }
         : undefined,
     browser_requirement: browserRequirement || undefined,
     browser_requirement_reason: browserRequirementReason || undefined,

@@ -99,6 +99,10 @@ pub struct ChildSubagentSession {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_from_turn_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub blueprint_role_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blueprint_role_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_name: Option<String>,
@@ -134,6 +138,10 @@ pub struct SubagentParentContext {
     pub origin_tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_from_turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blueprint_role_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blueprint_role_label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -379,6 +387,8 @@ fn build_child_subagent_session_summary(
         role_hint: normalize_optional_text(metadata.role_hint),
         origin_tool: normalize_optional_text(Some(metadata.origin_tool)),
         created_from_turn_id: normalize_optional_text(metadata.created_from_turn_id),
+        blueprint_role_id: customization.blueprint_role_id,
+        blueprint_role_label: customization.blueprint_role_label,
         profile_id: customization.profile_id,
         profile_name: customization.profile_name,
         role_key: customization.role_key,
@@ -441,6 +451,8 @@ fn build_subagent_parent_context(
         task_summary: normalize_optional_nonempty_body(metadata.task_summary),
         origin_tool: normalize_optional_text(Some(metadata.origin_tool)),
         created_from_turn_id: normalize_optional_text(metadata.created_from_turn_id),
+        blueprint_role_id: customization.blueprint_role_id,
+        blueprint_role_label: customization.blueprint_role_label,
         profile_id: customization.profile_id,
         profile_name: customization.profile_name,
         role_key: customization.role_key,
@@ -1281,6 +1293,8 @@ mod tests {
             Some("turn-9"),
         );
         session.extension_data = SubagentCustomizationState {
+            blueprint_role_id: Some("runtime-explorer".to_string()),
+            blueprint_role_label: Some("分析".to_string()),
             profile_id: Some("code-explorer".to_string()),
             profile_name: Some("代码分析员".to_string()),
             role_key: Some("explorer".to_string()),
@@ -1303,6 +1317,11 @@ mod tests {
         let summary = build_child_subagent_session_summary(None, session)
             .expect("child summary should exist");
 
+        assert_eq!(
+            summary.blueprint_role_id.as_deref(),
+            Some("runtime-explorer")
+        );
+        assert_eq!(summary.blueprint_role_label.as_deref(), Some("分析"));
         assert_eq!(summary.profile_id.as_deref(), Some("code-explorer"));
         assert_eq!(summary.profile_name.as_deref(), Some("代码分析员"));
         assert_eq!(summary.role_key.as_deref(), Some("explorer"));
@@ -1439,6 +1458,8 @@ mod tests {
             role_hint: Some("explorer".to_string()),
             origin_tool: Some("spawn_agent".to_string()),
             created_from_turn_id: Some("turn-1".to_string()),
+            blueprint_role_id: None,
+            blueprint_role_label: None,
             profile_id: None,
             profile_name: None,
             role_key: None,

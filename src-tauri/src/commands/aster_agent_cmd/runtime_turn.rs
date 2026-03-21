@@ -1,5 +1,352 @@
 use super::*;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuntimePreparedTeamRole {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) summary: Option<String>,
+    pub(crate) profile_id: Option<String>,
+    pub(crate) role_key: Option<String>,
+    pub(crate) skill_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RuntimePreparedTeamSessionCandidate {
+    pub(crate) blueprint_role_id: String,
+    pub(crate) session_id: String,
+    pub(crate) status_kind: SubagentRuntimeStatusKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RuntimePreparedTeamAction {
+    Spawn(RuntimePreparedTeamRole),
+    Resume {
+        role: RuntimePreparedTeamRole,
+        session_id: String,
+    },
+}
+
+fn normalize_runtime_team_role_string(value: Option<&serde_json::Value>) -> Option<String> {
+    normalize_optional_text(
+        value
+            .and_then(serde_json::Value::as_str)
+            .map(ToString::to_string),
+    )
+}
+
+fn normalize_runtime_team_role_id_fragment(value: &str) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join("-");
+    let normalized = normalized.trim_matches('-').to_string();
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn normalize_runtime_team_skill_ids(value: Option<&serde_json::Value>) -> Vec<String> {
+    let Some(items) = value.and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut skill_ids = Vec::new();
+    for item in items {
+        let Some(skill_id) = normalize_runtime_team_role_string(Some(item)) else {
+            continue;
+        };
+        if seen.insert(skill_id.clone()) {
+            skill_ids.push(skill_id);
+        }
+    }
+
+    skill_ids
+}
+
+fn parse_runtime_prepared_team_role(
+    role_value: &serde_json::Value,
+    index: usize,
+) -> Option<RuntimePreparedTeamRole> {
+    let role = role_value.as_object()?;
+    let profile_id = normalize_runtime_team_role_string(role.get("profile_id"))
+        .or_else(|| normalize_runtime_team_role_string(role.get("profileId")));
+    let role_key = normalize_runtime_team_role_string(role.get("role_key"))
+        .or_else(|| normalize_runtime_team_role_string(role.get("roleKey")));
+    let label = normalize_runtime_team_role_string(role.get("label"))
+        .or_else(|| profile_id.clone())
+        .or_else(|| role_key.clone())
+        .unwrap_or_else(|| format!("角色 {}", index + 1));
+    let id = normalize_runtime_team_role_string(role.get("id"))
+        .or_else(|| {
+            profile_id
+                .as_deref()
+                .and_then(normalize_runtime_team_role_id_fragment)
+                .map(|fragment| format!("profile-{fragment}"))
+        })
+        .or_else(|| {
+            role_key
+                .as_deref()
+                .and_then(normalize_runtime_team_role_id_fragment)
+                .map(|fragment| format!("role-{fragment}"))
+        })
+        .or_else(|| {
+            normalize_runtime_team_role_id_fragment(&label)
+                .map(|fragment| format!("lane-{fragment}"))
+        })
+        .unwrap_or_else(|| format!("runtime-team-role-{}", index + 1));
+
+    Some(RuntimePreparedTeamRole {
+        id,
+        label,
+        summary: normalize_runtime_team_role_string(role.get("summary")),
+        profile_id,
+        role_key,
+        skill_ids: normalize_runtime_team_skill_ids(
+            role.get("skill_ids").or_else(|| role.get("skillIds")),
+        ),
+    })
+}
+
+pub(crate) fn parse_runtime_prepared_team_roles(
+    request_metadata: Option<&serde_json::Value>,
+) -> Vec<RuntimePreparedTeamRole> {
+    if extract_harness_string(
+        request_metadata,
+        &["turn_team_decision", "turnTeamDecision"],
+    )
+    .as_deref()
+        != Some("team_prepared")
+    {
+        return Vec::new();
+    }
+
+    let Some(blueprint) = extract_harness_nested_object(
+        request_metadata,
+        &["turn_team_blueprint", "turnTeamBlueprint"],
+    ) else {
+        return Vec::new();
+    };
+    let Some(role_values) = blueprint.get("roles").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+
+    let mut seen = HashSet::new();
+    let mut roles = Vec::new();
+    for (index, role_value) in role_values.iter().enumerate() {
+        let Some(role) = parse_runtime_prepared_team_role(role_value, index) else {
+            continue;
+        };
+        if seen.insert(role.id.clone()) {
+            roles.push(role);
+        }
+    }
+
+    roles
+}
+
+fn runtime_prepared_team_session_rank(status_kind: SubagentRuntimeStatusKind) -> u8 {
+    match status_kind {
+        SubagentRuntimeStatusKind::Running => 7,
+        SubagentRuntimeStatusKind::Queued => 6,
+        SubagentRuntimeStatusKind::Idle => 5,
+        SubagentRuntimeStatusKind::Completed => 4,
+        SubagentRuntimeStatusKind::Failed => 3,
+        SubagentRuntimeStatusKind::Aborted => 2,
+        SubagentRuntimeStatusKind::Closed => 1,
+        SubagentRuntimeStatusKind::NotFound => 0,
+    }
+}
+
+pub(crate) fn plan_runtime_prepared_team_actions(
+    roles: &[RuntimePreparedTeamRole],
+    existing_candidates: &[RuntimePreparedTeamSessionCandidate],
+) -> Vec<RuntimePreparedTeamAction> {
+    let mut existing_by_role_id: HashMap<&str, &RuntimePreparedTeamSessionCandidate> =
+        HashMap::new();
+
+    for candidate in existing_candidates {
+        let replace = existing_by_role_id
+            .get(candidate.blueprint_role_id.as_str())
+            .map(|current| {
+                runtime_prepared_team_session_rank(candidate.status_kind)
+                    > runtime_prepared_team_session_rank(current.status_kind)
+            })
+            .unwrap_or(true);
+        if replace {
+            existing_by_role_id.insert(candidate.blueprint_role_id.as_str(), candidate);
+        }
+    }
+
+    roles
+        .iter()
+        .filter_map(|role| match existing_by_role_id.get(role.id.as_str()) {
+            Some(candidate) if candidate.status_kind == SubagentRuntimeStatusKind::Closed => {
+                Some(RuntimePreparedTeamAction::Resume {
+                    role: role.clone(),
+                    session_id: candidate.session_id.clone(),
+                })
+            }
+            Some(candidate) if candidate.status_kind != SubagentRuntimeStatusKind::NotFound => None,
+            _ => Some(RuntimePreparedTeamAction::Spawn(role.clone())),
+        })
+        .collect()
+}
+
+pub(crate) fn build_runtime_prepared_team_spawn_message(
+    role: &RuntimePreparedTeamRole,
+    user_message: &str,
+) -> String {
+    let mut sections = vec![format!("你是本轮 Team 中的「{}」角色。", role.label)];
+    if let Some(summary) = role.summary.as_deref() {
+        sections.push(format!("你的职责：{summary}"));
+    }
+    sections.push(
+        "请直接在当前子会话输出你的执行过程与结果，不要把具体产出留给父会话代写。".to_string(),
+    );
+    sections.push(format!("当前用户任务：\n{}", user_message.trim()));
+    sections.push("只处理当前角色范围内的工作；如果依赖其他角色，请明确指出协作边界。".to_string());
+    sections.join("\n\n")
+}
+
+async fn collect_runtime_prepared_team_candidates(
+    parent_session_id: &str,
+) -> Result<Vec<RuntimePreparedTeamSessionCandidate>, String> {
+    let child_sessions = list_subagent_child_sessions(parent_session_id)
+        .await
+        .map_err(|error| format!("读取 runtime team child sessions 失败: {error}"))?;
+    let mut candidates = Vec::new();
+
+    for child_session in child_sessions {
+        let Some(customization) = SubagentCustomizationState::from_session(&child_session) else {
+            continue;
+        };
+        let Some(blueprint_role_id) = normalize_optional_text(customization.blueprint_role_id)
+        else {
+            continue;
+        };
+        let status_kind = load_subagent_runtime_status(&child_session.id)
+            .await
+            .map(|status| status.kind)
+            .unwrap_or(SubagentRuntimeStatusKind::NotFound);
+        candidates.push(RuntimePreparedTeamSessionCandidate {
+            blueprint_role_id,
+            session_id: child_session.id,
+            status_kind,
+        });
+    }
+
+    Ok(candidates)
+}
+
+async fn maybe_prepare_runtime_team_sessions(
+    app: &AppHandle,
+    state: &AsterAgentState,
+    db: &DbConnection,
+    api_key_provider_service: &ApiKeyProviderServiceState,
+    logs: &LogState,
+    config_manager: &GlobalConfigManagerState,
+    mcp_manager: &McpManagerState,
+    automation_state: &AutomationServiceState,
+    request: &AsterChatRequest,
+) -> Result<(), String> {
+    let roles = parse_runtime_prepared_team_roles(request.metadata.as_ref());
+    if roles.is_empty() {
+        return Ok(());
+    }
+
+    let existing_candidates = collect_runtime_prepared_team_candidates(&request.session_id).await?;
+    let actions = plan_runtime_prepared_team_actions(&roles, &existing_candidates);
+    if actions.is_empty() {
+        tracing::info!(
+            "[AsterAgent][RuntimeTeam] session={} 所有 blueprint 角色已就绪，无需新增预拉起",
+            request.session_id
+        );
+        return Ok(());
+    }
+
+    tracing::info!(
+        "[AsterAgent][RuntimeTeam] session={} 开始按 blueprint 预拉起角色: total_roles={}, pending_actions={}",
+        request.session_id,
+        roles.len(),
+        actions.len()
+    );
+
+    let runtime = SubagentControlRuntime::new(
+        app.clone(),
+        state,
+        db,
+        api_key_provider_service,
+        logs,
+        config_manager,
+        mcp_manager,
+        automation_state,
+    );
+
+    for action in actions {
+        match action {
+            RuntimePreparedTeamAction::Spawn(role) => {
+                tracing::info!(
+                    "[AsterAgent][RuntimeTeam] session={} 自动预拉起角色: role_id={}, label={}",
+                    request.session_id,
+                    role.id,
+                    role.label
+                );
+                agent_runtime_spawn_subagent_internal(
+                    &runtime,
+                    AgentRuntimeSpawnSubagentRequest {
+                        parent_session_id: request.session_id.clone(),
+                        message: build_runtime_prepared_team_spawn_message(&role, &request.message),
+                        agent_type: Some(role.label.clone()),
+                        model: None,
+                        reasoning_effort: None,
+                        fork_context: false,
+                        blueprint_role_id: Some(role.id.clone()),
+                        blueprint_role_label: Some(role.label.clone()),
+                        profile_id: role.profile_id.clone(),
+                        profile_name: None,
+                        role_key: role.role_key.clone(),
+                        skill_ids: role.skill_ids.clone(),
+                        skill_directories: Vec::new(),
+                        team_preset_id: None,
+                        theme: None,
+                        system_overlay: None,
+                        output_contract: None,
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    format!(
+                        "自动预拉起 team 角色失败: role_id={}, label={}, error={error}",
+                        role.id, role.label
+                    )
+                })?;
+            }
+            RuntimePreparedTeamAction::Resume { role, session_id } => {
+                tracing::info!(
+                    "[AsterAgent][RuntimeTeam] session={} 恢复已关闭角色 lane: role_id={}, label={}, child_session={}",
+                    request.session_id,
+                    role.id,
+                    role.label,
+                    session_id
+                );
+                agent_runtime_resume_subagent_internal(
+                    &runtime,
+                    AgentRuntimeResumeSubagentRequest { id: session_id.clone() },
+                )
+                .await
+                .map_err(|error| {
+                    format!(
+                        "恢复已关闭 team 角色失败: role_id={}, label={}, child_session={}, error={error}",
+                        role.id, role.label, session_id
+                    )
+                })?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn execute_aster_chat_request(
     app: &AppHandle,
     state: &AsterAgentState,
@@ -604,21 +951,50 @@ async fn execute_aster_chat_request(
         session_config_builder.build()
     };
 
+    let runtime_turn_initialized = {
+        let guard = agent_arc.read().await;
+        let agent = guard.as_ref().ok_or("Agent not initialized")?;
+        match agent
+            .ensure_runtime_turn_initialized(
+                &runtime_status_session_config,
+                Some(request.message.clone()),
+            )
+            .await
+        {
+            Ok(_) => true,
+            Err(error) => {
+                tracing::warn!(
+                    "[AsterAgent] 初始化 runtime turn 失败，后续降级继续: {}",
+                    error
+                );
+                false
+            }
+        }
+    };
+
+    if runtime_turn_initialized {
+        maybe_prepare_runtime_team_sessions(
+            app,
+            state,
+            db,
+            api_key_provider_service,
+            logs,
+            config_manager,
+            mcp_manager,
+            automation_state,
+            &request,
+        )
+        .await?;
+    } else {
+        tracing::warn!(
+            "[AsterAgent][RuntimeTeam] 跳过本轮 team 预拉起，因为父会话 runtime turn 尚未就绪: session={}",
+            session_id
+        );
+    }
+
     // 获取 Agent Arc 并保持 guard 在整个流处理期间存活
     let guard = agent_arc.read().await;
     let agent = guard.as_ref().ok_or("Agent not initialized")?;
-    if let Err(error) = agent
-        .ensure_runtime_turn_initialized(
-            &runtime_status_session_config,
-            Some(request.message.clone()),
-        )
-        .await
-    {
-        tracing::warn!(
-            "[AsterAgent] 初始化 runtime turn 失败，后续降级继续: {}",
-            error
-        );
-    }
 
     let (initial_runtime_status, decided_runtime_status) = build_turn_runtime_statuses(
         &request,

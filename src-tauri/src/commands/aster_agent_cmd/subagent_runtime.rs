@@ -153,9 +153,11 @@ fn normalize_optional_vec(values: &[String]) -> Vec<String> {
 fn build_subagent_session_name(
     message: &str,
     agent_type: Option<&str>,
+    blueprint_role_label: Option<&str>,
     profile_name: Option<&str>,
 ) -> String {
     normalize_optional_text(agent_type.map(ToString::to_string))
+        .or_else(|| normalize_optional_text(blueprint_role_label.map(ToString::to_string)))
         .or_else(|| normalize_optional_text(profile_name.map(ToString::to_string)))
         .or_else(|| build_subagent_task_summary(message))
         .unwrap_or_else(|| "子代理".to_string())
@@ -166,6 +168,7 @@ fn resolve_subagent_role_hint(
     customization: Option<&SubagentCustomizationState>,
 ) -> Option<String> {
     normalize_optional_text(request.agent_type.clone())
+        .or_else(|| customization.and_then(|state| state.blueprint_role_label.clone()))
         .or_else(|| customization.and_then(|state| state.profile_name.clone()))
         .or_else(|| customization.and_then(|state| state.role_key.clone()))
 }
@@ -210,6 +213,8 @@ fn build_local_subagent_skill_payload(
 pub(crate) fn build_subagent_customization_state(
     request: &AgentRuntimeSpawnSubagentRequest,
 ) -> Result<Option<SubagentCustomizationState>, String> {
+    let blueprint_role_id = normalize_optional_text(request.blueprint_role_id.clone());
+    let blueprint_role_label = normalize_optional_text(request.blueprint_role_label.clone());
     let profile_id = normalize_optional_text(request.profile_id.clone());
     let profile = profile_id
         .as_deref()
@@ -250,6 +255,8 @@ pub(crate) fn build_subagent_customization_state(
     }
 
     let state = SubagentCustomizationState {
+        blueprint_role_id,
+        blueprint_role_label,
         profile_id,
         profile_name: normalize_optional_text(request.profile_name.clone())
             .or_else(|| profile.map(|descriptor| descriptor.name.to_string())),
@@ -602,7 +609,14 @@ async fn create_runtime_subagent_session(
 
     let session = SessionManager::create_session(
         parent_session.working_dir.clone(),
-        build_subagent_session_name(&message, request.agent_type.as_deref(), profile_name),
+        build_subagent_session_name(
+            &message,
+            request.agent_type.as_deref(),
+            customization
+                .as_ref()
+                .and_then(|state| state.blueprint_role_label.as_deref()),
+            profile_name,
+        ),
         SessionType::SubAgent,
     )
     .await
@@ -720,6 +734,8 @@ pub(crate) async fn agent_runtime_spawn_subagent_internal(
                     "reasoning_effort": request.reasoning_effort,
                     "fork_context": request.fork_context,
                     "origin_tool": "spawn_agent",
+                    "blueprint_role_id": customization.as_ref().and_then(|state| state.blueprint_role_id.clone()),
+                    "blueprint_role_label": customization.as_ref().and_then(|state| state.blueprint_role_label.clone()),
                     "profile_id": customization.as_ref().and_then(|state| state.profile_id.clone()),
                     "profile_name": customization.as_ref().and_then(|state| state.profile_name.clone()),
                     "role_key": customization.as_ref().and_then(|state| state.role_key.clone()),
@@ -788,6 +804,8 @@ pub(crate) async fn agent_runtime_send_subagent_input_internal(
             "subagent": {
                 "origin_tool": "send_input",
                 "interrupt": request.interrupt,
+                "blueprint_role_id": customization.as_ref().and_then(|state| state.blueprint_role_id.clone()),
+                "blueprint_role_label": customization.as_ref().and_then(|state| state.blueprint_role_label.clone()),
                 "profile_id": customization.as_ref().and_then(|state| state.profile_id.clone()),
                 "profile_name": customization.as_ref().and_then(|state| state.profile_name.clone()),
                 "role_key": customization.as_ref().and_then(|state| state.role_key.clone()),

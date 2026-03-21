@@ -333,6 +333,12 @@ use run_metadata::{
     resolve_social_run_artifact_descriptor,
 };
 pub(crate) use runtime_turn::{build_queued_turn_task, build_runtime_queue_executor};
+#[cfg(test)]
+pub(crate) use runtime_turn::{
+    build_runtime_prepared_team_spawn_message, parse_runtime_prepared_team_roles,
+    plan_runtime_prepared_team_actions, RuntimePreparedTeamAction, RuntimePreparedTeamRole,
+    RuntimePreparedTeamSessionCandidate,
+};
 pub(crate) use session_runtime::{
     delete_runtime_session_internal, persist_session_provider_routing,
     resolve_session_provider_selector,

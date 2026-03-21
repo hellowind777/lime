@@ -14,9 +14,10 @@ interface TriggerRuntimeTeamFormationParams {
   executionStrategy?: "react" | "code_orchestrated" | "auto";
 }
 
-interface HandleRuntimeTeamAfterSendParams
+interface PrepareRuntimeTeamBeforeSendParams
   extends TriggerRuntimeTeamFormationParams {
   purpose?: HandleSendOptions["purpose"];
+  subagentEnabled?: boolean;
 }
 
 interface UseRuntimeTeamFormationOptions {
@@ -36,15 +37,17 @@ export interface UseRuntimeTeamFormationResult {
   clearRuntimeTeamState: () => void;
   triggerRuntimeTeamFormation: (
     params: TriggerRuntimeTeamFormationParams,
-  ) => void;
-  handleRuntimeTeamAfterSend: (params: HandleRuntimeTeamAfterSendParams) => void;
+  ) => Promise<TeamWorkspaceRuntimeFormationState | null>;
+  prepareRuntimeTeamBeforeSend: (
+    params: PrepareRuntimeTeamBeforeSendParams,
+  ) => Promise<TeamWorkspaceRuntimeFormationState | null>;
 }
 
 function defaultCreateRequestId() {
   return crypto.randomUUID();
 }
 
-export function shouldGenerateRuntimeTeamAfterSend(params: {
+export function shouldPrepareRuntimeTeamBeforeSend(params: {
   subagentEnabled: boolean;
   projectId?: string | null;
   input: string;
@@ -79,7 +82,7 @@ export function useRuntimeTeamFormation({
   }, []);
 
   const triggerRuntimeTeamFormation = useCallback(
-    ({
+    async ({
       input,
       providerType,
       model,
@@ -87,61 +90,60 @@ export function useRuntimeTeamFormation({
     }: TriggerRuntimeTeamFormationParams) => {
       const normalizedInput = input.trim();
       if (!projectId || !normalizedInput) {
-        return;
+        return null;
       }
 
       const requestId = createRequestId();
       runtimeTeamRequestIdRef.current = requestId;
-      setRuntimeTeamState(
-        createRuntimeFormationStateFromTeam({
+      const formingState = createRuntimeFormationStateFromTeam({
+        requestId,
+        status: "forming",
+        blueprintTeam: selectedTeam ?? null,
+        updatedAt: now(),
+      });
+      setRuntimeTeamState(formingState);
+
+      try {
+        const runtimeTeam = await generateRuntimeTeam({
+          workspaceId: projectId,
+          providerType,
+          model,
+          executionStrategy,
+          activeTheme,
+          input: normalizedInput,
+          blueprintTeam: selectedTeam ?? null,
+        });
+
+        if (runtimeTeamRequestIdRef.current !== requestId) {
+          return null;
+        }
+
+        const formedState = createRuntimeFormationStateFromTeam({
           requestId,
-          status: "forming",
+          status: "formed",
+          runtimeTeam,
           blueprintTeam: selectedTeam ?? null,
           updatedAt: now(),
-        }),
-      );
-
-      void generateRuntimeTeam({
-        workspaceId: projectId,
-        providerType,
-        model,
-        executionStrategy,
-        activeTheme,
-        input: normalizedInput,
-        blueprintTeam: selectedTeam ?? null,
-      })
-        .then((runtimeTeam) => {
-          if (runtimeTeamRequestIdRef.current !== requestId) {
-            return;
-          }
-
-          setRuntimeTeamState(
-            createRuntimeFormationStateFromTeam({
-              requestId,
-              status: "formed",
-              runtimeTeam,
-              blueprintTeam: selectedTeam ?? null,
-              updatedAt: now(),
-            }),
-          );
-        })
-        .catch((error) => {
-          if (runtimeTeamRequestIdRef.current !== requestId) {
-            return;
-          }
-
-          const errorMessage =
-            error instanceof Error ? error.message : "Team 生成失败";
-          setRuntimeTeamState(
-            createRuntimeFormationStateFromTeam({
-              requestId,
-              status: "failed",
-              blueprintTeam: selectedTeam ?? null,
-              errorMessage,
-              updatedAt: now(),
-            }),
-          );
         });
+        setRuntimeTeamState(formedState);
+        return formedState;
+      } catch (error) {
+        if (runtimeTeamRequestIdRef.current !== requestId) {
+          return null;
+        }
+
+        const errorMessage =
+          error instanceof Error ? error.message : "Team 生成失败";
+        const failedState = createRuntimeFormationStateFromTeam({
+          requestId,
+          status: "failed",
+          blueprintTeam: selectedTeam ?? null,
+          errorMessage,
+          updatedAt: now(),
+        });
+        setRuntimeTeamState(failedState);
+        return failedState;
+      }
     },
     [
       activeTheme,
@@ -153,34 +155,38 @@ export function useRuntimeTeamFormation({
     ],
   );
 
-  const handleRuntimeTeamAfterSend = useCallback(
+  const prepareRuntimeTeamBeforeSend = useCallback(
     ({
       input,
       providerType,
       model,
       executionStrategy,
       purpose,
-    }: HandleRuntimeTeamAfterSendParams) => {
+      subagentEnabled: subagentEnabledOverride,
+    }: PrepareRuntimeTeamBeforeSendParams) => {
+      const effectiveSubagentEnabled =
+        subagentEnabledOverride ?? subagentEnabled;
       if (
-        shouldGenerateRuntimeTeamAfterSend({
-          subagentEnabled,
+        shouldPrepareRuntimeTeamBeforeSend({
+          subagentEnabled: effectiveSubagentEnabled,
           projectId,
           input,
           purpose,
         })
       ) {
-        triggerRuntimeTeamFormation({
+        return triggerRuntimeTeamFormation({
           input,
           providerType,
           model,
           executionStrategy,
         });
-        return;
       }
 
-      if (!subagentEnabled && !hasRealTeamGraph) {
+      if (!hasRealTeamGraph) {
         clearRuntimeTeamState();
       }
+
+      return Promise.resolve(null);
     },
     [
       clearRuntimeTeamState,
@@ -205,6 +211,6 @@ export function useRuntimeTeamFormation({
     runtimeTeamState,
     clearRuntimeTeamState,
     triggerRuntimeTeamFormation,
-    handleRuntimeTeamAfterSend,
+    prepareRuntimeTeamBeforeSend,
   };
 }

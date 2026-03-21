@@ -250,6 +250,10 @@ pub struct AgentRuntimeSpawnSubagentRequest {
     pub reasoning_effort: Option<String>,
     #[serde(default, alias = "forkContext")]
     pub fork_context: bool,
+    #[serde(default, alias = "blueprintRoleId")]
+    pub blueprint_role_id: Option<String>,
+    #[serde(default, alias = "blueprintRoleLabel")]
+    pub blueprint_role_label: Option<String>,
     #[serde(default, alias = "profileId")]
     pub profile_id: Option<String>,
     #[serde(default, alias = "profileName")]

@@ -114,6 +114,8 @@ export interface AsterSubagentSessionInfo {
   role_hint?: string;
   origin_tool?: string;
   created_from_turn_id?: string;
+  blueprint_role_id?: string;
+  blueprint_role_label?: string;
   profile_id?: string;
   profile_name?: string;
   role_key?: string;
@@ -156,6 +158,8 @@ export interface AsterSubagentParentContext {
   task_summary?: string;
   origin_tool?: string;
   created_from_turn_id?: string;
+  blueprint_role_id?: string;
+  blueprint_role_label?: string;
   profile_id?: string;
   profile_name?: string;
   role_key?: string;
@@ -274,6 +278,8 @@ export interface AgentRuntimeSpawnSubagentRequest {
   model?: string;
   reasoning_effort?: string;
   fork_context?: boolean;
+  blueprint_role_id?: string;
+  blueprint_role_label?: string;
   profile_id?: string;
   profile_name?: string;
   role_key?: string;

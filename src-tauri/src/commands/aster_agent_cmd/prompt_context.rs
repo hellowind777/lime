@@ -173,6 +173,76 @@ pub(crate) fn merge_system_prompt_with_elicitation_context(
     }
 }
 
+fn render_team_roles(role_items: &[serde_json::Value]) -> Vec<String> {
+    role_items
+        .iter()
+        .filter_map(|value| {
+            let object = value.as_object()?;
+            let label = object
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            let summary = object
+                .get("summary")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .unwrap_or("负责当前分工。");
+            let role_id_suffix = object
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!(" / id: {value}"))
+                .unwrap_or_default();
+            let profile_suffix = object
+                .get("profile_id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!(" / profile: {value}"))
+                .unwrap_or_default();
+            let role_key_suffix = object
+                .get("role_key")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| format!(" / roleKey: {value}"))
+                .unwrap_or_default();
+            let skill_suffix = object
+                .get("skill_ids")
+                .and_then(serde_json::Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .filter(|items| !items.is_empty())
+                .map(|items| format!(" / skills: {}", items.join(", ")))
+                .unwrap_or_default();
+
+            Some(format!(
+                "  - {label}：{summary}{role_id_suffix}{profile_suffix}{role_key_suffix}{skill_suffix}"
+            ))
+        })
+        .collect()
+}
+
+fn describe_turn_team_reason(reason: &str) -> &'static str {
+    match reason {
+        "runtime_team_prepared" => "GUI 已完成本轮 Team 预编队",
+        "runtime_team_generation_failed" => "GUI 尝试预编队失败，当前回合降级为单 Agent",
+        "subagent_disabled" => "当前回合未开启 Team 模式",
+        "turn_purpose_override" => "当前回合属于特定目的任务，不走 Team 预编队",
+        "single_agent_direct" => "当前回合判断为直接单 Agent 执行更合适",
+        _ => "GUI 已记录本轮 Team 判定",
+    }
+}
+
 pub(crate) fn build_team_preference_system_prompt(
     request_metadata: Option<&serde_json::Value>,
 ) -> Option<String> {
@@ -200,6 +270,16 @@ pub(crate) fn build_team_preference_system_prompt(
     let selected_team_roles = extract_harness_array(
         request_metadata,
         &["selected_team_roles", "selectedTeamRoles"],
+    );
+    let turn_team_decision = extract_harness_string(
+        request_metadata,
+        &["turn_team_decision", "turnTeamDecision"],
+    );
+    let turn_team_reason =
+        extract_harness_string(request_metadata, &["turn_team_reason", "turnTeamReason"]);
+    let turn_team_blueprint = extract_harness_nested_object(
+        request_metadata,
+        &["turn_team_blueprint", "turnTeamBlueprint"],
     );
 
     if !subagent_mode_enabled {
@@ -241,68 +321,84 @@ pub(crate) fn build_team_preference_system_prompt(
     }
 
     if let Some(role_items) = selected_team_roles {
-        let rendered_roles = role_items
-            .iter()
-            .filter_map(|value| {
-                let object = value.as_object()?;
-                let label = object
-                    .get("label")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())?;
-                let summary = object
-                    .get("summary")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .unwrap_or("负责当前分工。");
-                let profile_suffix = object
-                    .get("profile_id")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(|value| format!(" / profile: {value}"))
-                    .unwrap_or_default();
-                let role_key_suffix = object
-                    .get("role_key")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(|value| format!(" / roleKey: {value}"))
-                    .unwrap_or_default();
-                let skill_suffix = object
-                    .get("skill_ids")
-                    .and_then(serde_json::Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(serde_json::Value::as_str)
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .collect::<Vec<_>>()
-                    })
-                    .filter(|items| !items.is_empty())
-                    .map(|items| format!(" / skills: {}", items.join(", ")))
-                    .unwrap_or_default();
-
-                Some(format!(
-                    "  - {label}：{summary}{profile_suffix}{role_key_suffix}{skill_suffix}"
-                ))
-            })
-            .collect::<Vec<_>>();
-
+        let rendered_roles = render_team_roles(role_items);
         if !rendered_roles.is_empty() {
             lines.push("- 当前 Team 角色参考：".to_string());
             lines.extend(rendered_roles);
             lines.push(
-                "- 如果你决定调用 spawn_agent，请优先把上述 profile / roleKey / skillIds 映射到对应结构化字段，保持 GUI Team 画布与实际分工一致。"
+                "- 如果你决定调用 spawn_agent，请优先把上述 profile / roleKey / skillIds 映射到对应结构化字段；若该角色带有 id，优先同步写入 blueprintRoleId / blueprintRoleLabel，保持 GUI Team 画布与实际分工一致。"
                     .to_string(),
             );
         }
     }
 
+    match turn_team_decision.as_deref() {
+        Some("team_prepared") => {
+            lines.push(
+                "- 当前回合已经在 GUI 发送前完成 Team 预编队；这是一份本轮执行契约，不是事后建议。"
+                    .to_string(),
+            );
+            if let Some(reason) = turn_team_reason.as_deref() {
+                lines.push(format!(
+                    "- GUI 判定：{}。",
+                    describe_turn_team_reason(reason)
+                ));
+            }
+
+            if let Some(blueprint) = turn_team_blueprint {
+                let blueprint_label = blueprint
+                    .get("label")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let blueprint_description = blueprint
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let rendered_roles = blueprint
+                    .get("roles")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|items| render_team_roles(items))
+                    .unwrap_or_default();
+
+                if let Some(label) = blueprint_label {
+                    lines.push(format!("- 本轮 Team 蓝图：{label}。"));
+                }
+                if let Some(description) = blueprint_description {
+                    lines.push(format!("- 本轮蓝图说明：{description}"));
+                }
+                if !rendered_roles.is_empty() {
+                    lines.push("- 本轮 Team 角色分工：".to_string());
+                    lines.extend(rendered_roles);
+                }
+            }
+
+            lines.push(
+                "- 如果你决定调用 spawn_agent / send_input，应在本轮开局阶段优先按上述蓝图启动角色，并把蓝图里的 id / label 映射到 blueprintRoleId / blueprintRoleLabel，让各角色承担自己的输出，不要等主 agent 整轮完成后再补做 team。"
+                    .to_string(),
+            );
+        }
+        Some("single_agent") => {
+            lines.push(
+                "- 当前回合未在 GUI 中预编队 Team，本轮默认按单 Agent 直接推进。".to_string(),
+            );
+            if let Some(reason) = turn_team_reason.as_deref() {
+                lines.push(format!(
+                    "- GUI 判定：{}。",
+                    describe_turn_team_reason(reason)
+                ));
+            }
+            lines.push(
+                "- 除非执行中出现明确的拆分必要性，否则不要为了形式化 team 而推迟主任务。"
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+
     lines.push(
-        "- spawn_agent 支持这些结构化字段：teamPresetId、profileId、profileName、roleKey、skillIds、skillDirectories、theme、systemOverlay、outputContract。"
+        "- spawn_agent 支持这些结构化字段：blueprintRoleId、blueprintRoleLabel、teamPresetId、profileId、profileName、roleKey、skillIds、skillDirectories、theme、systemOverlay、outputContract。"
             .to_string(),
     );
     lines.push(

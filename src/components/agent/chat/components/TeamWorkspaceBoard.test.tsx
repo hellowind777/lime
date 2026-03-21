@@ -293,6 +293,10 @@ describe("TeamWorkspaceBoard", () => {
     });
 
     expect(container.textContent).toContain("Team Workspace");
+    expect(container.textContent).toContain("角色执行画布");
+    expect(container.textContent).toContain(
+      "主对话只保留调度记录，每个角色在自己的泳道中输出过程与结果。",
+    );
     expect(container.textContent).toContain("研究员");
     expect(container.textContent).toContain("执行器");
     expect(container.textContent).toContain("2 位成员已加入");
@@ -313,6 +317,20 @@ describe("TeamWorkspaceBoard", () => {
     expect(container.textContent).toContain("命令输出");
     expect(container.textContent).toContain("已对 3 个来源完成去重校验。");
 
+    const researcherLane = container.querySelector(
+      '[data-testid="team-workspace-member-lane-child-1"]',
+    );
+    const executorLane = container.querySelector(
+      '[data-testid="team-workspace-member-lane-child-2"]',
+    );
+    expect(researcherLane?.textContent).toContain("角色输出");
+    expect(researcherLane?.textContent).toContain(
+      "回复：已完成竞品摘要与数据来源梳理。",
+    );
+    expect(executorLane?.textContent).toContain(
+      "计划：先整理落地步骤，再生成第一版实施清单。",
+    );
+
     const openButton = Array.from(container.querySelectorAll("button")).find(
       (element) => element.textContent?.includes("查看对话"),
     );
@@ -323,6 +341,82 @@ describe("TeamWorkspaceBoard", () => {
     });
 
     expect(onOpenSubagentSession).toHaveBeenCalledWith("child-1");
+  });
+
+  it("真实成员存在时应优先按蓝图角色顺序排列泳道", async () => {
+    const container = await renderBoard({
+      childSubagentSessions: [
+        {
+          id: "child-executor",
+          name: "执行成员",
+          created_at: 1_710_000_010,
+          updated_at: 1_710_000_120,
+          session_type: "sub_agent",
+          runtime_status: "queued",
+          latest_turn_status: "queued",
+          task_summary: "负责提交修复。",
+          role_hint: "executor",
+          blueprint_role_id: "runtime-executor",
+          blueprint_role_label: "执行",
+          profile_id: "code-executor",
+          role_key: "executor",
+        },
+        {
+          id: "child-explorer",
+          name: "分析成员",
+          created_at: 1_710_000_000,
+          updated_at: 1_710_000_100,
+          session_type: "sub_agent",
+          runtime_status: "running",
+          latest_turn_status: "running",
+          task_summary: "负责定位问题。",
+          role_hint: "explorer",
+          blueprint_role_id: "runtime-explorer",
+          blueprint_role_label: "分析",
+          profile_id: "code-explorer",
+          role_key: "explorer",
+        },
+      ],
+      runtimeTeamState: {
+        requestId: "runtime-formed-ordered",
+        status: "formed",
+        label: "修复 Team",
+        summary: "分析、执行协同推进。",
+        members: [
+          {
+            id: "runtime-explorer",
+            label: "分析",
+            summary: "先定位问题。",
+            roleKey: "explorer",
+            profileId: "code-explorer",
+            skillIds: ["repo-exploration"],
+            status: "planned",
+          },
+          {
+            id: "runtime-executor",
+            label: "执行",
+            summary: "再提交修复。",
+            roleKey: "executor",
+            profileId: "code-executor",
+            skillIds: ["bounded-implementation"],
+            status: "planned",
+          },
+        ],
+        blueprint: null,
+        updatedAt: Date.now(),
+      },
+    });
+
+    const laneIds = Array.from(
+      container.querySelectorAll('[data-testid^="team-workspace-member-lane-"]'),
+    ).map((element) => element.getAttribute("data-testid"));
+
+    expect(laneIds).toEqual([
+      "team-workspace-member-lane-child-explorer",
+      "team-workspace-member-lane-child-executor",
+    ]);
+    expect(container.textContent).toContain("蓝图 · 分析");
+    expect(container.textContent).toContain("蓝图 · 执行");
   });
 
   it("子线程视角应展示父会话、最近过程并支持切换 sibling", async () => {
@@ -420,6 +514,7 @@ describe("TeamWorkspaceBoard", () => {
     });
 
     expect(container.textContent).toContain("主线程总览");
+    expect(container.textContent).toContain("角色执行画布");
     expect(container.textContent).toContain("实现代理");
     expect(container.textContent).toContain("检索代理");
     expect(container.textContent).toContain("队列 1");
@@ -433,6 +528,20 @@ describe("TeamWorkspaceBoard", () => {
     expect(container.textContent).toContain("检索结果");
     expect(container.textContent).toContain("已汇总 5 条 roadmap 差异。");
     expect(container.textContent).toContain(
+      "工具 browser_snapshot：页面已刷新为最新状态并生成差异截图。",
+    );
+
+    const currentLane = container.querySelector(
+      '[data-testid="team-workspace-member-lane-child-current"]',
+    );
+    const siblingLane = container.querySelector(
+      '[data-testid="team-workspace-member-lane-child-sibling-1"]',
+    );
+    expect(currentLane?.textContent).toContain("角色输出");
+    expect(currentLane?.textContent).toContain(
+      "推理：先检查 team runtime 的控制面状态，再决定是否等待。",
+    );
+    expect(siblingLane?.textContent).toContain(
       "工具 browser_snapshot：页面已刷新为最新状态并生成差异截图。",
     );
 

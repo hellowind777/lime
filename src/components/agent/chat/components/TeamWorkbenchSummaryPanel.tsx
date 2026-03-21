@@ -196,7 +196,7 @@ export function TeamWorkbenchSummaryPanel({
             ? runtimeTeamState.errorMessage?.trim() ||
               "本轮 Team 准备失败，可继续在当前对话中推进。"
             : runtimeSummaryText ||
-            "这里展示团队总览、运行密度和最近动态；详细协作过程在左侧主画布查看。"}
+            "这里展示团队总览与运行密度；主对话只保留调度记录，角色执行正文在左侧 Team 画布查看。"}
         </p>
         {!hasRealTeamGraph && runtimeTeamState ? (
           <div

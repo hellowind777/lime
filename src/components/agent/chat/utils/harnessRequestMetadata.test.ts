@@ -121,6 +121,64 @@ describe("harnessRequestMetadata", () => {
     ]);
   });
 
+  it("应写入本轮 Team 决策与预编队蓝图", () => {
+    const metadata = buildHarnessRequestMetadata({
+      theme: "general",
+      creationMode: "guided",
+      chatMode: "agent",
+      webSearchEnabled: false,
+      thinkingEnabled: true,
+      taskModeEnabled: true,
+      subagentModeEnabled: true,
+      sessionMode: "default",
+      turnTeamDecision: "team_prepared",
+      turnTeamReason: "runtime_team_prepared",
+      turnTeamBlueprint: {
+        label: "本轮调试 Team",
+        description: "先分析，再实现，最后验证。",
+        roles: [
+          {
+            id: "explorer",
+            label: "分析",
+            summary: "负责定位问题。",
+            profileId: "code-explorer",
+            roleKey: "explorer",
+            skillIds: ["repo-exploration"],
+          },
+          {
+            id: "executor",
+            label: "执行",
+            summary: "负责提交修复。",
+          },
+        ],
+      },
+    });
+
+    expect(metadata).toMatchObject({
+      turn_team_decision: "team_prepared",
+      turn_team_reason: "runtime_team_prepared",
+      turn_team_blueprint: {
+        label: "本轮调试 Team",
+        description: "先分析，再实现，最后验证。",
+        roles: [
+          {
+            id: "explorer",
+            label: "分析",
+            summary: "负责定位问题。",
+            profile_id: "code-explorer",
+            role_key: "explorer",
+            skill_ids: ["repo-exploration"],
+          },
+          {
+            id: "executor",
+            label: "执行",
+            summary: "负责提交修复。",
+          },
+        ],
+      },
+    });
+  });
+
   it("需要人工确认的浏览器任务应标记 user step", () => {
     const metadata = buildHarnessRequestMetadata({
       theme: "general",

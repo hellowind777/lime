@@ -412,6 +412,8 @@ impl Tool for SubAgentTaskTool {
                 model: input.model.clone(),
                 reasoning_effort: None,
                 fork_context: false,
+                blueprint_role_id: None,
+                blueprint_role_label: None,
                 profile_id: None,
                 profile_name: None,
                 role_key: None,
@@ -511,6 +513,8 @@ struct SpawnAgentToolInput {
     model: Option<String>,
     reasoning_effort: Option<String>,
     fork_context: Option<bool>,
+    blueprint_role_id: Option<String>,
+    blueprint_role_label: Option<String>,
     profile_id: Option<String>,
     profile_name: Option<String>,
     role_key: Option<String>,
@@ -568,6 +572,14 @@ impl Tool for SpawnAgentTool {
                 "forkContext": {
                     "type": "boolean",
                     "description": "保留字段，当前仅记录到 metadata"
+                },
+                "blueprintRoleId": {
+                    "type": "string",
+                    "description": "可选本轮 Team 蓝图角色 id；当 GUI 已预编队 Team 时，优先传入对应角色 id，便于真实成员接管画布泳道"
+                },
+                "blueprintRoleLabel": {
+                    "type": "string",
+                    "description": "可选本轮 Team 蓝图角色标签，例如 分析 / 执行 / 验证"
                 },
                 "profileId": {
                     "type": "string",
@@ -629,6 +641,8 @@ impl Tool for SpawnAgentTool {
                 model: input.model,
                 reasoning_effort: input.reasoning_effort,
                 fork_context: input.fork_context.unwrap_or(false),
+                blueprint_role_id: input.blueprint_role_id,
+                blueprint_role_label: input.blueprint_role_label,
                 profile_id: input.profile_id,
                 profile_name: input.profile_name,
                 role_key: input.role_key,

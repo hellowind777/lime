@@ -1250,6 +1250,61 @@ mod tests {
     }
 
     #[test]
+    fn test_build_team_preference_system_prompt_renders_turn_team_contract() {
+        let prompt = build_team_preference_system_prompt(Some(&serde_json::json!({
+            "harness": {
+                "subagent_mode_enabled": true,
+                "turn_team_decision": "team_prepared",
+                "turn_team_reason": "runtime_team_prepared",
+                "turn_team_blueprint": {
+                    "label": "本轮调试 Team",
+                    "description": "先分析，再实现，最后验证。",
+                    "roles": [
+                        {
+                            "id": "runtime-explorer",
+                            "label": "分析",
+                            "summary": "负责定位问题。",
+                            "profile_id": "code-explorer",
+                            "role_key": "explorer",
+                            "skill_ids": ["repo-exploration"]
+                        },
+                        {
+                            "label": "执行",
+                            "summary": "负责提交修复。"
+                        }
+                    ]
+                }
+            }
+        })))
+        .expect("team prompt should exist");
+
+        assert!(prompt.contains("发送前完成 Team 预编队"));
+        assert!(prompt.contains("本轮调试 Team"));
+        assert!(prompt.contains("先分析，再实现，最后验证。"));
+        assert!(prompt.contains("分析：负责定位问题。"));
+        assert!(prompt.contains("id: runtime-explorer"));
+        assert!(prompt.contains("blueprintRoleId"));
+        assert!(prompt.contains("让各角色承担自己的输出"));
+        assert!(prompt.contains("不要等主 agent 整轮完成后再补做 team"));
+    }
+
+    #[test]
+    fn test_build_team_preference_system_prompt_renders_single_agent_turn_decision() {
+        let prompt = build_team_preference_system_prompt(Some(&serde_json::json!({
+            "harness": {
+                "subagent_mode_enabled": true,
+                "turn_team_decision": "single_agent",
+                "turn_team_reason": "single_agent_direct",
+            }
+        })))
+        .expect("team prompt should exist");
+
+        assert!(prompt.contains("当前回合未在 GUI 中预编队 Team"));
+        assert!(prompt.contains("直接单 Agent 执行更合适"));
+        assert!(prompt.contains("不要为了形式化 team 而推迟主任务"));
+    }
+
+    #[test]
     fn test_build_subagent_customization_state_applies_profile_defaults() {
         let customization = build_subagent_customization_state(&AgentRuntimeSpawnSubagentRequest {
             parent_session_id: "parent-1".to_string(),
@@ -1258,6 +1313,8 @@ mod tests {
             model: None,
             reasoning_effort: None,
             fork_context: false,
+            blueprint_role_id: Some("runtime-explorer".to_string()),
+            blueprint_role_label: Some("分析".to_string()),
             profile_id: Some("code-explorer".to_string()),
             profile_name: None,
             role_key: None,
@@ -1271,6 +1328,11 @@ mod tests {
         .expect("build customization state")
         .expect("customization should exist");
 
+        assert_eq!(
+            customization.blueprint_role_id.as_deref(),
+            Some("runtime-explorer")
+        );
+        assert_eq!(customization.blueprint_role_label.as_deref(), Some("分析"));
         assert_eq!(customization.profile_name.as_deref(), Some("代码分析员"));
         assert_eq!(customization.role_key.as_deref(), Some("explorer"));
         assert_eq!(
@@ -1293,6 +1355,8 @@ mod tests {
     fn test_build_subagent_customization_system_prompt_renders_builtin_configuration() {
         let prompt =
             build_subagent_customization_system_prompt(Some(&SubagentCustomizationState {
+                blueprint_role_id: Some("runtime-explorer".to_string()),
+                blueprint_role_label: Some("分析".to_string()),
                 profile_id: Some("code-explorer".to_string()),
                 profile_name: Some("代码分析员".to_string()),
                 role_key: Some("explorer".to_string()),
@@ -1313,10 +1377,131 @@ mod tests {
             .expect("prompt should exist");
 
         assert!(prompt.contains("【Subagent 定制配置】"));
+        assert!(prompt.contains("蓝图角色：分析 (runtime-explorer)"));
         assert!(prompt.contains("代码分析员"));
         assert!(prompt.contains("代码排障团队"));
         assert!(prompt.contains("仓库探索"));
         assert!(prompt.contains("输出问题定位、证据与影响面。"));
+    }
+
+    #[test]
+    fn test_parse_runtime_prepared_team_roles_from_metadata() {
+        let roles = parse_runtime_prepared_team_roles(Some(&serde_json::json!({
+            "harness": {
+                "turn_team_decision": "team_prepared",
+                "turn_team_blueprint": {
+                    "roles": [
+                        {
+                            "id": "runtime-explorer",
+                            "label": "分析",
+                            "summary": "负责定位问题。",
+                            "profile_id": "code-explorer",
+                            "role_key": "explorer",
+                            "skill_ids": ["repo-exploration", "repo-exploration", " "]
+                        },
+                        {
+                            "label": "执行 角色",
+                            "summary": "负责提交修复。"
+                        },
+                        {
+                            "id": "runtime-explorer",
+                            "label": "重复分析"
+                        }
+                    ]
+                }
+            }
+        })));
+
+        assert_eq!(roles.len(), 2);
+        assert_eq!(roles[0].id, "runtime-explorer");
+        assert_eq!(roles[0].label, "分析");
+        assert_eq!(roles[0].profile_id.as_deref(), Some("code-explorer"));
+        assert_eq!(roles[0].role_key.as_deref(), Some("explorer"));
+        assert_eq!(roles[0].skill_ids, vec!["repo-exploration".to_string()]);
+
+        assert_eq!(roles[1].id, "lane-执行-角色");
+        assert_eq!(roles[1].label, "执行 角色");
+        assert_eq!(roles[1].summary.as_deref(), Some("负责提交修复。"));
+    }
+
+    #[test]
+    fn test_plan_runtime_prepared_team_actions_skips_existing_and_resumes_closed_lane() {
+        let roles = vec![
+            RuntimePreparedTeamRole {
+                id: "runtime-explorer".to_string(),
+                label: "分析".to_string(),
+                summary: Some("负责定位问题。".to_string()),
+                profile_id: Some("code-explorer".to_string()),
+                role_key: Some("explorer".to_string()),
+                skill_ids: vec!["repo-exploration".to_string()],
+            },
+            RuntimePreparedTeamRole {
+                id: "runtime-executor".to_string(),
+                label: "执行".to_string(),
+                summary: Some("负责提交修复。".to_string()),
+                profile_id: Some("code-executor".to_string()),
+                role_key: Some("executor".to_string()),
+                skill_ids: vec![],
+            },
+            RuntimePreparedTeamRole {
+                id: "runtime-verifier".to_string(),
+                label: "验证".to_string(),
+                summary: Some("负责回归验证。".to_string()),
+                profile_id: Some("code-verifier".to_string()),
+                role_key: Some("verifier".to_string()),
+                skill_ids: vec![],
+            },
+        ];
+        let existing_candidates = vec![
+            RuntimePreparedTeamSessionCandidate {
+                blueprint_role_id: "runtime-explorer".to_string(),
+                session_id: "child-explorer".to_string(),
+                status_kind: SubagentRuntimeStatusKind::Running,
+            },
+            RuntimePreparedTeamSessionCandidate {
+                blueprint_role_id: "runtime-executor".to_string(),
+                session_id: "child-executor-old".to_string(),
+                status_kind: SubagentRuntimeStatusKind::Closed,
+            },
+            RuntimePreparedTeamSessionCandidate {
+                blueprint_role_id: "runtime-executor".to_string(),
+                session_id: "child-executor-stale".to_string(),
+                status_kind: SubagentRuntimeStatusKind::NotFound,
+            },
+        ];
+
+        let actions = plan_runtime_prepared_team_actions(&roles, &existing_candidates);
+        assert_eq!(actions.len(), 2);
+
+        assert!(matches!(
+            &actions[0],
+            RuntimePreparedTeamAction::Resume { role, session_id }
+                if role.id == "runtime-executor" && session_id == "child-executor-old"
+        ));
+        assert!(matches!(
+            &actions[1],
+            RuntimePreparedTeamAction::Spawn(role) if role.id == "runtime-verifier"
+        ));
+    }
+
+    #[test]
+    fn test_build_runtime_prepared_team_spawn_message_emphasizes_lane_output() {
+        let message = build_runtime_prepared_team_spawn_message(
+            &RuntimePreparedTeamRole {
+                id: "runtime-explorer".to_string(),
+                label: "分析".to_string(),
+                summary: Some("负责定位问题。".to_string()),
+                profile_id: Some("code-explorer".to_string()),
+                role_key: Some("explorer".to_string()),
+                skill_ids: vec!["repo-exploration".to_string()],
+            },
+            "修正 team runtime 的执行顺序",
+        );
+
+        assert!(message.contains("当前子会话输出"));
+        assert!(message.contains("修正 team runtime 的执行顺序"));
+        assert!(message.contains("负责定位问题。"));
+        assert!(message.contains("不要把具体产出留给父会话代写"));
     }
 
     #[test]
@@ -1360,8 +1545,9 @@ mod tests {
         let input = serde_json::json!({
             "path": "/memories/preferences.md"
         });
-        let normalized: serde_json::Value = normalize_params_for_durable_memory_support("read", &input)
-            .expect("normalize read params");
+        let normalized: serde_json::Value =
+            normalize_params_for_durable_memory_support("read", &input)
+                .expect("normalize read params");
         let expected = tmp
             .path()
             .join("preferences.md")
@@ -1385,7 +1571,7 @@ mod tests {
         });
         let normalized: serde_json::Value =
             normalize_params_for_durable_memory_support("glob", &input)
-            .expect("normalize glob params");
+                .expect("normalize glob params");
         let expected_root = tmp.path().to_string_lossy().to_string();
 
         assert_eq!(

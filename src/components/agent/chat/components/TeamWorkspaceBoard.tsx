@@ -100,6 +100,8 @@ interface TeamSessionCard {
   model?: string;
   originTool?: string;
   createdFromTurnId?: string;
+  blueprintRoleId?: string;
+  blueprintRoleLabel?: string;
   profileId?: string;
   profileName?: string;
   roleKey?: string;
@@ -588,6 +590,8 @@ function buildCurrentChildSession(
     sessionType: "sub_agent",
     originTool: subagentParentContext.origin_tool,
     createdFromTurnId: subagentParentContext.created_from_turn_id,
+    blueprintRoleId: subagentParentContext.blueprint_role_id,
+    blueprintRoleLabel: subagentParentContext.blueprint_role_label,
     profileId: subagentParentContext.profile_id,
     profileName: subagentParentContext.profile_name,
     roleKey: subagentParentContext.role_key,
@@ -638,6 +642,136 @@ function dedupeSessions(
   });
 
   return result;
+}
+
+function normalizeComparableText(value?: string | null): string {
+  return value?.trim().toLocaleLowerCase() || "";
+}
+
+function resolveSessionBlueprintRoleId(
+  session: TeamSessionCard,
+  runtimeRoles: Array<{
+    id: string;
+    label?: string | null;
+    profileId?: string;
+    roleKey?: string;
+  }>,
+  usedRoleIds: Set<string>,
+): string | null {
+  const explicitRoleId = session.blueprintRoleId?.trim();
+  if (
+    explicitRoleId &&
+    !usedRoleIds.has(explicitRoleId) &&
+    runtimeRoles.some((role) => role.id === explicitRoleId)
+  ) {
+    return explicitRoleId;
+  }
+
+  const sessionBlueprintRoleLabel = normalizeComparableText(
+    session.blueprintRoleLabel,
+  );
+  const sessionRoleKey = normalizeComparableText(
+    session.roleKey || session.roleHint,
+  );
+  const sessionProfileId = normalizeComparableText(session.profileId);
+  const sessionName = normalizeComparableText(session.name);
+
+  const candidates = runtimeRoles
+    .filter((role) => !usedRoleIds.has(role.id))
+    .map((role) => {
+      let score = 0;
+      if (
+        sessionBlueprintRoleLabel &&
+        normalizeComparableText(role.label) === sessionBlueprintRoleLabel
+      ) {
+        score += 8;
+      }
+      if (sessionRoleKey && normalizeComparableText(role.roleKey) === sessionRoleKey) {
+        score += 4;
+      }
+      if (
+        sessionProfileId &&
+        normalizeComparableText(role.profileId) === sessionProfileId
+      ) {
+        score += 3;
+      }
+      if (sessionName && normalizeComparableText(role.label) === sessionName) {
+        score += 2;
+      }
+      return {
+        roleId: role.id,
+        score,
+      };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  if (candidates.length === 0) {
+    return null;
+  }
+  if (
+    candidates.length > 1 &&
+    candidates[0]?.score === candidates[1]?.score
+  ) {
+    return null;
+  }
+
+  return candidates[0]?.roleId ?? null;
+}
+
+function orderSessionsByRuntimeRoles(
+  sessions: TeamSessionCard[],
+  runtimeTeamState?: TeamWorkspaceRuntimeFormationState | null,
+): TeamSessionCard[] {
+  if (sessions.length <= 1 || !runtimeTeamState) {
+    return sessions;
+  }
+
+  const runtimeRoles = (
+    runtimeTeamState.members.length > 0
+      ? runtimeTeamState.members
+      : runtimeTeamState.blueprint?.roles ?? []
+  ).map((role) => ({
+    id: role.id,
+    label: role.label,
+    profileId: role.profileId,
+    roleKey: role.roleKey,
+  }));
+
+  if (runtimeRoles.length === 0) {
+    return sessions;
+  }
+
+  const roleOrder = new Map(runtimeRoles.map((role, index) => [role.id, index]));
+  const usedRoleIds = new Set<string>();
+
+  return [...sessions]
+    .map((session, index) => {
+      const matchedRoleId = resolveSessionBlueprintRoleId(
+        session,
+        runtimeRoles,
+        usedRoleIds,
+      );
+      if (matchedRoleId) {
+        usedRoleIds.add(matchedRoleId);
+      }
+      return {
+        session,
+        index,
+        matchedRoleId,
+        roleOrder:
+          matchedRoleId !== null
+            ? (roleOrder.get(matchedRoleId) ?? Number.MAX_SAFE_INTEGER)
+            : Number.MAX_SAFE_INTEGER,
+      };
+    })
+    .sort((left, right) => {
+      if (left.roleOrder !== right.roleOrder) {
+        return left.roleOrder - right.roleOrder;
+      }
+      return left.index - right.index;
+    })
+    .map((entry) => entry.session);
 }
 
 function buildBoardHeadline(params: {
@@ -728,6 +862,39 @@ function buildRuntimeFormationEmptyDetail(
     default:
       return "当前还没有真实团队成员。系统开始分派成员后，详情区会切换为选中成员的摘要视图。";
   }
+}
+
+function buildSessionLaneEmptyState(params: {
+  session?: TeamSessionCard | null;
+  previewState?: SessionActivityPreviewState | null;
+}) {
+  const { session, previewState } = params;
+
+  if (previewState?.status === "error") {
+    return previewState.errorMessage?.trim() || "同步角色输出失败";
+  }
+
+  if (previewState?.status === "loading") {
+    return "正在同步该角色的最新输出...";
+  }
+
+  if (session?.runtimeStatus === "queued") {
+    return "已进入队列，等待 orchestrator 拉起执行。";
+  }
+
+  if (session?.runtimeStatus === "running") {
+    return "角色已开始执行，最新过程会持续刷新到这里。";
+  }
+
+  if (session?.runtimeStatus === "completed") {
+    return "该角色已完成当前任务，等待 orchestrator 汇总或继续交接。";
+  }
+
+  if (session?.runtimeStatus === "failed" || session?.runtimeStatus === "aborted") {
+    return "该角色执行失败，可在下方焦点区查看细节并决定是否恢复。";
+  }
+
+  return "该角色暂未产出可展示的正文内容。";
 }
 
 export function TeamWorkspaceBoard({
@@ -833,6 +1000,8 @@ export function TeamWorkspaceBoard({
         model: session.model,
         originTool: session.origin_tool,
         createdFromTurnId: session.created_from_turn_id,
+        blueprintRoleId: session.blueprint_role_id,
+        blueprintRoleLabel: session.blueprint_role_label,
         profileId: session.profile_id,
         profileName: session.profile_name,
         roleKey: session.role_key,
@@ -1159,6 +1328,16 @@ export function TeamWorkspaceBoard({
     );
   };
 
+  const memberCanvasSessions = useMemo(
+    () =>
+      orderSessionsByRuntimeRoles(
+        isChildSession
+          ? dedupeSessions([currentChildSession, ...visibleSessions])
+          : visibleSessions,
+        runtimeTeamState,
+      ),
+    [currentChildSession, isChildSession, runtimeTeamState, visibleSessions],
+  );
   const railSessions = useMemo(
     () =>
       dedupeSessions(
@@ -1184,7 +1363,7 @@ export function TeamWorkspaceBoard({
   useEffect(() => {
     const defaultSelectedId = isChildSession
       ? currentSessionId ?? railSessions[0]?.id ?? null
-      : visibleSessions[0]?.id ?? railSessions[0]?.id ?? null;
+      : memberCanvasSessions[0]?.id ?? railSessions[0]?.id ?? null;
 
     if (!selectedSessionId) {
       setSelectedSessionId(defaultSelectedId);
@@ -1199,17 +1378,17 @@ export function TeamWorkspaceBoard({
     if (
       !isChildSession &&
       selectedSessionId === orchestratorSession?.id &&
-      visibleSessions.length > 0
+      memberCanvasSessions.length > 0
     ) {
-      setSelectedSessionId(visibleSessions[0]?.id ?? defaultSelectedId);
+      setSelectedSessionId(memberCanvasSessions[0]?.id ?? defaultSelectedId);
     }
   }, [
     currentSessionId,
     isChildSession,
+    memberCanvasSessions,
     orchestratorSession?.id,
     railSessions,
     selectedSessionId,
-    visibleSessions,
   ]);
 
   const selectedSession = useMemo(
@@ -1728,6 +1907,18 @@ export function TeamWorkspaceBoard({
     },
     [onSendSubagentInput, selectedSession, selectedSessionInputMessage],
   );
+  const memberCanvasTitle = "角色执行画布";
+  const memberCanvasSubtitle = hasRealTeamGraph
+    ? isChildSession
+      ? "当前成员与同组角色在各自泳道中输出过程与结果，主对话仅保留调度记录。"
+      : `${visibleSessions.length} 位成员已加入，主对话只保留调度记录，每个角色在自己的泳道中输出过程与结果。`
+    : runtimeTeamState?.status === "forming"
+      ? "正在准备本轮角色泳道，真实成员接入后会在这里独立输出。"
+      : runtimeTeamState?.status === "formed"
+        ? "本轮编队已完成，等待真实角色接入后在各自泳道中开始执行。"
+        : runtimeTeamState?.status === "failed"
+          ? "本轮编队失败，暂时无法生成角色泳道。"
+          : "等待成员加入后，这里会按角色展开各自的输出泳道。";
 
   if (
     !subagentParentContext &&
@@ -1825,6 +2016,9 @@ export function TeamWorkspaceBoard({
   const selectedPresetOption = getTeamPresetOption(selectedSession?.teamPresetId);
   const selectedSkills = selectedSession?.skills ?? [];
   const selectedMetadata = [
+    selectedSession?.blueprintRoleLabel
+      ? `蓝图角色 ${selectedSession.blueprintRoleLabel}`
+      : null,
     selectedSession?.sessionType
       ? resolveSessionTypeLabel(selectedSession.sessionType)
       : null,
@@ -1884,20 +2078,6 @@ export function TeamWorkspaceBoard({
   const timelineEntryClassName = embedded
     ? "border-l-2 border-slate-200 pl-3"
     : "rounded-[14px] border border-slate-200 bg-white p-3";
-  const railTitle = isChildSession ? "同组成员轨道" : "团队成员轨道";
-  const railSubtitle = isChildSession
-    ? siblingCount > 0
-      ? `当前成员与 ${siblingCount} 位同组成员协作`
-      : "当前只有一位成员"
-    : hasRealTeamGraph
-      ? `${visibleSessions.length} 位成员已加入`
-      : runtimeTeamState?.status === "forming"
-        ? "正在准备本轮成员"
-        : runtimeTeamState?.status === "formed"
-          ? `${runtimeMembers.length} 个成员待启动`
-          : runtimeTeamState?.status === "failed"
-            ? "Team 准备失败"
-            : "等待成员加入";
 
   return (
     <section
@@ -2003,10 +2183,10 @@ export function TeamWorkspaceBoard({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                {railTitle}
+                {memberCanvasTitle}
               </div>
               <div className="mt-1 text-sm font-semibold text-slate-900">
-                {railSubtitle}
+                {memberCanvasSubtitle}
               </div>
             </div>
             {selectedSession ? (
@@ -2141,17 +2321,17 @@ export function TeamWorkspaceBoard({
             </div>
           ) : null}
 
-          {railSessions.length > 0 ? (
+          {memberCanvasSessions.length > 0 ? (
             <div
               className={cn(
                 "mt-3",
                 stackedRail
-                  ? "grid gap-2 md:grid-cols-2"
-                  : "flex gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                  ? "grid gap-3 md:grid-cols-2"
+                  : "grid gap-3 xl:grid-cols-2 2xl:grid-cols-3",
               )}
               data-testid="team-workspace-rail-list"
             >
-              {railSessions.map((session) => {
+              {memberCanvasSessions.map((session) => {
                 const meta = resolveStatusMeta(session.runtimeStatus);
                 const selected = selectedSession?.id === session.id;
                 const runtimeDetail = buildRuntimeDetailSummary(session);
@@ -2160,10 +2340,17 @@ export function TeamWorkspaceBoard({
                   sessionActivityPreviewById[session.id]?.entries,
                   ACTIVITY_TIMELINE_ENTRY_LIMIT,
                 );
-                const cardActivityPreview = buildCardActivityPreview(
-                  buildActivityPreviewFromEntry(mergedCardEntries[0]) ??
-                    sessionActivityPreviewById[session.id]?.preview,
-                );
+                const previewState = sessionActivityPreviewById[session.id] ?? null;
+                const cardActivityPreview = buildActivityPreviewFromEntry(
+                  mergedCardEntries[0],
+                )
+                  ?? previewState?.preview
+                  ?? null;
+                const laneEntries = mergedCardEntries.slice(0, 3);
+                const laneEmptyState = buildSessionLaneEmptyState({
+                  session,
+                  previewState,
+                });
 
                 return (
                   <button
@@ -2172,13 +2359,14 @@ export function TeamWorkspaceBoard({
                     aria-pressed={selected}
                     onClick={() => setSelectedSessionId(session.id)}
                     className={cn(
-                      "group flex flex-col rounded-[18px] border p-3 text-left transition",
-                      stackedRail ? "w-full" : "w-[258px] shrink-0",
+                      "group flex flex-col rounded-[18px] border p-4 text-left transition",
+                      "w-full",
                       meta.cardClassName,
                       selected
-                        ? "ring-1 ring-slate-300 bg-slate-50"
+                        ? "ring-2 ring-slate-300 bg-slate-50"
                         : "hover:border-slate-300 hover:bg-slate-50",
                     )}
+                    data-testid={`team-workspace-member-lane-${session.id}`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
@@ -2193,6 +2381,11 @@ export function TeamWorkspaceBoard({
                           ) : null}
                         </div>
                         <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
+                          {session.blueprintRoleLabel ? (
+                            <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-sky-700">
+                              蓝图 · {session.blueprintRoleLabel}
+                            </span>
+                          ) : null}
                           {session.roleHint ? (
                             <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5">
                               {session.roleHint}
@@ -2239,29 +2432,47 @@ export function TeamWorkspaceBoard({
                         )}
                       />
                     </div>
-                    <p
-                      className={cn(
-                        "mt-2 text-sm leading-5 text-slate-600",
-                        stackedRail ? "line-clamp-4" : "line-clamp-2",
-                      )}
-                    >
+                    <p className="mt-2 line-clamp-3 text-sm leading-5 text-slate-600">
                       {session.taskSummary ||
                         "暂未生成任务摘要，打开该会话可查看完整上下文。"}
                     </p>
-                    {cardActivityPreview ? (
-                      <div className="mt-2 border-l-2 border-slate-200 pl-3">
-                        <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                          <Activity className="h-3 w-3" />
-                          <span>最近过程</span>
-                        </div>
-                        <p
-                          className={cn(
-                            "mt-1 text-[11px] leading-5 text-slate-600",
-                            stackedRail ? "line-clamp-3" : "line-clamp-2",
-                          )}
-                        >
-                          {cardActivityPreview}
-                        </p>
+                    <div className="mt-3 rounded-2xl border border-slate-200 bg-white px-3 py-3">
+                      <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        <PanelTop className="h-3 w-3" />
+                        <span>角色输出</span>
+                        <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium tracking-normal text-slate-600 normal-case">
+                          最近过程
+                        </span>
+                      </div>
+                      <p className="mt-2 line-clamp-5 whitespace-pre-wrap break-words text-[12px] leading-5 text-slate-700">
+                        {buildCardActivityPreview(cardActivityPreview) || laneEmptyState}
+                      </p>
+                    </div>
+                    {laneEntries.length > 0 ? (
+                      <div className="mt-3 space-y-2">
+                        {laneEntries.map((entry) => (
+                          <div
+                            key={`${session.id}-${entry.id}`}
+                            className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5"
+                          >
+                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                              <span className="font-semibold text-slate-800">
+                                {entry.title}
+                              </span>
+                              <span
+                                className={cn(
+                                  "rounded-full px-2 py-0.5 font-medium",
+                                  entry.badgeClassName,
+                                )}
+                              >
+                                {entry.statusLabel}
+                              </span>
+                            </div>
+                            <p className="mt-1.5 line-clamp-4 whitespace-pre-wrap break-words text-xs leading-5 text-slate-600">
+                              {entry.detail}
+                            </p>
+                          </div>
+                        ))}
                       </div>
                     ) : null}
                     {runtimeDetail ? (
@@ -2297,17 +2508,17 @@ export function TeamWorkspaceBoard({
               )}
               <div className="mt-4 rounded-[20px] border border-dashed border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-500">
                 {runtimeTeamState?.status === "forming" ? (
-                  "模型正在准备本轮 Team，完成后这里会先展示本轮成员；后续真实成员加入时，再切换为可纵向浏览的团队轨道。"
+                  "模型正在准备本轮 Team，完成后这里会先展示本轮成员；后续真实成员加入时，再切换为按角色独立输出的执行画布。"
                 ) : runtimeTeamState?.status === "formed" ? (
                   <>
-                    本轮 Team 已就绪。系统开始分派成员后，这里会从当前编队过渡到真实团队轨道。
+                    本轮 Team 已就绪。系统开始分派成员后，这里会从当前编队过渡到真实角色画布。
                   </>
                 ) : runtimeTeamState?.status === "failed" ? (
                   runtimeTeamState.errorMessage?.trim() ||
                   "Team 准备失败，暂时还没有真实团队成员。"
                 ) : (
                   <>
-                    还没有真实团队成员。系统开始分派成员后，这里会生成可纵向浏览的团队轨道。
+                    还没有真实团队成员。系统开始分派成员后，这里会生成按角色分栏的执行画布。
                   </>
                 )}
               </div>

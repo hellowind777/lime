@@ -44,6 +44,10 @@ pub struct TeamPresetSummary {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq, Eq)]
 pub struct SubagentCustomizationState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blueprint_role_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blueprint_role_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_name: Option<String>,
@@ -89,7 +93,9 @@ impl SubagentCustomizationState {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.profile_id.is_none()
+        self.blueprint_role_id.is_none()
+            && self.blueprint_role_label.is_none()
+            && self.profile_id.is_none()
             && self.profile_name.is_none()
             && self.role_key.is_none()
             && self.team_preset_id.is_none()
@@ -368,6 +374,18 @@ pub fn build_subagent_customization_prompt(
         let preset_label =
             builtin_team_preset_label_by_id(team_preset_id).unwrap_or(team_preset_id);
         header_lines.push(format!("- 团队预设：{preset_label} ({team_preset_id})"));
+    }
+    if let Some(blueprint_role_label) = customization.blueprint_role_label.as_deref() {
+        let blueprint_role_id_suffix = customization
+            .blueprint_role_id
+            .as_deref()
+            .map(|role_id| format!(" ({role_id})"))
+            .unwrap_or_default();
+        header_lines.push(format!(
+            "- 蓝图角色：{blueprint_role_label}{blueprint_role_id_suffix}"
+        ));
+    } else if let Some(blueprint_role_id) = customization.blueprint_role_id.as_deref() {
+        header_lines.push(format!("- 蓝图角色 ID：{blueprint_role_id}"));
     }
     if let Some(profile_name) = customization.profile_name.as_deref() {
         let profile_id_suffix = customization

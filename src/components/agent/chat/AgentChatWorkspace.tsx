@@ -3350,7 +3350,7 @@ export function AgentChatWorkspace({
   const {
     runtimeTeamState,
     clearRuntimeTeamState,
-    handleRuntimeTeamAfterSend,
+    prepareRuntimeTeamBeforeSend,
   } = useRuntimeTeamFormation({
     activeTheme,
     projectId,
@@ -6219,6 +6219,46 @@ export function AgentChatWorkspace({
           }
         }
 
+        const preparedRuntimeTeamState = await prepareRuntimeTeamBeforeSend({
+          input: sourceText,
+          providerType,
+          model: effectiveModel,
+          executionStrategy: sendExecutionStrategy ?? executionStrategy,
+          purpose: sendOptions?.purpose,
+          subagentEnabled: effectiveToolPreferences.subagent,
+        });
+        const turnTeamBlueprint =
+          preparedRuntimeTeamState?.status === "formed" &&
+          preparedRuntimeTeamState.members.length > 0
+            ? {
+                label: preparedRuntimeTeamState.label?.trim() || undefined,
+                description:
+                  preparedRuntimeTeamState.summary?.trim() || undefined,
+                roles: preparedRuntimeTeamState.members.map((member) => ({
+                  id: member.id,
+                  label: member.label,
+                  summary: member.summary,
+                  profileId: member.profileId,
+                  roleKey: member.roleKey,
+                  skillIds: [...member.skillIds],
+                })),
+              }
+            : undefined;
+        const turnTeamDecision =
+          preparedRuntimeTeamState?.status === "formed"
+            ? "team_prepared"
+            : "single_agent";
+        const turnTeamReason =
+          preparedRuntimeTeamState?.status === "formed"
+            ? "runtime_team_prepared"
+            : preparedRuntimeTeamState?.status === "failed"
+              ? "runtime_team_generation_failed"
+              : !effectiveToolPreferences.subagent
+                ? "subagent_disabled"
+                : sendOptions?.purpose
+                  ? "turn_purpose_override"
+                  : "single_agent_direct";
+
         setInput("");
         setMentionedCharacters([]); // 清空引用的角色
 
@@ -6256,6 +6296,9 @@ export function AgentChatWorkspace({
               selectedTeamLabel,
               selectedTeamSummary,
               selectedTeamRoles: selectedTeam?.roles,
+              turnTeamDecision,
+              turnTeamReason,
+              turnTeamBlueprint,
             }),
           },
         };
@@ -6287,14 +6330,6 @@ export function AgentChatWorkspace({
         }
 
         finalizeAfterSendSuccess(sendBoundary);
-
-        handleRuntimeTeamAfterSend({
-          input: sourceText,
-          providerType,
-          model: effectiveModel,
-          executionStrategy: sendExecutionStrategy ?? executionStrategy,
-          purpose: sendOptions?.purpose,
-        });
 
         return true;
       } catch (error) {
@@ -6332,9 +6367,9 @@ export function AgentChatWorkspace({
       selectedTeamSummary,
       providerType,
       finalizeAfterSendSuccess,
-      handleRuntimeTeamAfterSend,
       isBlockedByBrowserPreflight,
       maybeStartBrowserTaskPreflight,
+      prepareRuntimeTeamBeforeSend,
       resolveSendBoundary,
       resolveSendProviderContext,
       rollbackAfterSendFailure,
@@ -10396,7 +10431,7 @@ export function AgentChatWorkspace({
               selectedTeamLabel ||
               "Team Workbench",
             subtitle: hasRealTeamGraph
-              ? "画布展示多成员实时协作，右侧侧栏展示总览与角色结构。"
+              ? "主对话保留调度记录，画布按角色分别展示执行过程与结果。"
               : runtimeTeamState?.status === "forming"
                 ? "正在根据本轮任务准备 Team，随后会在画布中展示成员编队。"
                 : runtimeTeamState?.status === "formed"
