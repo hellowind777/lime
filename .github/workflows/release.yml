@@ -45,7 +45,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     env:
       LIME_UPDATER_PUBLIC_KEY: ${{ secrets.LIME_UPDATER_PUBLIC_KEY }}
-      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       NODE_OPTIONS: --max-old-space-size=8192
 
@@ -131,6 +131,90 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --no-frozen-lockfile
+
+      - name: Normalize updater signing key
+        shell: bash
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          raw = os.environ.get("TAURI_SIGNING_PRIVATE_KEY_RAW", "")
+          if not raw.strip():
+              raise SystemExit("TAURI_SIGNING_PRIVATE_KEY secret is empty")
+
+          candidates = []
+
+          def add(value: str) -> None:
+              normalized = value.replace("\r\n", "\n")
+              if normalized and normalized not in candidates:
+                  candidates.append(normalized)
+
+          add(raw)
+          if "\\n" in raw and "\n" not in raw:
+              add(raw.replace("\\r\\n", "\n").replace("\\n", "\n"))
+
+          for candidate in list(candidates):
+              compact = candidate.strip()
+              if not compact:
+                  continue
+              padding = (-len(compact)) % 4
+              compact = compact + ("=" * padding)
+              try:
+                  decoded = base64.b64decode(compact, validate=True).decode("utf-8")
+              except Exception:
+                  continue
+              add(decoded)
+              if "\\n" in decoded and "\n" not in decoded:
+                  add(decoded.replace("\\r\\n", "\n").replace("\\n", "\n"))
+
+          normalized_key = next(
+              (
+                  candidate
+                  for candidate in candidates
+                  if candidate.lstrip().startswith("untrusted comment:")
+                  and "\n" in candidate
+              ),
+              "",
+          )
+          if not normalized_key:
+              normalized_key = next(
+                  (
+                      candidate
+                      for candidate in candidates
+                      if candidate.lstrip().startswith("untrusted comment:")
+                  ),
+                  "",
+              )
+          if not normalized_key:
+              raise SystemExit(
+                  "Unable to normalize TAURI_SIGNING_PRIVATE_KEY into minisign secret key content. "
+                  "Expected raw multiline key, literal \\\\n escaped key, or base64 encoded key."
+              )
+
+          key_path = Path(os.environ["RUNNER_TEMP"]) / "tauri-updater.key"
+          key_path.write_text(normalized_key.rstrip("\n") + "\n", encoding="utf-8")
+          key_path.chmod(0o600)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"TAURI_SIGNING_PRIVATE_KEY_PATH={key_path}\n")
+              env_file.write("TAURI_SIGNING_PRIVATE_KEY<<__TAURI_SIGNING_PRIVATE_KEY__\n")
+              env_file.write(normalized_key.rstrip("\n") + "\n")
+              env_file.write("__TAURI_SIGNING_PRIVATE_KEY__\n")
+
+          print(f"Normalized updater key written to {key_path}")
+          PY
+
+      - name: Validate updater signing key
+        shell: bash
+        run: |
+          PROBE_FILE="$RUNNER_TEMP/tauri-signing-probe.txt"
+          printf 'lime-release-signing-probe\n' > "$PROBE_FILE"
+          npx tauri signer sign \
+            -f "$TAURI_SIGNING_PRIVATE_KEY_PATH" \
+            -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" \
+            "$PROBE_FILE" >/dev/null
 
       # macOS 签名证书设置
       - name: Import Apple Certificate
