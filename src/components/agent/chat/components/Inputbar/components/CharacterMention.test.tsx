@@ -236,12 +236,35 @@ function typeAt(textarea: HTMLTextAreaElement) {
   });
 }
 
+function typeSlash(textarea: HTMLTextAreaElement, value = "/") {
+  act(() => {
+    textarea.focus();
+    textarea.value = value;
+    textarea.setSelectionRange(value.length, value.length);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 async function typeAtAndWait(textarea: HTMLTextAreaElement) {
   await act(async () => {
     await import("./CharacterMentionPanel");
   });
 
   typeAt(textarea);
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+async function typeSlashAndWait(
+  textarea: HTMLTextAreaElement,
+  value = "/",
+) {
+  await act(async () => {
+    await import("./CharacterMentionPanel");
+  });
+
+  typeSlash(textarea, value);
   await act(async () => {
     await Promise.resolve();
   });
@@ -353,6 +376,60 @@ describe("CharacterMention", () => {
     expect(onChangeSpy).toHaveBeenCalledWith("/skill-a ");
   });
 
+  it("输入 / 时应显示 Codex slash 命令列表", async () => {
+    const container = renderHarness();
+    const textarea = getTextarea(container);
+
+    await typeSlashAndWait(textarea);
+
+    expect(document.body.textContent).toContain("Codex 命令");
+    expect(document.body.textContent).toContain("/compact");
+    expect(document.body.textContent).toContain("/review");
+  });
+
+  it("slash 面板选择 Codex 命令时应回填到输入框", async () => {
+    const onChangeSpy = vi.fn<(value: string) => void>();
+    const container = renderHarness({
+      onChangeSpy,
+    });
+    const textarea = getTextarea(container);
+
+    await typeSlashAndWait(textarea, "/com");
+
+    const commandButton = Array.from(
+      document.body.querySelectorAll("button"),
+    ).find((button) => button.textContent?.includes("/compact"));
+    expect(commandButton).toBeTruthy();
+
+    act(() => {
+      commandButton?.click();
+    });
+
+    expect(onChangeSpy).toHaveBeenCalledWith("/compact ");
+  });
+
+  it("slash 面板选择已安装技能时应直接回填 slash skill", async () => {
+    const onChangeSpy = vi.fn<(value: string) => void>();
+    const container = renderHarness({
+      skills: [createSkill("技能A", "skill-a", true)],
+      onChangeSpy,
+    });
+    const textarea = getTextarea(container);
+
+    await typeSlashAndWait(textarea, "/ski");
+
+    const skillButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("技能A"),
+    );
+    expect(skillButton).toBeTruthy();
+
+    act(() => {
+      skillButton?.click();
+    });
+
+    expect(onChangeSpy).toHaveBeenCalledWith("/skill-a ");
+  });
+
   it("提及面板应锚定在输入框正上方，并禁止自动翻转到下方", async () => {
     const container = renderHarness();
     const textarea = getTextarea(container);
@@ -378,10 +455,12 @@ describe("CharacterMention", () => {
     ) as HTMLDivElement | null;
 
     expect(anchor?.style.top).toBe("240px");
-    expect(anchor?.style.left).toBe("420px");
+    expect(anchor?.style.left).toBe("120px");
+    expect(anchor?.style.width).toBe("600px");
     expect(popover?.getAttribute("data-side")).toBe("top");
-    expect(popover?.getAttribute("data-align")).toBe("center");
+    expect(popover?.getAttribute("data-align")).toBe("start");
     expect(popover?.getAttribute("data-avoid-collisions")).toBe("false");
-    expect(popover?.style.width).toBe("420px");
+    expect(popover?.style.width).toBe("600px");
+    expect(popover?.style.bottom).toBe("536px");
   });
 });

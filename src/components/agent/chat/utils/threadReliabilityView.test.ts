@@ -1,0 +1,179 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { buildThreadReliabilityView } from "./threadReliabilityView";
+import type { AgentRuntimeThreadReadModel } from "@/lib/api/agentRuntime";
+
+describe("buildThreadReliabilityView", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-23T10:00:00Z"));
+  });
+
+  it("应按 incident 严重级别排序，并优先使用最高优先级事故生成摘要", () => {
+    const threadRead: AgentRuntimeThreadReadModel = {
+      thread_id: "thread-1",
+      status: "failed",
+      active_turn_id: "turn-1",
+      pending_requests: [],
+      incidents: [
+        {
+          id: "incident-low",
+          thread_id: "thread-1",
+          turn_id: "turn-1",
+          incident_type: "minor_warning",
+          severity: "low",
+          status: "active",
+          title: "低优先级提醒",
+          details: "仅需关注",
+        },
+        {
+          id: "incident-high",
+          thread_id: "thread-1",
+          turn_id: "turn-1",
+          incident_type: "provider_failure",
+          severity: "high",
+          status: "active",
+          title: "高优先级故障",
+          details: "Provider 已连续失败",
+        },
+        {
+          id: "incident-medium",
+          thread_id: "thread-1",
+          turn_id: "turn-1",
+          incident_type: "waiting_user_input",
+          severity: "warning",
+          status: "active",
+          title: "中优先级等待",
+          details: "等待人工确认",
+        },
+      ],
+    };
+
+    const view = buildThreadReliabilityView({
+      threadRead,
+      turns: [
+        {
+          id: "turn-1",
+          thread_id: "thread-1",
+          prompt_text: "继续执行发布流程",
+          status: "failed",
+          error_message: "Provider 429",
+          created_at: "2026-03-23T09:00:00Z",
+          updated_at: "2026-03-23T09:00:10Z",
+          completed_at: "2026-03-23T09:00:12Z",
+        },
+      ],
+      currentTurnId: "turn-1",
+    });
+
+    expect(view.incidents.map((incident) => incident.title)).toEqual([
+      "高优先级故障",
+      "中优先级等待",
+      "低优先级提醒",
+    ]);
+    expect(view.summary).toContain("高优先级故障");
+    expect(view.summary).toContain("Provider 已连续失败");
+  });
+
+  it("应基于 timeout / stuck incident 生成主动治理建议", () => {
+    const threadRead: AgentRuntimeThreadReadModel = {
+      thread_id: "thread-1",
+      status: "running",
+      active_turn_id: "turn-2",
+      pending_requests: [],
+      incidents: [
+        {
+          id: "incident-stuck",
+          thread_id: "thread-1",
+          turn_id: "turn-2",
+          incident_type: "turn_stuck",
+          severity: "high",
+          status: "active",
+          title: "当前回合长时间无进展",
+          details: "最近 3 分钟内没有新的线程更新",
+        },
+      ],
+      last_outcome: {
+        thread_id: "thread-1",
+        turn_id: "turn-1",
+        outcome_type: "failed_provider",
+        summary: "最近一次 provider 请求失败",
+        primary_cause: "429",
+        retryable: true,
+        ended_at: "2026-03-23T09:58:00Z",
+      },
+    };
+
+    const view = buildThreadReliabilityView({
+      threadRead,
+      turns: [
+        {
+          id: "turn-2",
+          thread_id: "thread-1",
+          prompt_text: "继续执行部署验证",
+          status: "running",
+          created_at: "2026-03-23T09:55:00Z",
+          started_at: "2026-03-23T09:55:00Z",
+          updated_at: "2026-03-23T09:56:00Z",
+        },
+      ],
+      currentTurnId: "turn-2",
+    });
+
+    expect(view.summary).toContain("当前回合长时间无进展");
+    expect(view.recommendations).toContain("当前回合长时间无进展，建议停止后恢复执行");
+    expect(view.recommendations).toContain("Provider 故障通常可重试，建议稍后恢复或重发回合");
+    expect(view.recommendations).toContain("最近结果支持重试，可恢复或重新发起新回合");
+  });
+
+  it("应识别审批超时并给出优先处理建议", () => {
+    const threadRead: AgentRuntimeThreadReadModel = {
+      thread_id: "thread-1",
+      status: "waiting_request",
+      active_turn_id: "turn-3",
+      pending_requests: [
+        {
+          id: "req-approval",
+          thread_id: "thread-1",
+          turn_id: "turn-3",
+          request_type: "tool_confirmation",
+          status: "pending",
+          title: "请确认是否执行 apply_patch",
+          created_at: "2026-03-23T09:50:00Z",
+        },
+      ],
+      incidents: [
+        {
+          id: "incident-approval",
+          thread_id: "thread-1",
+          turn_id: "turn-3",
+          incident_type: "approval_timeout",
+          severity: "high",
+          status: "active",
+          title: "审批等待超过阈值",
+          details: "工具确认已等待 10 分钟：请确认是否执行 apply_patch",
+        },
+      ],
+    };
+
+    const view = buildThreadReliabilityView({
+      threadRead,
+      turns: [
+        {
+          id: "turn-3",
+          thread_id: "thread-1",
+          prompt_text: "继续修复发布脚本",
+          status: "running",
+          created_at: "2026-03-23T09:49:00Z",
+          started_at: "2026-03-23T09:49:00Z",
+          updated_at: "2026-03-23T09:50:00Z",
+        },
+      ],
+      currentTurnId: "turn-3",
+    });
+
+    expect(view.pendingRequests[0]?.waitingLabel).toBe("已等待 10 分钟");
+    expect(view.recommendations).toContain("优先响应当前待处理请求");
+    expect(view.recommendations).toContain("审批等待过久，建议尽快处理或停止当前执行");
+  });
+});

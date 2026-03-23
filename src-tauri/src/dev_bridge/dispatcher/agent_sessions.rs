@@ -19,9 +19,13 @@ pub(super) async fn try_handle(
         cmd,
         "agent_runtime_submit_turn"
             | "agent_runtime_interrupt_turn"
+            | "agent_runtime_compact_session"
+            | "agent_runtime_resume_thread"
             | "agent_runtime_create_session"
             | "agent_runtime_list_sessions"
             | "agent_runtime_get_session"
+            | "agent_runtime_get_thread_read"
+            | "agent_runtime_replay_request"
             | "agent_runtime_update_session"
             | "agent_runtime_delete_session"
             | "agent_runtime_promote_queued_turn"
@@ -72,6 +76,51 @@ pub(super) async fn try_handle(
                 crate::commands::aster_agent_cmd::agent_runtime_interrupt_turn(
                     app_handle.clone(),
                     aster_state,
+                    request,
+                )
+                .await?,
+            )?
+        }
+        "agent_runtime_compact_session" => {
+            let request = parse_request::<
+                crate::commands::aster_agent_cmd::AgentRuntimeCompactSessionRequest,
+            >(args)?;
+            let aster_state = app_handle.state::<crate::agent::AsterAgentState>();
+            let db = app_handle.state::<crate::database::DbConnection>();
+            crate::commands::aster_agent_cmd::agent_runtime_compact_session(
+                app_handle.clone(),
+                aster_state,
+                db,
+                request,
+            )
+            .await?;
+            JsonValue::Null
+        }
+        "agent_runtime_resume_thread" => {
+            let request = parse_request::<
+                crate::commands::aster_agent_cmd::AgentRuntimeResumeThreadRequest,
+            >(args)?;
+            let aster_state = app_handle.state::<crate::agent::AsterAgentState>();
+            let db = app_handle.state::<crate::database::DbConnection>();
+            let api_key_provider_service =
+                app_handle
+                    .state::<crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState>();
+            let logs = app_handle.state::<crate::app::LogState>();
+            let config_manager = app_handle.state::<crate::config::GlobalConfigManagerState>();
+            let mcp_manager = app_handle.state::<crate::mcp::McpManagerState>();
+            let automation_state =
+                app_handle.state::<crate::services::automation_service::AutomationServiceState>();
+
+            serde_json::to_value(
+                crate::commands::aster_agent_cmd::agent_runtime_resume_thread(
+                    app_handle.clone(),
+                    aster_state,
+                    db,
+                    api_key_provider_service,
+                    logs,
+                    config_manager,
+                    mcp_manager,
+                    automation_state,
                     request,
                 )
                 .await?,
@@ -141,6 +190,45 @@ pub(super) async fn try_handle(
                     session_id,
                 )
                 .await?,
+            )?
+        }
+        "agent_runtime_get_thread_read" => {
+            let args = args_or_default(args);
+            let session_id = get_string_arg(&args, "sessionId", "session_id")?;
+            let aster_state = app_handle.state::<crate::agent::AsterAgentState>();
+            let db = app_handle.state::<crate::database::DbConnection>();
+            let api_key_provider_service =
+                app_handle
+                    .state::<crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState>();
+            let logs = app_handle.state::<crate::app::LogState>();
+            let config_manager = app_handle.state::<crate::config::GlobalConfigManagerState>();
+            let mcp_manager = app_handle.state::<crate::mcp::McpManagerState>();
+            let automation_state =
+                app_handle.state::<crate::services::automation_service::AutomationServiceState>();
+
+            serde_json::to_value(
+                crate::commands::aster_agent_cmd::agent_runtime_get_thread_read(
+                    app_handle.clone(),
+                    aster_state,
+                    db,
+                    api_key_provider_service,
+                    logs,
+                    config_manager,
+                    mcp_manager,
+                    automation_state,
+                    session_id,
+                )
+                .await?,
+            )?
+        }
+        "agent_runtime_replay_request" => {
+            let request = parse_request::<
+                crate::commands::aster_agent_cmd::AgentRuntimeReplayRequestRequest,
+            >(args)?;
+            let db = app_handle.state::<crate::database::DbConnection>();
+
+            serde_json::to_value(
+                crate::commands::aster_agent_cmd::agent_runtime_replay_request(db, request).await?,
             )?
         }
         "agent_runtime_update_session" => {

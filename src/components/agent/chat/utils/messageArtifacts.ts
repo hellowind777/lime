@@ -259,6 +259,24 @@ export function resolveDefaultArtifactViewMode(
   return "source";
 }
 
+export function resolveArtifactFilePath(
+  artifact: Pick<Artifact, "title" | "meta">,
+): string {
+  if (
+    typeof artifact.meta.filePath === "string" &&
+    artifact.meta.filePath.trim()
+  ) {
+    return artifact.meta.filePath.trim();
+  }
+  if (
+    typeof artifact.meta.filename === "string" &&
+    artifact.meta.filename.trim()
+  ) {
+    return artifact.meta.filename.trim();
+  }
+  return artifact.title;
+}
+
 export interface BuildArtifactInput {
   filePath: string;
   content: string;

@@ -61,7 +61,10 @@ pub fn ensure_workspace_local_agents_gitignore(
     working_dir: &Path,
 ) -> Result<WorkspaceGitignoreEnsureResult, String> {
     let gitignore_path = working_dir.join(".gitignore");
-    ensure_gitignore_entry(&gitignore_path, ".lime/AGENTS.local.md")
+    ensure_gitignore_entry(
+        &gitignore_path,
+        app_paths::WORKSPACE_LOCAL_RUNTIME_AGENTS_GITIGNORE_ENTRY,
+    )
 }
 
 fn resolve_runtime_agents_template_path(
@@ -73,12 +76,16 @@ fn resolve_runtime_agents_template_path(
         RuntimeAgentsTemplateTarget::Workspace => {
             let working_dir =
                 working_dir.ok_or_else(|| "生成 Workspace 模板时缺少 working_dir".to_string())?;
-            Ok(working_dir.join(".lime").join("AGENTS.md"))
+            Ok(app_paths::resolve_workspace_runtime_agents_path(
+                working_dir,
+            ))
         }
         RuntimeAgentsTemplateTarget::WorkspaceLocal => {
             let working_dir = working_dir
                 .ok_or_else(|| "生成 Workspace 本机模板时缺少 working_dir".to_string())?;
-            Ok(working_dir.join(".lime").join("AGENTS.local.md"))
+            Ok(app_paths::resolve_workspace_local_runtime_agents_path(
+                working_dir,
+            ))
         }
     }
 }
@@ -252,7 +259,7 @@ mod tests {
     #[test]
     fn should_create_workspace_template_file() {
         let tmp = TempDir::new().expect("create temp dir");
-        let path = tmp.path().join(".lime").join("AGENTS.md");
+        let path = app_paths::resolve_workspace_runtime_agents_path(tmp.path());
 
         let result = scaffold_runtime_agents_template_at_path(
             RuntimeAgentsTemplateTarget::Workspace,
@@ -270,7 +277,7 @@ mod tests {
     #[test]
     fn should_not_overwrite_existing_file_by_default() {
         let tmp = TempDir::new().expect("create temp dir");
-        let path = tmp.path().join(".lime").join("AGENTS.md");
+        let path = app_paths::resolve_workspace_runtime_agents_path(tmp.path());
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(&path, "custom content").expect("write custom");
 
@@ -289,7 +296,7 @@ mod tests {
     #[test]
     fn should_overwrite_existing_file_when_requested() {
         let tmp = TempDir::new().expect("create temp dir");
-        let path = tmp.path().join(".lime").join("AGENTS.local.md");
+        let path = app_paths::resolve_workspace_local_runtime_agents_path(tmp.path());
         fs::create_dir_all(path.parent().expect("parent")).expect("create parent");
         fs::write(&path, "custom content").expect("write custom");
 
@@ -317,7 +324,13 @@ mod tests {
 
         assert_eq!(result.status, WorkspaceGitignoreEnsureStatus::Created);
         let content = fs::read_to_string(tmp.path().join(".gitignore")).expect("read gitignore");
-        assert_eq!(content, ".lime/AGENTS.local.md\n");
+        assert_eq!(
+            content,
+            format!(
+                "{}\n",
+                app_paths::WORKSPACE_LOCAL_RUNTIME_AGENTS_GITIGNORE_ENTRY
+            )
+        );
     }
 
     #[test]
@@ -334,6 +347,11 @@ mod tests {
         assert_eq!(first.status, WorkspaceGitignoreEnsureStatus::Added);
         assert_eq!(second.status, WorkspaceGitignoreEnsureStatus::Exists);
         let content = fs::read_to_string(gitignore_path).expect("read gitignore");
-        assert_eq!(content.matches(".lime/AGENTS.local.md").count(), 1);
+        assert_eq!(
+            content
+                .matches(app_paths::WORKSPACE_LOCAL_RUNTIME_AGENTS_GITIGNORE_ENTRY)
+                .count(),
+            1
+        );
     }
 }

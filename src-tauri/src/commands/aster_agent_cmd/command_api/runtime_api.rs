@@ -1,4 +1,5 @@
 use super::*;
+use crate::services::thread_reliability_projection_service::sync_thread_reliability_projection;
 
 #[tauri::command]
 pub async fn agent_runtime_submit_turn(
@@ -44,6 +45,56 @@ pub async fn agent_runtime_interrupt_turn(
     Ok(cancelled || !cleared.is_empty())
 }
 
+/// 统一运行时：压缩当前会话上下文。
+#[tauri::command]
+pub async fn agent_runtime_compact_session(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    request: AgentRuntimeCompactSessionRequest,
+) -> Result<(), String> {
+    crate::commands::aster_agent_cmd::runtime_turn::compact_runtime_session_internal(
+        &app,
+        state.inner(),
+        db.inner(),
+        request,
+    )
+    .await
+}
+
+/// 统一运行时：恢复当前线程的排队执行。
+#[tauri::command]
+pub async fn agent_runtime_resume_thread(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    request: AgentRuntimeResumeThreadRequest,
+) -> Result<bool, String> {
+    let session_id = request.session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Ok(false);
+    }
+
+    resume_runtime_queue_if_needed_service(
+        app,
+        state.inner(),
+        db.inner(),
+        api_key_provider_service.inner(),
+        logs.inner(),
+        config_manager.inner(),
+        mcp_manager.inner(),
+        automation_state.inner(),
+        session_id,
+        build_runtime_queue_executor(),
+    )
+    .await
+}
+
 /// 统一运行时：获取会话详情。
 #[tauri::command]
 pub async fn agent_runtime_get_session(
@@ -58,8 +109,6 @@ pub async fn agent_runtime_get_session(
     session_id: String,
 ) -> Result<AgentRuntimeSessionDetail, String> {
     tracing::info!("[AsterAgent] 获取运行时会话: {}", session_id);
-    let detail = AsterAgentWrapper::get_runtime_session_detail(db.inner(), &session_id).await?;
-
     if let Err(error) = resume_runtime_queue_if_needed_service(
         app,
         state.inner(),
@@ -81,10 +130,88 @@ pub async fn agent_runtime_get_session(
         );
     }
 
+    let detail = AsterAgentWrapper::get_runtime_session_detail(db.inner(), &session_id).await?;
     let queued_turns = list_runtime_queue_snapshots_service(&session_id).await?;
-    Ok(AgentRuntimeSessionDetail::from_session_detail(
-        detail,
-        queued_turns,
+    let projection = sync_thread_reliability_projection(db.inner(), &detail)?;
+    let thread_read = AgentRuntimeThreadReadModel::from_parts(
+        &detail,
+        &queued_turns,
+        projection.pending_requests,
+        projection.last_outcome,
+        projection.incidents,
+    );
+    Ok(
+        AgentRuntimeSessionDetail::from_session_detail_with_thread_read(
+            detail,
+            queued_turns,
+            thread_read,
+        ),
+    )
+}
+
+/// 统一运行时：仅获取线程稳定读模型。
+#[tauri::command]
+pub async fn agent_runtime_get_thread_read(
+    app: AppHandle,
+    state: State<'_, AsterAgentState>,
+    db: State<'_, DbConnection>,
+    api_key_provider_service: State<'_, ApiKeyProviderServiceState>,
+    logs: State<'_, LogState>,
+    config_manager: State<'_, GlobalConfigManagerState>,
+    mcp_manager: State<'_, McpManagerState>,
+    automation_state: State<'_, AutomationServiceState>,
+    session_id: String,
+) -> Result<AgentRuntimeThreadReadModel, String> {
+    tracing::info!("[AsterAgent] 获取运行时线程读模型: {}", session_id);
+    if let Err(error) = resume_runtime_queue_if_needed_service(
+        app,
+        state.inner(),
+        db.inner(),
+        api_key_provider_service.inner(),
+        logs.inner(),
+        config_manager.inner(),
+        mcp_manager.inner(),
+        automation_state.inner(),
+        session_id.clone(),
+        build_runtime_queue_executor(),
+    )
+    .await
+    {
+        tracing::warn!(
+            "[AsterAgent][Queue] 获取线程读模型后恢复排队执行失败: session_id={}, error={}",
+            session_id,
+            error
+        );
+    }
+
+    let detail = AsterAgentWrapper::get_runtime_session_detail(db.inner(), &session_id).await?;
+    let queued_turns = list_runtime_queue_snapshots_service(&session_id).await?;
+    let projection = sync_thread_reliability_projection(db.inner(), &detail)?;
+    Ok(AgentRuntimeThreadReadModel::from_parts(
+        &detail,
+        &queued_turns,
+        projection.pending_requests,
+        projection.last_outcome,
+        projection.incidents,
+    ))
+}
+
+/// 统一运行时：重新拉起指定 pending request 的前端交互载荷。
+#[tauri::command]
+pub async fn agent_runtime_replay_request(
+    db: State<'_, DbConnection>,
+    request: AgentRuntimeReplayRequestRequest,
+) -> Result<Option<AgentRuntimeReplayedActionRequiredView>, String> {
+    let session_id = request.session_id.trim().to_string();
+    let request_id = request.request_id.trim().to_string();
+    if session_id.is_empty() || request_id.is_empty() {
+        return Ok(None);
+    }
+
+    let detail = AsterAgentWrapper::get_runtime_session_detail(db.inner(), &session_id).await?;
+    Ok(AgentRuntimeReplayedActionRequiredView::from_session_detail(
+        &detail,
+        &request_id,
     ))
 }
 

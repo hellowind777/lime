@@ -1,13 +1,12 @@
 use crate::aster_runtime_support::{list_aster_runtime_queued_turns, load_aster_runtime_snapshot};
+use crate::session_query::{ensure_subagent_session, read_subagent_session};
+use crate::session_update::persist_session_extension_data;
 use crate::team_runtime_governor::snapshot_team_runtime_session;
 use aster::session::extension_data::{ExtensionData, ExtensionState};
 use aster::session::{
-    list_subagent_sessions_with_metadata, require_shared_session_runtime_queue_service,
-    resolve_subagent_session_metadata, QueuedTurnRuntime, Session, SessionManager, SessionType,
-    TurnStatus,
+    require_shared_session_runtime_queue_service, QueuedTurnRuntime, Session, TurnStatus,
 };
 use chrono::Utc;
-use std::collections::{HashMap, VecDeque};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default, PartialEq)]
 pub struct SubagentControlState {
@@ -168,16 +167,6 @@ fn looks_like_session_not_found(error: &str) -> bool {
     normalized.contains("not found") || error.contains("不存在")
 }
 
-fn ensure_subagent_session(session: &Session) -> Result<(), String> {
-    if session.session_type != SessionType::SubAgent {
-        return Err(format!(
-            "会话不是 subagent session: session_id={}, session_type={}",
-            session.id, session.session_type
-        ));
-    }
-    Ok(())
-}
-
 fn map_turn_status(status: TurnStatus) -> SubagentRuntimeStatusKind {
     match status {
         TurnStatus::Queued => SubagentRuntimeStatusKind::Queued,
@@ -231,10 +220,7 @@ pub fn derive_subagent_runtime_status_kind(
 pub async fn read_subagent_control_state(
     session_id: &str,
 ) -> Result<(Session, SubagentControlState), String> {
-    let session = SessionManager::get_session(session_id, false)
-        .await
-        .map_err(|error| format!("读取 subagent session 失败: {error}"))?;
-    ensure_subagent_session(&session)?;
+    let session = read_subagent_session(session_id, "读取 subagent session 失败").await?;
     Ok((
         session.clone(),
         SubagentControlState::from_session(&session).unwrap_or_default(),
@@ -250,27 +236,23 @@ pub async fn write_subagent_control_state(
         .clone()
         .into_updated_extension_data(session)
         .map_err(|error| format!("写入 subagent control state 失败: {error}"))?;
-    SessionManager::update_session(&session.id)
-        .extension_data(extension_data)
-        .apply()
+    persist_session_extension_data(&session.id, extension_data, "持久化 subagent control state")
         .await
-        .map_err(|error| format!("持久化 subagent control state 失败: {error}"))
 }
 
 pub async fn load_subagent_runtime_status(
     session_id: &str,
 ) -> Result<SubagentRuntimeStatus, String> {
-    let session = match SessionManager::get_session(session_id, false).await {
+    let session = match read_subagent_session(session_id, "读取 subagent session 失败").await {
         Ok(session) => session,
         Err(error) => {
             let message = error.to_string();
             if looks_like_session_not_found(&message) {
                 return Ok(SubagentRuntimeStatus::not_found(session_id));
             }
-            return Err(format!("读取 subagent session 失败: {message}"));
+            return Err(message);
         }
     };
-    ensure_subagent_session(&session)?;
 
     let control_state = SubagentControlState::from_session(&session).unwrap_or_default();
     let latest_turn = match load_aster_runtime_snapshot(session_id).await {
@@ -346,49 +328,9 @@ pub async fn load_subagent_runtime_status(
     })
 }
 
-pub async fn list_subagent_cascade_session_ids(session_id: &str) -> Result<Vec<String>, String> {
-    let root_session = SessionManager::get_session(session_id, false)
-        .await
-        .map_err(|error| format!("读取 subagent session 失败: {error}"))?;
-    ensure_subagent_session(&root_session)?;
-
-    let sessions = list_subagent_sessions_with_metadata()
-        .await
-        .map_err(|error| format!("读取 subagent session 列表失败: {error}"))?;
-    Ok(collect_subagent_cascade_session_ids(session_id, &sessions))
-}
-
-pub fn collect_subagent_cascade_session_ids(session_id: &str, sessions: &[Session]) -> Vec<String> {
-    let mut children_by_parent: HashMap<String, Vec<String>> = HashMap::new();
-    for session in sessions {
-        let Some(metadata) = resolve_subagent_session_metadata(&session.extension_data) else {
-            continue;
-        };
-        children_by_parent
-            .entry(metadata.parent_session_id)
-            .or_default()
-            .push(session.id.clone());
-    }
-
-    let mut ordered = vec![session_id.to_string()];
-    let mut queue = VecDeque::from([session_id.to_string()]);
-    while let Some(parent_id) = queue.pop_front() {
-        let Some(children) = children_by_parent.get(&parent_id) else {
-            continue;
-        };
-        for child_id in children {
-            ordered.push(child_id.clone());
-            queue.push_back(child_id.clone());
-        }
-    }
-    ordered
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aster::session::Session;
-    use chrono::{Duration, Utc};
 
     #[test]
     fn subagent_control_state_roundtrip() {
@@ -402,7 +344,7 @@ mod tests {
                 created_at: 1,
                 image_count: 0,
                 payload: serde_json::json!({ "message": "test" }),
-                metadata: HashMap::new(),
+                metadata: std::collections::HashMap::new(),
             }],
         );
 
@@ -411,42 +353,6 @@ mod tests {
         let restored = SubagentControlState::from_extension_data(&extension_data).unwrap();
 
         assert_eq!(restored, state);
-    }
-
-    #[test]
-    fn collect_subagent_cascade_session_ids_returns_breadth_first_tree() {
-        let now = Utc::now();
-        let child_a = Session {
-            id: "child-a".to_string(),
-            session_type: SessionType::SubAgent,
-            updated_at: now,
-            extension_data: aster::session::SubagentSessionMetadata::new("root")
-                .into_updated_extension_data(&Session::default())
-                .unwrap(),
-            ..Session::default()
-        };
-        let child_b = Session {
-            id: "child-b".to_string(),
-            session_type: SessionType::SubAgent,
-            updated_at: now - Duration::minutes(1),
-            extension_data: aster::session::SubagentSessionMetadata::new("root")
-                .into_updated_extension_data(&Session::default())
-                .unwrap(),
-            ..Session::default()
-        };
-        let grandchild = Session {
-            id: "grandchild".to_string(),
-            session_type: SessionType::SubAgent,
-            updated_at: now - Duration::minutes(2),
-            extension_data: aster::session::SubagentSessionMetadata::new("child-a")
-                .into_updated_extension_data(&Session::default())
-                .unwrap(),
-            ..Session::default()
-        };
-
-        let ids = collect_subagent_cascade_session_ids("root", &[child_a, child_b, grandchild]);
-
-        assert_eq!(ids, vec!["root", "child-a", "child-b", "grandchild"]);
     }
 
     #[test]

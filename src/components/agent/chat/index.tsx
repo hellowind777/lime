@@ -9,7 +9,7 @@ import {
   AgentChatHomeShell,
   type AgentChatWorkspaceBootstrap,
 } from "./AgentChatHomeShell";
-import type { AgentChatWorkspaceProps } from "./AgentChatWorkspace";
+import type { AgentChatWorkspaceProps } from "./agentChatWorkspaceContract";
 
 const WORKSPACE_PREFETCH_IDLE_TIMEOUT_MS = 1_500;
 const WORKSPACE_PREFETCH_FALLBACK_DELAY_MS = 180;
@@ -46,7 +46,7 @@ function scheduleWorkspacePrefetch(task: () => void): () => void {
 export type {
   AgentChatWorkspaceProps,
   WorkflowProgressSnapshot,
-} from "./AgentChatWorkspace";
+} from "./agentChatWorkspaceContract";
 
 export function AgentChatPage(props: AgentChatWorkspaceProps) {
   const {

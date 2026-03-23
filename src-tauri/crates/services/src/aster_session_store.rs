@@ -795,6 +795,8 @@ impl SessionStore for LimeSessionStore {
     async fn update_token_stats(&self, session_id: &str, stats: TokenStatsUpdate) -> Result<()> {
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
         let now = Utc::now().to_rfc3339();
+        // 当前 store 边界把 None 视为“跳过更新”，不是“清空字段”。
+        // 调用方若要重置当前窗口 token，必须显式写 Some(0)；schedule_id 也不能靠 None/空串清空。
         conn.execute(
             "UPDATE agent_sessions SET
                 total_tokens = COALESCE(?1, total_tokens),
@@ -844,6 +846,7 @@ impl SessionStore for LimeSessionStore {
 
         let conn = self.db.lock().map_err(|e| anyhow!("数据库锁定失败: {e}"))?;
         let now = Utc::now().to_rfc3339();
+        // provider/model_config 走“保留旧值”语义，None 不会清空已持久化的 provider 配置。
         conn.execute(
             "UPDATE agent_sessions SET
                 provider_name = COALESCE(?1, provider_name),
@@ -880,6 +883,7 @@ impl SessionStore for LimeSessionStore {
             .map(serde_json::to_string)
             .transpose()
             .map_err(|e| anyhow!("序列化 user_recipe_values 失败: {e}"))?;
+        // recipe 走“直接覆盖”语义，None 会落库为 NULL，用于显式清空旧 recipe。
         conn.execute(
             "UPDATE agent_sessions SET
                 recipe_json = ?1,
@@ -1298,5 +1302,214 @@ mod tests {
                 .map(String::as_str),
             Some("0.2")
         );
+    }
+
+    #[tokio::test]
+    async fn update_provider_config_should_keep_existing_values_when_input_is_none() {
+        let store = setup_test_store();
+        let session = store
+            .create_session(
+                PathBuf::from("."),
+                "provider 守卫测试".to_string(),
+                SessionType::User,
+            )
+            .await
+            .expect("创建会话失败");
+
+        store
+            .update_provider_config(
+                &session.id,
+                Some("openai".to_string()),
+                Some(ModelConfig::new("gpt-4.1").expect("model config")),
+            )
+            .await
+            .expect("初始化 provider 配置失败");
+
+        store
+            .update_provider_config(&session.id, None, None)
+            .await
+            .expect("更新空 provider 配置失败");
+
+        let loaded = store
+            .get_session(&session.id, false)
+            .await
+            .expect("读取会话失败");
+
+        assert_eq!(loaded.provider_name.as_deref(), Some("openai"));
+        assert_eq!(
+            loaded
+                .model_config
+                .as_ref()
+                .map(|config| config.model_name.as_str()),
+            Some("gpt-4.1")
+        );
+    }
+
+    #[tokio::test]
+    async fn update_recipe_should_clear_existing_values_when_input_is_none() {
+        let store = setup_test_store();
+        let session = store
+            .create_session(
+                PathBuf::from("."),
+                "recipe 清空测试".to_string(),
+                SessionType::User,
+            )
+            .await
+            .expect("创建会话失败");
+
+        store
+            .update_recipe(
+                &session.id,
+                Some(Recipe {
+                    version: "1.0.0".to_string(),
+                    title: "demo".to_string(),
+                    description: "demo recipe".to_string(),
+                    instructions: None,
+                    prompt: None,
+                    extensions: None,
+                    settings: None,
+                    activities: None,
+                    author: None,
+                    parameters: None,
+                    response: None,
+                    sub_recipes: None,
+                    retry: None,
+                }),
+                Some(HashMap::from([(
+                    "temperature".to_string(),
+                    "0.2".to_string(),
+                )])),
+            )
+            .await
+            .expect("初始化 recipe 失败");
+
+        store
+            .update_recipe(&session.id, None, None)
+            .await
+            .expect("清空 recipe 失败");
+
+        let loaded = store
+            .get_session(&session.id, false)
+            .await
+            .expect("读取会话失败");
+
+        assert!(loaded.recipe.is_none());
+        assert!(loaded.user_recipe_values.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_token_stats_should_keep_existing_values_when_fields_are_none() {
+        let store = setup_test_store();
+        let session = store
+            .create_session(
+                PathBuf::from("."),
+                "token 守卫测试".to_string(),
+                SessionType::User,
+            )
+            .await
+            .expect("创建会话失败");
+
+        store
+            .update_token_stats(
+                &session.id,
+                TokenStatsUpdate {
+                    schedule_id: Some("job-1".to_string()),
+                    total_tokens: Some(100),
+                    input_tokens: Some(60),
+                    output_tokens: Some(40),
+                    accumulated_total: Some(300),
+                    accumulated_input: Some(180),
+                    accumulated_output: Some(120),
+                },
+            )
+            .await
+            .expect("初始化 token 统计失败");
+
+        store
+            .update_token_stats(
+                &session.id,
+                TokenStatsUpdate {
+                    schedule_id: None,
+                    total_tokens: None,
+                    input_tokens: None,
+                    output_tokens: None,
+                    accumulated_total: None,
+                    accumulated_input: None,
+                    accumulated_output: None,
+                },
+            )
+            .await
+            .expect("更新空 token 统计失败");
+
+        let loaded = store
+            .get_session(&session.id, false)
+            .await
+            .expect("读取会话失败");
+
+        assert_eq!(loaded.schedule_id.as_deref(), Some("job-1"));
+        assert_eq!(loaded.total_tokens, Some(100));
+        assert_eq!(loaded.input_tokens, Some(60));
+        assert_eq!(loaded.output_tokens, Some(40));
+        assert_eq!(loaded.accumulated_total_tokens, Some(300));
+        assert_eq!(loaded.accumulated_input_tokens, Some(180));
+        assert_eq!(loaded.accumulated_output_tokens, Some(120));
+    }
+
+    #[tokio::test]
+    async fn update_token_stats_should_overwrite_current_window_with_explicit_zero() {
+        let store = setup_test_store();
+        let session = store
+            .create_session(
+                PathBuf::from("."),
+                "token 清零测试".to_string(),
+                SessionType::User,
+            )
+            .await
+            .expect("创建会话失败");
+
+        store
+            .update_token_stats(
+                &session.id,
+                TokenStatsUpdate {
+                    schedule_id: Some("job-1".to_string()),
+                    total_tokens: Some(100),
+                    input_tokens: Some(60),
+                    output_tokens: Some(40),
+                    accumulated_total: Some(300),
+                    accumulated_input: Some(180),
+                    accumulated_output: Some(120),
+                },
+            )
+            .await
+            .expect("初始化 token 统计失败");
+
+        store
+            .update_token_stats(
+                &session.id,
+                TokenStatsUpdate {
+                    schedule_id: None,
+                    total_tokens: Some(0),
+                    input_tokens: Some(0),
+                    output_tokens: Some(0),
+                    accumulated_total: None,
+                    accumulated_input: None,
+                    accumulated_output: None,
+                },
+            )
+            .await
+            .expect("清零当前窗口 token 失败");
+
+        let loaded = store
+            .get_session(&session.id, false)
+            .await
+            .expect("读取会话失败");
+
+        assert_eq!(loaded.schedule_id.as_deref(), Some("job-1"));
+        assert_eq!(loaded.total_tokens, Some(0));
+        assert_eq!(loaded.input_tokens, Some(0));
+        assert_eq!(loaded.output_tokens, Some(0));
+        assert_eq!(loaded.accumulated_total_tokens, Some(300));
+        assert_eq!(loaded.accumulated_input_tokens, Some(180));
+        assert_eq!(loaded.accumulated_output_tokens, Some(120));
     }
 }

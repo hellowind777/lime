@@ -325,7 +325,9 @@ pub fn build_memory_sources_prompt_with_options(
 fn runtime_agent_overlap_paths(working_dir: &Path) -> HashSet<PathBuf> {
     let mut paths = HashSet::new();
     paths.insert(normalize_path(&app_paths::best_effort_user_memory_path()));
-    paths.insert(normalize_path(&working_dir.join(".lime").join("AGENTS.md")));
+    paths.insert(normalize_path(
+        &app_paths::resolve_workspace_runtime_agents_path(working_dir),
+    ));
     paths
 }
 
@@ -1059,18 +1061,24 @@ mod tests {
 
     #[test]
     fn workspace_local_instruction_path_should_not_walk_ancestors() {
+        let _env_lock = durable_memory_env_lock().lock().expect("lock env");
         let tmp = TempDir::new().expect("create temp dir");
         let project_root = tmp.path().join("repo");
         let nested = project_root.join("workspace");
+        let empty_durable_root = tmp.path().join("durable-empty");
         fs::create_dir_all(project_root.join(".git")).expect("create git marker");
         fs::create_dir_all(project_root.join(".lime")).expect("create root .lime");
         fs::create_dir_all(nested.join(".lime")).expect("create nested .lime");
+        fs::create_dir_all(&empty_durable_root).expect("create empty durable root");
         fs::write(project_root.join(".lime/AGENTS.md"), "root agents").expect("write root agents");
         fs::write(nested.join(".lime/AGENTS.md"), "workspace agents")
             .expect("write workspace agents");
+        let _durable_guard = DurableMemoryEnvGuard::set(&empty_durable_root);
 
         let mut cfg = Config::default();
         cfg.memory.enabled = true;
+        cfg.memory.sources.managed_policy_path = Some("missing-managed.md".to_string());
+        cfg.memory.sources.user_memory_path = Some("missing-user.md".to_string());
         cfg.memory.sources.project_memory_paths = vec![".lime/AGENTS.md".to_string()];
 
         let resolved = resolve_effective_sources(&cfg, &nested, None);

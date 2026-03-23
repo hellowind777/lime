@@ -4,7 +4,6 @@ import { toast } from "sonner";
 import { prepareClawSolution } from "@/lib/api/clawSolutions";
 import type { Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
-import type { ThemeType } from "@/components/content-creator/types";
 import { EmptyState } from "./components/EmptyState";
 import type { CreationMode } from "./components/types";
 import {
@@ -30,23 +29,12 @@ import {
 import { useClawSolutions } from "./claw-solutions/useClawSolutions";
 import { ClawHomeSolutionsPanel } from "./claw-solutions/ClawHomeSolutionsPanel";
 import type { ClawSolutionHomeItem } from "./claw-solutions/types";
+import { normalizeInitialTheme } from "./agentChatWorkspaceShared";
 import {
   type AgentChatWorkspaceBootstrap,
   resolveHomeShellWorkspaceEntry,
   type HomeShellEnterWorkspacePayload,
 } from "./homeShellEntry";
-
-const SUPPORTED_ENTRY_THEMES: ThemeType[] = [
-  "general",
-  "social-media",
-  "poster",
-  "music",
-  "knowledge",
-  "planning",
-  "document",
-  "video",
-  "novel",
-];
 
 const PageContainer = styled.div<{ $compact?: boolean }>`
   display: flex;
@@ -143,14 +131,6 @@ const ThemeWorkbenchLayoutShell = styled.div<{ $bottomInset: string }>`
   padding-bottom: ${({ $bottomInset }) => $bottomInset};
   transition: padding-bottom 0.2s ease;
 `;
-
-function normalizeInitialTheme(value?: string): ThemeType {
-  if (!value) return "general";
-  if (SUPPORTED_ENTRY_THEMES.includes(value as ThemeType)) {
-    return value as ThemeType;
-  }
-  return "general";
-}
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {

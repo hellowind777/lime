@@ -37,8 +37,10 @@ import type {
   AgentRuntimeToolInventory,
   AgentRuntimeToolInventoryCatalogEntry,
   AgentRuntimeToolInventoryRegistryEntry,
+  AgentRuntimeThreadReadModel,
   AgentToolExecutionPolicySource,
   AsterSubagentSessionInfo,
+  QueuedTurnSnapshot,
 } from "@/lib/api/agentRuntime";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -57,7 +59,11 @@ import {
   revealPathInFinder,
 } from "@/lib/api/fileSystem";
 import { SearchResultPreviewList } from "./SearchResultPreviewList";
-import type { ActionRequired } from "../types";
+import type {
+  ActionRequired,
+  AgentThreadItem,
+  AgentThreadTurn,
+} from "../types";
 import type {
   HarnessFileAction,
   HarnessActiveFileWrite,
@@ -78,9 +84,11 @@ import {
   normalizeToolNameKey,
   resolveToolDisplayLabel,
 } from "../utils/toolDisplayInfo";
+import { buildThreadReliabilityView } from "../utils/threadReliabilityView";
 import { resolveTeamWorkspaceStableProcessingLabel } from "../utils/teamWorkspaceCopy";
 import type { CompatSubagentRuntimeSnapshot } from "../utils/compatSubagentRuntime";
 import type { TeamRoleDefinition } from "../utils/teamDefinitions";
+import { AgentThreadReliabilityPanel } from "./AgentThreadReliabilityPanel";
 
 interface HarnessEnvironmentSummary {
   skillsCount: number;
@@ -122,6 +130,20 @@ interface HarnessStatusPanelProps {
   selectedTeamLabel?: string | null;
   selectedTeamSummary?: string | null;
   selectedTeamRoles?: TeamRoleDefinition[] | null;
+  threadRead?: AgentRuntimeThreadReadModel | null;
+  turns?: AgentThreadTurn[];
+  threadItems?: AgentThreadItem[];
+  currentTurnId?: string | null;
+  pendingActions?: ActionRequired[];
+  submittedActionsInFlight?: ActionRequired[];
+  queuedTurns?: QueuedTurnSnapshot[];
+  canInterrupt?: boolean;
+  onInterruptCurrentTurn?: () => void | Promise<void>;
+  onResumeThread?: () => boolean | Promise<boolean>;
+  onReplayPendingRequest?: (requestId: string) => boolean | Promise<boolean>;
+  onPromoteQueuedTurn?: (
+    queuedTurnId: string,
+  ) => boolean | Promise<boolean>;
 }
 
 interface PreviewDialogState {
@@ -146,6 +168,7 @@ type ToolInventoryFilterValue = "all" | "runtime" | "persisted" | "default";
 type HarnessSectionKey =
   | "team_config"
   | "runtime"
+  | "reliability"
   | "inventory"
   | "approvals"
   | "writes"
@@ -1374,6 +1397,18 @@ export function HarnessStatusPanel({
   selectedTeamLabel = null,
   selectedTeamSummary = null,
   selectedTeamRoles = [],
+  threadRead = null,
+  turns = [],
+  threadItems = [],
+  currentTurnId = null,
+  pendingActions = [],
+  submittedActionsInFlight = [],
+  queuedTurns = [],
+  canInterrupt = false,
+  onInterruptCurrentTurn,
+  onResumeThread,
+  onReplayPendingRequest,
+  onPromoteQueuedTurn,
 }: HarnessStatusPanelProps) {
   const [expanded, setExpanded] = useState(true);
   const isDialogLayout = layout === "dialog";
@@ -1424,6 +1459,13 @@ export function HarnessStatusPanel({
       ),
     [toolInventory, toolInventoryFilter],
   );
+  const toolInventoryWarnings = toolInventory?.warnings || [];
+  const toolInventoryCatalogTools = toolInventory?.catalog_tools || [];
+  const toolInventoryRegistryTools = toolInventory?.registry_tools || [];
+  const toolInventoryExtensionSurfaces =
+    toolInventory?.extension_surfaces || [];
+  const toolInventoryExtensionTools = toolInventory?.extension_tools || [];
+  const toolInventoryMcpTools = toolInventory?.mcp_tools || [];
   const realTeamSummary = useMemo(
     () => summarizeChildSubagentSessions(childSubagentSessions),
     [childSubagentSessions],
@@ -1432,6 +1474,27 @@ export function HarnessStatusPanel({
   const hasSelectedTeamConfig = Boolean(selectedTeamLabel?.trim()) ||
     Boolean(selectedTeamSummary?.trim()) ||
     (selectedTeamRoles?.length ?? 0) > 0;
+  const threadReliabilityView = useMemo(
+    () =>
+      buildThreadReliabilityView({
+        threadRead,
+        turns,
+        threadItems,
+        currentTurnId,
+        pendingActions,
+        submittedActionsInFlight,
+        queuedTurns,
+      }),
+    [
+      currentTurnId,
+      pendingActions,
+      queuedTurns,
+      submittedActionsInFlight,
+      threadItems,
+      threadRead,
+      turns,
+    ],
+  );
 
   const fileFilterOptions = useMemo(
     () =>
@@ -1577,6 +1640,9 @@ export function HarnessStatusPanel({
     if (harnessState.runtimeStatus) {
       sections.push({ key: "runtime", label: "任务进展" });
     }
+    if (threadReliabilityView.shouldRender) {
+      sections.push({ key: "reliability", label: "可靠性" });
+    }
     if (harnessState.activeFileWrites.length > 0) {
       sections.push({ key: "writes", label: "文件写入" });
     }
@@ -1629,6 +1695,7 @@ export function HarnessStatusPanel({
     hasSelectedTeamConfig,
     hasCompatSchedulerSignals,
     realTeamSummary.total,
+    threadReliabilityView.shouldRender,
   ]);
 
   const summaryCards = useMemo(() => {
@@ -1642,6 +1709,16 @@ export function HarnessStatusPanel({
         hint:
           harnessState.runtimeStatus.detail || harnessState.runtimeStatus.title,
         icon: Loader2,
+      });
+    }
+
+    if (threadReliabilityView.shouldRender) {
+      cards.push({
+        sectionKey: "reliability",
+        title: "可靠性",
+        value: threadReliabilityView.statusLabel,
+        hint: threadReliabilityView.summary,
+        icon: AlertCircle,
       });
     }
 
@@ -1777,6 +1854,9 @@ export function HarnessStatusPanel({
     toolInventory,
     toolInventoryError,
     toolInventoryLoading,
+    threadReliabilityView.shouldRender,
+    threadReliabilityView.statusLabel,
+    threadReliabilityView.summary,
   ]);
 
   const openPreview = useCallback(
@@ -2226,6 +2306,31 @@ export function HarnessStatusPanel({
                 </Section>
               ) : null}
 
+              {threadReliabilityView.shouldRender ? (
+                <Section
+                  sectionKey="reliability"
+                  title="线程可靠性"
+                  badge={threadReliabilityView.statusLabel}
+                  registerRef={registerSectionRef}
+                >
+                  <AgentThreadReliabilityPanel
+                    className="mb-0 border-border bg-background shadow-none"
+                    threadRead={threadRead}
+                    turns={turns}
+                    threadItems={threadItems}
+                    currentTurnId={currentTurnId}
+                    pendingActions={pendingActions}
+                    submittedActionsInFlight={submittedActionsInFlight}
+                    queuedTurns={queuedTurns}
+                    canInterrupt={canInterrupt}
+                    onInterruptCurrentTurn={onInterruptCurrentTurn}
+                    onResumeThread={onResumeThread}
+                    onReplayPendingRequest={onReplayPendingRequest}
+                    onPromoteQueuedTurn={onPromoteQueuedTurn}
+                  />
+                </Section>
+              ) : null}
+
               {harnessState.activeFileWrites.length > 0 ? (
                 <Section
                   sectionKey="writes"
@@ -2485,17 +2590,17 @@ export function HarnessStatusPanel({
                         {toolInventory ? (
                           <>
                             <Badge variant="secondary">
-                              caller：{toolInventory.request.caller}
+                              caller：{toolInventory.request?.caller || "未知"}
                             </Badge>
                             <Badge variant="outline">
                               Creator：
-                              {toolInventory.request.surface.creator
+                              {toolInventory.request?.surface?.creator
                                 ? "开启"
                                 : "关闭"}
                             </Badge>
                             <Badge variant="outline">
                               Browser Assist：
-                              {toolInventory.request.surface.browser_assist
+                              {toolInventory.request?.surface?.browser_assist
                                 ? "开启"
                                 : "关闭"}
                             </Badge>
@@ -2584,13 +2689,13 @@ export function HarnessStatusPanel({
                           ))}
                         </div>
 
-                        {toolInventory.warnings.length > 0 ? (
+                        {toolInventoryWarnings.length > 0 ? (
                           <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3">
                             <div className="text-sm font-medium text-amber-900">
                               库存告警
                             </div>
                             <div className="mt-2 space-y-1 text-xs text-amber-800">
-                              {toolInventory.warnings.map((warning, index) => (
+                              {toolInventoryWarnings.map((warning, index) => (
                                 <div key={`${warning}-${index}`}>{warning}</div>
                               ))}
                             </div>
@@ -2604,7 +2709,7 @@ export function HarnessStatusPanel({
                             </div>
                             <Badge variant="secondary">
                               {filteredCatalogTools.length} /{" "}
-                              {toolInventory.catalog_tools.length}
+                              {toolInventoryCatalogTools.length}
                             </Badge>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -2619,7 +2724,7 @@ export function HarnessStatusPanel({
                             ].map((option) => {
                               const active = option.value === toolInventoryFilter;
                               const count = countCatalogToolsByInventoryFilter(
-                                toolInventory.catalog_tools,
+                                toolInventoryCatalogTools,
                                 option.value,
                               );
 
@@ -2775,8 +2880,8 @@ export function HarnessStatusPanel({
                           <div className="text-sm font-medium text-foreground">
                             Runtime Registry
                           </div>
-                          {toolInventory.registry_tools.length > 0 ? (
-                            toolInventory.registry_tools.map((entry) => (
+                          {toolInventoryRegistryTools.length > 0 ? (
+                            toolInventoryRegistryTools.map((entry) => (
                               <div
                                 key={entry.name}
                                 className="rounded-xl border border-border bg-background p-3"
@@ -2894,12 +2999,12 @@ export function HarnessStatusPanel({
                           )}
                         </div>
 
-                        {toolInventory.extension_surfaces.length > 0 ? (
+                        {toolInventoryExtensionSurfaces.length > 0 ? (
                           <div className="space-y-3">
                             <div className="text-sm font-medium text-foreground">
                               Extension Surfaces
                             </div>
-                            {toolInventory.extension_surfaces.map((entry) => (
+                            {toolInventoryExtensionSurfaces.map((entry) => (
                               <div
                                 key={entry.extension_name}
                                 className="rounded-xl border border-border bg-background p-3"
@@ -2944,12 +3049,12 @@ export function HarnessStatusPanel({
                           </div>
                         ) : null}
 
-                        {toolInventory.extension_tools.length > 0 ? (
+                        {toolInventoryExtensionTools.length > 0 ? (
                           <div className="space-y-3">
                             <div className="text-sm font-medium text-foreground">
                               Extension Tools
                             </div>
-                            {toolInventory.extension_tools.map((entry) => (
+                            {toolInventoryExtensionTools.map((entry) => (
                               <div
                                 key={entry.name}
                                 className="rounded-xl border border-border bg-background p-3"
@@ -2998,12 +3103,12 @@ export function HarnessStatusPanel({
                           </div>
                         ) : null}
 
-                        {toolInventory.mcp_tools.length > 0 ? (
+                        {toolInventoryMcpTools.length > 0 ? (
                           <div className="space-y-3">
                             <div className="text-sm font-medium text-foreground">
                               MCP Tools
                             </div>
-                            {toolInventory.mcp_tools.map((entry) => (
+                            {toolInventoryMcpTools.map((entry) => (
                               <div
                                 key={`${entry.server_name}:${entry.name}`}
                                 className="rounded-xl border border-border bg-background p-3"

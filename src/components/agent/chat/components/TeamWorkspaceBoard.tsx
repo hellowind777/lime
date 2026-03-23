@@ -3211,10 +3211,10 @@ export function TeamWorkspaceBoard({
       >
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5 sm:px-5">
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
               <Workflow className="h-3.5 w-3.5" />
               <span>{TEAM_WORKSPACE_SURFACE_TITLE}</span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-normal text-emerald-700 normal-case">
+              <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-normal text-emerald-700 normal-case">
                 <Activity className="h-3 w-3" />
                 {TEAM_WORKSPACE_REALTIME_BADGE_LABEL}
               </span>
@@ -3318,7 +3318,7 @@ export function TeamWorkspaceBoard({
   ].filter(Boolean) as string[];
   const boardShellClassName = cn(
     embedded
-      ? "pointer-events-auto flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[26px] border border-slate-200 bg-white shadow-[0_18px_64px_-36px_rgba(15,23,42,0.18)]"
+      ? "pointer-events-auto flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-none border-0 bg-transparent shadow-none"
       : "overflow-hidden rounded-[26px] border border-slate-200 bg-white shadow-[0_18px_64px_-42px_rgba(15,23,42,0.24)]",
     embedded ? "mx-0 mt-0" : "mx-3 mt-2",
     className,
@@ -3707,10 +3707,10 @@ export function TeamWorkspaceBoard({
         data-testid={embedded ? "team-workspace-board-header" : undefined}
       >
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
             <Workflow className="h-3.5 w-3.5" />
             <span>{TEAM_WORKSPACE_SURFACE_TITLE}</span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-normal text-emerald-700 normal-case">
+            <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium tracking-normal text-emerald-700 normal-case">
               <Activity className="h-3 w-3" />
               {TEAM_WORKSPACE_REALTIME_BADGE_LABEL}
             </span>

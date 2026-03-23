@@ -756,10 +756,11 @@ describe("TeamWorkspaceBoard", () => {
       '[data-testid="team-workspace-board-body"]',
     );
 
-    expect(embeddedShell?.className).toContain("bg-white");
     expect(embeddedShell?.className).toContain("pointer-events-auto");
     expect(embeddedShell?.className).toContain("overflow-hidden");
     expect(embeddedShell?.className).toContain("flex-col");
+    expect(embeddedShell?.className).toContain("bg-transparent");
+    expect(embeddedShell?.className).toContain("border-0");
     expect(embeddedShell?.className).not.toContain("backdrop-blur");
     expect(boardBody?.className).toContain("overflow-y-auto");
     expect(railList?.getAttribute("data-layout-kind")).toBe("free-canvas");

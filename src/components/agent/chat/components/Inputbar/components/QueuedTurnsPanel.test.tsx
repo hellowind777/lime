@@ -94,4 +94,62 @@ describe("QueuedTurnsPanel", () => {
 
     expect(onRemoveQueuedTurn).toHaveBeenCalledWith("queued-1");
   });
+
+  it("队列操作进行中时，应展示明确 loading 状态", async () => {
+    let resolvePromote: (() => void) | null = null;
+    const onPromoteQueuedTurn = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolvePromote = () => resolve(true);
+        }),
+    );
+    const container = renderQueuedTurnsPanel({ onPromoteQueuedTurn });
+
+    const promoteButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("立即执行"));
+
+    expect(promoteButton).toBeTruthy();
+
+    act(() => {
+      promoteButton?.click();
+    });
+
+    expect(promoteButton?.textContent).toContain("切换中");
+    expect(promoteButton?.disabled).toBe(true);
+
+    await act(async () => {
+      resolvePromote?.();
+      await Promise.resolve();
+    });
+  });
+
+  it("移除进行中时，应更新无障碍标签并禁用按钮", async () => {
+    let resolveRemove: (() => void) | null = null;
+    const onRemoveQueuedTurn = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveRemove = () => resolve(true);
+        }),
+    );
+    const container = renderQueuedTurnsPanel({ onRemoveQueuedTurn });
+
+    const removeButton = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="移除排队消息"]',
+    );
+
+    expect(removeButton).toBeTruthy();
+
+    act(() => {
+      removeButton?.click();
+    });
+
+    expect(removeButton?.getAttribute("aria-label")).toBe("正在移除排队消息");
+    expect(removeButton?.disabled).toBe(true);
+
+    await act(async () => {
+      resolveRemove?.();
+      await Promise.resolve();
+    });
+  });
 });

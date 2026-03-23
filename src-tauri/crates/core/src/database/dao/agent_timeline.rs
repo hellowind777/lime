@@ -184,6 +184,13 @@ pub enum AgentThreadItemPayload {
         #[serde(skip_serializing_if = "Option::is_none")]
         code: Option<String>,
     },
+    ContextCompaction {
+        stage: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        trigger: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
     Error {
         message: String,
     },
@@ -207,6 +214,7 @@ impl AgentThreadItemPayload {
             Self::FileArtifact { .. } => "file_artifact",
             Self::SubagentActivity { .. } => "subagent_activity",
             Self::Warning { .. } => "warning",
+            Self::ContextCompaction { .. } => "context_compaction",
             Self::Error { .. } => "error",
             Self::TurnSummary { .. } => "turn_summary",
         }

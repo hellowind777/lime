@@ -293,7 +293,8 @@ function classifyItemKind(item: AgentThreadItem): AgentThreadGroupKind {
   if (
     item.type === "plan" ||
     item.type === "reasoning" ||
-    item.type === "turn_summary"
+    item.type === "turn_summary" ||
+    item.type === "context_compaction"
   ) {
     return "thinking";
   }
@@ -476,6 +477,13 @@ function summarizeOtherItem(item: AgentThreadItem): string | null {
 function summarizeThinkingItem(item: AgentThreadItem): string | null {
   if (item.type === "turn_summary") {
     return extractThinkingPreviewLine(item.text);
+  }
+
+  if (item.type === "context_compaction") {
+    return shortenText(
+      item.detail ||
+        (item.stage === "completed" ? "上下文已压缩" : "正在压缩上下文"),
+    );
   }
 
   if (item.type === "reasoning") {

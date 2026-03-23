@@ -46,15 +46,10 @@ pub(crate) async fn persist_session_provider_routing(
     let Some(state) = SessionProviderRoutingState::new(provider_selector.to_string()) else {
         return Ok(());
     };
-    let session = SessionManager::get_session(session_id, false)
-        .await
-        .map_err(|error| format!("读取会话 provider 路由上下文失败: {error}"))?;
+    let session = read_session(session_id, false, "读取会话 provider 路由上下文失败").await?;
     let extension_data = state.into_updated_extension_data(&session)?;
-    SessionManager::update_session(session_id)
-        .extension_data(extension_data)
-        .apply()
-        .await
-        .map_err(|error| format!("持久化会话 provider 路由上下文失败: {error}"))?;
+    persist_session_extension_data(session_id, extension_data, "持久化会话 provider 路由上下文")
+        .await?;
     Ok(())
 }
 

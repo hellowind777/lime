@@ -100,6 +100,57 @@ export interface AsterTodoItem {
   active_form?: string;
 }
 
+export interface AgentRuntimeRequestView {
+  id: string;
+  thread_id: string;
+  turn_id?: string;
+  item_id?: string;
+  request_type: string;
+  status: string;
+  title?: string;
+  payload?: unknown;
+  decision?: unknown;
+  scope?: Record<string, unknown>;
+  created_at?: string | number;
+  resolved_at?: string | number;
+}
+
+export interface AgentRuntimeOutcomeView {
+  thread_id: string;
+  turn_id?: string;
+  outcome_type: string;
+  summary?: string;
+  primary_cause?: string;
+  retryable?: boolean;
+  ended_at?: string | number;
+}
+
+export interface AgentRuntimeIncidentView {
+  id: string;
+  thread_id: string;
+  turn_id?: string;
+  item_id?: string;
+  incident_type: string;
+  severity?: string;
+  status?: string;
+  title?: string;
+  details?: unknown;
+  detected_at?: string | number;
+  cleared_at?: string | number;
+}
+
+export interface AgentRuntimeThreadReadModel {
+  thread_id: string;
+  status?: string;
+  active_turn_id?: string;
+  pending_requests?: AgentRuntimeRequestView[];
+  last_outcome?: AgentRuntimeOutcomeView | null;
+  incidents?: AgentRuntimeIncidentView[];
+  queued_turns?: QueuedTurnSnapshot[];
+  interrupt_state?: string;
+  updated_at?: string | number;
+}
+
 export interface AsterSubagentSessionInfo {
   id: string;
   name: string;
@@ -225,9 +276,23 @@ export interface AsterSessionDetail {
   turns?: AgentThreadTurn[];
   items?: AgentThreadItem[];
   queued_turns?: QueuedTurnSnapshot[];
+  thread_read?: AgentRuntimeThreadReadModel | null;
   todo_items?: AsterTodoItem[];
   child_subagent_sessions?: AsterSubagentSessionInfo[];
   subagent_parent_context?: AsterSubagentParentContext;
+}
+
+function normalizeThreadReadModel(
+  threadRead?: AgentRuntimeThreadReadModel | null,
+): AgentRuntimeThreadReadModel | null | undefined {
+  if (!threadRead) {
+    return threadRead;
+  }
+
+  return {
+    ...threadRead,
+    queued_turns: normalizeQueuedTurnSnapshots(threadRead.queued_turns),
+  };
 }
 
 export interface AgentTurnConfigSnapshot {
@@ -257,6 +322,20 @@ export interface AgentRuntimeInterruptTurnRequest {
   turn_id?: string;
 }
 
+export interface AgentRuntimeCompactSessionRequest {
+  session_id: string;
+  event_name: string;
+}
+
+export interface AgentRuntimeResumeThreadRequest {
+  session_id: string;
+}
+
+export interface AgentRuntimeReplayRequestRequest {
+  session_id: string;
+  request_id: string;
+}
+
 export interface AgentRuntimeRemoveQueuedTurnRequest {
   session_id: string;
   queued_turn_id: string;
@@ -277,6 +356,22 @@ export interface AgentRuntimeRespondActionRequest {
   metadata?: Record<string, unknown>;
   event_name?: string;
   action_scope?: {
+    session_id?: string;
+    thread_id?: string;
+    turn_id?: string;
+  };
+}
+
+export interface AgentRuntimeReplayedActionRequiredView {
+  type: "action_required";
+  request_id: string;
+  action_type: "tool_confirmation" | "ask_user" | "elicitation";
+  tool_name?: string;
+  arguments?: Record<string, unknown>;
+  prompt?: string;
+  questions?: unknown;
+  requested_schema?: Record<string, unknown>;
+  scope?: {
     session_id?: string;
     thread_id?: string;
     turn_id?: string;
@@ -562,6 +657,24 @@ export async function interruptAgentRuntimeTurn(
   return await safeInvoke("agent_runtime_interrupt_turn", { request });
 }
 
+export async function compactAgentRuntimeSession(
+  request: AgentRuntimeCompactSessionRequest,
+): Promise<void> {
+  return await safeInvoke("agent_runtime_compact_session", { request });
+}
+
+export async function resumeAgentRuntimeThread(
+  request: AgentRuntimeResumeThreadRequest,
+): Promise<boolean> {
+  return await safeInvoke("agent_runtime_resume_thread", { request });
+}
+
+export async function replayAgentRuntimeRequest(
+  request: AgentRuntimeReplayRequestRequest,
+): Promise<AgentRuntimeReplayedActionRequiredView | null> {
+  return await safeInvoke("agent_runtime_replay_request", { request });
+}
+
 export async function removeAgentRuntimeQueuedTurn(
   request: AgentRuntimeRemoveQueuedTurnRequest,
 ): Promise<boolean> {
@@ -651,12 +764,25 @@ export async function getAgentRuntimeSession(
   sessionId: string,
 ): Promise<AsterSessionDetail> {
   const detail = await safeInvoke("agent_runtime_get_session", { sessionId });
+  const normalizedDetail = detail as AsterSessionDetail | null | undefined;
   return {
     ...(detail as AsterSessionDetail),
     queued_turns: normalizeQueuedTurnSnapshots(
-      (detail as AsterSessionDetail | null | undefined)?.queued_turns,
+      normalizedDetail?.queued_turns,
     ),
+    thread_read: normalizeThreadReadModel(normalizedDetail?.thread_read),
   };
+}
+
+export async function getAgentRuntimeThreadRead(
+  sessionId: string,
+): Promise<AgentRuntimeThreadReadModel> {
+  const threadRead = await safeInvoke("agent_runtime_get_thread_read", {
+    sessionId,
+  });
+  return normalizeThreadReadModel(
+    threadRead as AgentRuntimeThreadReadModel | null | undefined,
+  ) as AgentRuntimeThreadReadModel;
 }
 
 export async function getAgentRuntimeToolInventory(

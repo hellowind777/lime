@@ -216,9 +216,9 @@ pub(crate) fn build_runtime_prepared_team_spawn_message(
 async fn collect_runtime_prepared_team_candidates(
     parent_session_id: &str,
 ) -> Result<Vec<RuntimePreparedTeamSessionCandidate>, String> {
-    let child_sessions = list_subagent_child_sessions(parent_session_id)
-        .await
-        .map_err(|error| format!("读取 runtime team child sessions 失败: {error}"))?;
+    let child_sessions =
+        list_child_subagent_sessions(parent_session_id, "读取 runtime team child sessions 失败")
+            .await?;
     let mut candidates = Vec::new();
 
     for child_session in child_sessions {
@@ -1310,6 +1310,236 @@ fn build_queued_turn_preview(message: &str) -> String {
     }
 }
 
+async fn update_compaction_session_metrics(
+    session_config: &aster::agents::SessionConfig,
+    usage: &aster::providers::base::ProviderUsage,
+) -> Result<(), String> {
+    let session = read_session(&session_config.id, false, "读取会话 token 统计失败").await?;
+
+    let update = build_compaction_session_metrics_update(&session, session_config, usage);
+    persist_compaction_session_metrics_update(&session_config.id, &update).await
+}
+
+fn build_compaction_session_metrics_update(
+    session: &aster::session::Session,
+    session_config: &aster::agents::SessionConfig,
+    usage: &aster::providers::base::ProviderUsage,
+) -> CompactionSessionMetricsUpdate {
+    let schedule_id = session_config
+        .schedule_id
+        .clone()
+        .or(session.schedule_id.clone());
+
+    let accumulate = |current: Option<i32>, delta: Option<i32>| match (current, delta) {
+        (Some(lhs), Some(rhs)) => Some(lhs + rhs),
+        _ => current.or(delta),
+    };
+
+    let accumulated_total = accumulate(session.accumulated_total_tokens, usage.usage.total_tokens);
+    let accumulated_input = accumulate(session.accumulated_input_tokens, usage.usage.input_tokens);
+    let accumulated_output =
+        accumulate(session.accumulated_output_tokens, usage.usage.output_tokens);
+
+    let current_window_tokens = usage
+        .usage
+        .output_tokens
+        .or(usage.usage.total_tokens)
+        .unwrap_or(0);
+
+    CompactionSessionMetricsUpdate {
+        schedule_id,
+        current_window_tokens,
+        accumulated_total_tokens: accumulated_total,
+        accumulated_input_tokens: accumulated_input,
+        accumulated_output_tokens: accumulated_output,
+    }
+}
+
+pub(crate) async fn compact_runtime_session_internal(
+    app: &AppHandle,
+    state: &AsterAgentState,
+    db: &DbConnection,
+    request: AgentRuntimeCompactSessionRequest,
+) -> Result<(), String> {
+    let session_id = normalize_required_text(&request.session_id, "session_id")?;
+    let event_name = normalize_required_text(&request.event_name, "event_name")?;
+    let cancel_token = state.create_cancel_token(&session_id).await;
+    let agent_arc = state.get_agent_arc();
+
+    let runtime_snapshot = {
+        let guard = agent_arc.read().await;
+        let agent = guard.as_ref().ok_or("Agent not initialized")?;
+        match agent.runtime_snapshot(&session_id).await {
+            Ok(snapshot) => Some(snapshot),
+            Err(error) => {
+                tracing::warn!(
+                    "[AsterAgent] 压缩上下文前读取 runtime snapshot 失败，继续使用 session 默认线程: session_id={}, error={}",
+                    session_id,
+                    error
+                );
+                None
+            }
+        }
+    };
+    let runtime_projection_snapshot =
+        RuntimeProjectionSnapshot::from_snapshot(&session_id, runtime_snapshot.as_ref());
+    let resolved_thread_id = runtime_projection_snapshot
+        .primary_thread_id()
+        .map(str::to_string)
+        .unwrap_or_else(|| session_id.clone());
+    let resolved_turn_id = Uuid::new_v4().to_string();
+    let timeline_recorder = Arc::new(Mutex::new(AgentTimelineRecorder::create(
+        db.clone(),
+        resolved_thread_id.clone(),
+        resolved_turn_id.clone(),
+        "压缩上下文",
+    )?));
+    let session_config = SessionConfigBuilder::new(&session_id)
+        .thread_id(resolved_thread_id)
+        .turn_id(resolved_turn_id)
+        .build();
+
+    let final_result: Result<(), String> = {
+        let guard = agent_arc.read().await;
+        let agent = guard.as_ref().ok_or("Agent not initialized")?;
+        let turn = agent
+            .ensure_runtime_turn_initialized(&session_config, Some("压缩上下文".to_string()))
+            .await
+            .map_err(|error| format!("初始化压缩 turn 失败: {error}"))?;
+        for event in
+            lime_agent::event_converter::convert_agent_event(AgentEvent::TurnStarted { turn })
+        {
+            {
+                let mut recorder = match timeline_recorder.lock() {
+                    Ok(guard) => guard,
+                    Err(error) => error.into_inner(),
+                };
+                if let Err(error) = recorder.record_runtime_event(app, &event_name, &event, "") {
+                    tracing::warn!(
+                        "[AsterAgent] 记录压缩时间线事件失败（已降级继续）: {}",
+                        error
+                    );
+                }
+            }
+            if let Err(error) = app.emit(&event_name, &event) {
+                tracing::error!("[AsterAgent] 发送压缩事件失败: {}", error);
+            }
+        }
+
+        let compaction_turn_id = session_config
+            .turn_id
+            .clone()
+            .unwrap_or_else(|| session_id.clone());
+        let compaction_item_id = format!("context_compaction:{compaction_turn_id}");
+        let start_event = TauriAgentEvent::ContextCompactionStarted {
+            item_id: compaction_item_id.clone(),
+            trigger: "manual".to_string(),
+            detail: Some("系统正在将较早消息整理为摘要，以释放上下文窗口。".to_string()),
+        };
+        {
+            let mut recorder = match timeline_recorder.lock() {
+                Ok(guard) => guard,
+                Err(error) => error.into_inner(),
+            };
+            if let Err(error) = recorder.record_runtime_event(app, &event_name, &start_event, "") {
+                tracing::warn!(
+                    "[AsterAgent] 记录压缩开始时间线失败（已降级继续）: {}",
+                    error
+                );
+            }
+        }
+        if let Err(error) = app.emit(&event_name, &start_event) {
+            tracing::error!("[AsterAgent] 发送压缩开始事件失败: {}", error);
+        }
+
+        let session = read_session(&session_id, true, "读取会话失败").await?;
+        let conversation = session
+            .conversation
+            .ok_or_else(|| "Session has no conversation".to_string())?;
+        let provider = agent
+            .provider()
+            .await
+            .map_err(|error| format!("读取 provider 失败: {error}"))?;
+        let (compacted_conversation, usage) =
+            aster::context_mgmt::compact_messages(provider.as_ref(), &conversation, true)
+                .await
+                .map_err(|error| format!("压缩上下文失败: {error}"))?;
+        replace_session_conversation(&session_id, &compacted_conversation, "写回压缩后的会话")
+            .await?;
+        update_compaction_session_metrics(&session_config, &usage).await?;
+
+        let completed_event = TauriAgentEvent::ContextCompactionCompleted {
+            item_id: compaction_item_id,
+            trigger: "manual".to_string(),
+            detail: Some("较早消息已替换为摘要，后续回复会基于压缩后的上下文继续。".to_string()),
+        };
+        {
+            let mut recorder = match timeline_recorder.lock() {
+                Ok(guard) => guard,
+                Err(error) => error.into_inner(),
+            };
+            if let Err(error) =
+                recorder.record_runtime_event(app, &event_name, &completed_event, "")
+            {
+                tracing::warn!(
+                    "[AsterAgent] 记录压缩完成时间线失败（已降级继续）: {}",
+                    error
+                );
+            }
+        }
+        if let Err(error) = app.emit(&event_name, &completed_event) {
+            tracing::error!("[AsterAgent] 发送压缩完成事件失败: {}", error);
+        }
+
+        Ok(())
+    };
+
+    match final_result {
+        Ok(()) => {
+            let mut recorder = match timeline_recorder.lock() {
+                Ok(guard) => guard,
+                Err(error) => error.into_inner(),
+            };
+            if let Err(error) = recorder.complete_turn_success(app, &event_name) {
+                tracing::warn!(
+                    "[AsterAgent] 完成压缩 turn 时间线失败（已降级继续）: {}",
+                    error
+                );
+            }
+            let done_event = TauriAgentEvent::FinalDone { usage: None };
+            if let Err(error) = app.emit(&event_name, &done_event) {
+                tracing::error!("[AsterAgent] 发送压缩完成事件失败: {}", error);
+            }
+        }
+        Err(error) => {
+            {
+                let mut recorder = match timeline_recorder.lock() {
+                    Ok(guard) => guard,
+                    Err(error) => error.into_inner(),
+                };
+                if let Err(timeline_error) = recorder.fail_turn(app, &event_name, &error) {
+                    tracing::warn!(
+                        "[AsterAgent] 记录压缩失败 turn 时间线失败（已降级继续）: {}",
+                        timeline_error
+                    );
+                }
+                let error_event = TauriAgentEvent::Error {
+                    message: error.clone(),
+                };
+                if let Err(emit_error) = app.emit(&event_name, &error_event) {
+                    tracing::error!("[AsterAgent] 发送压缩错误事件失败: {}", emit_error);
+                }
+            }
+            state.remove_cancel_token(&session_id).await;
+            return Err(error);
+        }
+    }
+
+    drop(cancel_token);
+    state.remove_cancel_token(&session_id).await;
+    Ok(())
+}
+
 fn extract_subagent_parent_session_id(metadata: Option<&serde_json::Value>) -> Option<String> {
     metadata
         .and_then(|value| value.get("subagent"))
@@ -1337,7 +1567,7 @@ async fn resolve_team_runtime_provider_group_for_request(request: &AsterChatRequ
         return normalize_team_runtime_provider_group(&provider_config.provider_name);
     }
 
-    match SessionManager::get_session(&request.session_id, false).await {
+    match read_session(&request.session_id, false, "读取 provider 会话上下文失败").await {
         Ok(session) => {
             let provider_selector = resolve_session_provider_selector(&session)
                 .or_else(|| normalize_optional_text(session.provider_name.clone()));
@@ -1719,4 +1949,198 @@ pub(crate) fn build_runtime_queue_executor() -> RuntimeQueueExecutor {
         }
         .boxed()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aster::providers::base::{ProviderUsage, Usage};
+    use aster::session::{
+        initialize_shared_session_runtime_with_root, is_global_session_store_set, SessionManager,
+        SessionType,
+    };
+    use lime_core::database::schema::create_tables;
+    use lime_services::aster_session_store::LimeSessionStore;
+    use rusqlite::Connection;
+    use std::fs;
+    use tokio::sync::OnceCell;
+
+    async fn ensure_runtime_turn_test_session_manager() {
+        static INIT: OnceCell<()> = OnceCell::const_new();
+
+        INIT.get_or_init(|| async {
+            if is_global_session_store_set() {
+                return;
+            }
+
+            let conn = Connection::open_in_memory().expect("创建内存数据库失败");
+            create_tables(&conn).expect("初始化表结构失败");
+
+            let runtime_root =
+                std::env::temp_dir().join(format!("lime-runtime-turn-tests-{}", Uuid::new_v4()));
+            fs::create_dir_all(&runtime_root).expect("创建 runtime 测试目录失败");
+
+            let session_store = Arc::new(LimeSessionStore::new(Arc::new(Mutex::new(conn))));
+            initialize_shared_session_runtime_with_root(runtime_root, Some(session_store))
+                .await
+                .expect("初始化测试 session manager 失败");
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn update_compaction_session_metrics_should_move_summary_tokens_to_current_window() {
+        ensure_runtime_turn_test_session_manager().await;
+
+        let session = SessionManager::create_session(
+            PathBuf::from("."),
+            "压缩统计测试".to_string(),
+            SessionType::User,
+        )
+        .await
+        .expect("创建测试会话失败");
+
+        SessionManager::update_session(&session.id)
+            .schedule_id(Some("job-before".to_string()))
+            .total_tokens(Some(90))
+            .input_tokens(Some(60))
+            .output_tokens(Some(30))
+            .accumulated_total_tokens(Some(300))
+            .accumulated_input_tokens(Some(200))
+            .accumulated_output_tokens(Some(100))
+            .apply()
+            .await
+            .expect("预置 token 统计失败");
+
+        let mut session_config = SessionConfigBuilder::new(&session.id).build();
+        session_config.schedule_id = Some("job-compact".to_string());
+
+        let usage = ProviderUsage::new(
+            "gpt-4.1".to_string(),
+            Usage::new(Some(120), Some(45), Some(165)),
+        );
+
+        update_compaction_session_metrics(&session_config, &usage)
+            .await
+            .expect("更新压缩 token 统计失败");
+
+        let updated = SessionManager::get_session(&session.id, false)
+            .await
+            .expect("读取更新后的会话失败");
+
+        assert_eq!(updated.schedule_id.as_deref(), Some("job-compact"));
+        assert_eq!(updated.total_tokens, Some(45));
+        assert_eq!(updated.input_tokens, Some(45));
+        assert_eq!(updated.output_tokens, Some(0));
+        assert_eq!(updated.accumulated_total_tokens, Some(465));
+        assert_eq!(updated.accumulated_input_tokens, Some(320));
+        assert_eq!(updated.accumulated_output_tokens, Some(145));
+
+        SessionManager::delete_session(&session.id)
+            .await
+            .expect("清理测试会话失败");
+    }
+
+    #[tokio::test]
+    async fn update_compaction_session_metrics_should_reset_current_window_when_usage_tokens_missing(
+    ) {
+        ensure_runtime_turn_test_session_manager().await;
+
+        let session = SessionManager::create_session(
+            PathBuf::from("."),
+            "压缩统计缺字段测试".to_string(),
+            SessionType::User,
+        )
+        .await
+        .expect("创建测试会话失败");
+
+        SessionManager::update_session(&session.id)
+            .schedule_id(Some("job-before".to_string()))
+            .total_tokens(Some(180))
+            .input_tokens(Some(120))
+            .output_tokens(Some(60))
+            .accumulated_total_tokens(Some(700))
+            .accumulated_input_tokens(Some(500))
+            .accumulated_output_tokens(Some(200))
+            .apply()
+            .await
+            .expect("预置 token 统计失败");
+
+        let mut session_config = SessionConfigBuilder::new(&session.id).build();
+        session_config.schedule_id = Some("job-compact-missing".to_string());
+
+        let usage = ProviderUsage::new("gpt-4.1".to_string(), Usage::default());
+
+        update_compaction_session_metrics(&session_config, &usage)
+            .await
+            .expect("更新压缩 token 统计失败");
+
+        let updated = SessionManager::get_session(&session.id, false)
+            .await
+            .expect("读取更新后的会话失败");
+
+        assert_eq!(updated.schedule_id.as_deref(), Some("job-compact-missing"));
+        assert_eq!(updated.total_tokens, Some(0));
+        assert_eq!(updated.input_tokens, Some(0));
+        assert_eq!(updated.output_tokens, Some(0));
+        assert_eq!(updated.accumulated_total_tokens, Some(700));
+        assert_eq!(updated.accumulated_input_tokens, Some(500));
+        assert_eq!(updated.accumulated_output_tokens, Some(200));
+
+        SessionManager::delete_session(&session.id)
+            .await
+            .expect("清理测试会话失败");
+    }
+
+    #[tokio::test]
+    async fn update_compaction_session_metrics_should_preserve_existing_schedule_id_when_request_is_empty(
+    ) {
+        ensure_runtime_turn_test_session_manager().await;
+
+        let session = SessionManager::create_session(
+            PathBuf::from("."),
+            "压缩统计保留任务测试".to_string(),
+            SessionType::User,
+        )
+        .await
+        .expect("创建测试会话失败");
+
+        SessionManager::update_session(&session.id)
+            .schedule_id(Some("job-existing".to_string()))
+            .total_tokens(Some(20))
+            .input_tokens(Some(10))
+            .output_tokens(Some(10))
+            .accumulated_total_tokens(Some(200))
+            .accumulated_input_tokens(Some(120))
+            .accumulated_output_tokens(Some(80))
+            .apply()
+            .await
+            .expect("预置 token 统计失败");
+
+        let session_config = SessionConfigBuilder::new(&session.id).build();
+        let usage = ProviderUsage::new(
+            "gpt-4.1".to_string(),
+            Usage::new(Some(30), Some(15), Some(45)),
+        );
+
+        update_compaction_session_metrics(&session_config, &usage)
+            .await
+            .expect("更新压缩 token 统计失败");
+
+        let updated = SessionManager::get_session(&session.id, false)
+            .await
+            .expect("读取更新后的会话失败");
+
+        assert_eq!(updated.schedule_id.as_deref(), Some("job-existing"));
+        assert_eq!(updated.total_tokens, Some(15));
+        assert_eq!(updated.input_tokens, Some(15));
+        assert_eq!(updated.output_tokens, Some(0));
+        assert_eq!(updated.accumulated_total_tokens, Some(245));
+        assert_eq!(updated.accumulated_input_tokens, Some(150));
+        assert_eq!(updated.accumulated_output_tokens, Some(95));
+
+        SessionManager::delete_session(&session.id)
+            .await
+            .expect("清理测试会话失败");
+    }
 }

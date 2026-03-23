@@ -41,6 +41,9 @@ interface ChatNavbarProps {
   harnessPendingCount?: number;
   harnessAttentionLevel?: "idle" | "active" | "warning";
   harnessToggleLabel?: string;
+  showContextCompactionAction?: boolean;
+  contextCompactionRunning?: boolean;
+  onCompactContext?: () => void;
   novelCanvasControls?: {
     chapterListCollapsed: boolean;
     onToggleChapterList: () => void;
@@ -106,6 +109,9 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
   harnessPendingCount = 0,
   harnessAttentionLevel = "idle",
   harnessToggleLabel = "Harness",
+  showContextCompactionAction = false,
+  contextCompactionRunning = false,
+  onCompactContext,
   novelCanvasControls = null,
   showBrowserAssistEntry = false,
   browserAssistActive = false,
@@ -134,7 +140,8 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
     toolbarGhostIconButtonClassName,
     isWorkspaceCompact && "h-8 w-8 rounded-[18px]",
   );
-  const showStatusTools = showBrowserAssistEntry || showHarnessToggle;
+  const showStatusTools =
+    showBrowserAssistEntry || showHarnessToggle || showContextCompactionAction;
   const showNavigationTools =
     !isWorkspaceCompact &&
     (Boolean(onBackHome) ||
@@ -321,6 +328,27 @@ export const ChatNavbar: React.FC<ChatNavbarProps> = ({
 
         {showStatusTools ? (
           <div className={groupClassName}>
+            {showContextCompactionAction ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(embeddedButtonClassName, toolbarTextButtonClassName)}
+                onClick={onCompactContext}
+                disabled={contextCompactionRunning}
+                aria-label="压缩上下文"
+                title="压缩上下文"
+              >
+                <Box size={14} />
+                <span>{contextCompactionRunning ? "压缩中..." : "压缩上下文"}</span>
+              </Button>
+            ) : null}
+
+            {showContextCompactionAction &&
+            (showBrowserAssistEntry || showHarnessToggle) ? (
+              <div className={dividerClassName} aria-hidden="true" />
+            ) : null}
+
             {showBrowserAssistEntry ? (
               <Button
                 type="button"

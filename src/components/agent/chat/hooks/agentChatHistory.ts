@@ -134,7 +134,9 @@ export const extractThinkingContentFromParts = (
   return thinkingText || undefined;
 };
 
-export const mergeAdjacentAssistantMessages = (messages: Message[]): Message[] => {
+export const mergeAdjacentAssistantMessages = (
+  messages: Message[],
+): Message[] => {
   const merged: Message[] = [];
 
   for (const current of messages) {
@@ -269,11 +271,15 @@ export const mergeHydratedMessagesWithLocalState = (
   localMessages: Message[],
   hydratedMessages: Message[],
 ): Message[] => {
+  if (hydratedMessages.length === 0) {
+    return localMessages;
+  }
+
   const localUserMessages = localMessages.filter(
     (message) => message.role === "user",
   );
 
-  if (localUserMessages.length === 0 || hydratedMessages.length === 0) {
+  if (localUserMessages.length === 0) {
     return hydratedMessages;
   }
 
@@ -295,7 +301,11 @@ export const mergeHydratedMessagesWithLocalState = (
 
     localUserCursor = matchedIndex + 1;
     const localMessage = localUserMessages[matchedIndex];
-    if (!localMessage || hasMessageImages(message) || !hasMessageImages(localMessage)) {
+    if (
+      !localMessage ||
+      hasMessageImages(message) ||
+      !hasMessageImages(localMessage)
+    ) {
       return message;
     }
 
@@ -354,12 +364,16 @@ const messageContentPartsSignature = (parts?: ContentPart[]): string => {
     .join("|");
 };
 
-const messageArtifactsSignature = (artifacts?: Message["artifacts"]): string => {
+const messageArtifactsSignature = (
+  artifacts?: Message["artifacts"],
+): string => {
   if (!artifacts || artifacts.length === 0) return "";
   return artifacts
     .map((artifact) => {
       const filePath =
-        typeof artifact.meta.filePath === "string" ? artifact.meta.filePath : "";
+        typeof artifact.meta.filePath === "string"
+          ? artifact.meta.filePath
+          : "";
       return [
         artifact.id,
         artifact.type,
@@ -383,7 +397,9 @@ const buildHistoryMessageSignature = (message: Message): string => {
   ].join("::");
 };
 
-export const dedupeAdjacentHistoryMessages = (messages: Message[]): Message[] => {
+export const dedupeAdjacentHistoryMessages = (
+  messages: Message[],
+): Message[] => {
   const deduped: Message[] = [];
   let previousSignature: string | null = null;
   let previousTimestampMs: number | null = null;
@@ -520,17 +536,19 @@ export const hydrateSessionDetailMessages = (
         if (partType === "tool_response") {
           if (!part.id || typeof part.id !== "string") continue;
           const toolName = resolveHistoryToolName(part.id, historyToolNameById);
-          const rawOutputText = typeof part.output === "string" ? part.output : "";
+          const rawOutputText =
+            typeof part.output === "string" ? part.output : "";
           const rawErrorText = typeof part.error === "string" ? part.error : "";
-          const normalizedOutput =
-            extractLimeToolMetadataBlock(rawOutputText);
-          const normalizedError =
-            extractLimeToolMetadataBlock(rawErrorText);
+          const normalizedOutput = extractLimeToolMetadataBlock(rawOutputText);
+          const normalizedError = extractLimeToolMetadataBlock(rawErrorText);
           const normalizedResult = {
             success: part.success !== false,
             output: normalizedOutput.text,
             error: normalizedError.text || undefined,
-            images: normalizeToolResultImages(part.images, normalizedOutput.text),
+            images: normalizeToolResultImages(
+              part.images,
+              normalizedOutput.text,
+            ),
             metadata: normalizeToolResultMetadata(
               part.metadata,
               rawOutputText,

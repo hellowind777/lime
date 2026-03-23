@@ -1,42 +1,36 @@
-## Lime v0.94.0
+## Lime v0.95.0
 
 ### ✨ 主要更新
 
-- **微信 Claw 接入打通并进入可用形态**：基于微信 Gateway 补齐扫码登录、等待登录、账号持久化、默认模型同步、账号清理与运行状态查询能力，设置页可直接生成本地二维码、等待扫码结果并在成功后自动启动网关
-- **Team Workbench 与图片工作台合流**：输入区新增 `@配图` 内建命令，主工作台补齐图片生成、编辑、变体的画布视图、输出流转和继续追问链路，围绕团队协作场景进一步统一消息区与右侧工作区
-- **高风险模型进入“稳妥模式”**：新增 Team/Provider 两层运行时并发治理，对 Zhipu/GLM 一类高风险模型改用顺序排队并显式展示等待提示，优先降低并发下直接失败的概率
-- **渠道日志与运行态诊断增强**：渠道设置页新增 Tail 视图、过滤预设、正则筛选、复制与清空操作，内存日志与持久化日志会合并去重，便于排查渠道联调问题
-- **图片模型路由与资源流转继续收口**：增强图片 Provider 识别、模型筛选与兼容性判断，补齐资源保存、输出复用和工作台跟随式操作，减少图片任务在多 Provider 场景下的手工切换成本
+- **Agent 线程可靠性面板上线**：会话线程新增 pending request、active incident、最近 outcome 与排队 turn 的统一读模型，前端可直接展示“卡在哪里、为什么卡、下一步怎么恢复”
+- **恢复动作从诊断面板直达执行**：支持在线中断当前 turn、恢复线程、重放待处理请求、提升排队 turn，减少遇到等待确认、工具失败或队列阻塞时的手工排障成本
+- **Agent 工作区继续收口**：`AgentChatWorkspace` 大体量逻辑拆分到共享 contract、命令解析/执行层与多个面板组件，消息列表、决策面板、提及面板、队列面板与工作台布局的职责更清晰
+- **Codex slash command 基础接入**：新增 `/compact`、`/clear`、`/new`、`/review`、`/init`、`/diff`、`/status`、`/model`、`/help` 等命令目录与格式化/执行链路，为后续命令扩展提供统一入口
+- **项目热力图与治理图再生成能力补齐**：新增仓库热力图脚本、治理图谱脚本和操作文档，可直接生成热点模块与治理候选报告，方便后续收口 legacy/compat 路径
 
 ### ⚠️ 兼容性说明
 
-- Zhipu/GLM 相关模型在高峰时会按顺序进入执行窗口，属于稳定性优先的行为调整，团队任务的并发体感会与此前不同
-- 微信渠道启用后依赖扫码登录结果、远端网关地址与 CDN 地址保持一致；迁移旧配置时建议重新核对默认账号和默认模型绑定
-- 渠道日志面板现在同时读取内存日志与持久化日志；若手动清空日志，会同步删除当前诊断数据且不可恢复
+- Agent 线程可靠性依赖新的本地数据库表 `agent_turn_outcomes` 与 `agent_thread_incidents`；升级后首次打开相关会话会自动补齐表结构
+- 线程恢复与 pending request 诊断依赖新的 Aster 线程读模型；如果本地还在用 `setup:local-aster` 覆盖，请确认联调仓库已同步到 `aster-rust v0.21.0`
+- release workflow 仍由 `v*` tag 触发，`RELEASE_NOTES.md` 会直接作为 GitHub Release 正文；只推 `main` 不会自动出包
 
 ### 🔗 依赖同步
 
-- 渠道设置页新增 `qrcode` / `@types/qrcode` 用于微信扫码登录展示
-- `lime-gateway` 补充 `aes`、`ecb`、`base64`、`dirs`、`hex`、`md5`、`rand`、`rusqlite` 等依赖，为微信渠道与网关运行时能力提供支持
-- 应用版本同步提升到 `v0.94.0`，覆盖 `package.json`、Tauri 配置与 Rust workspace 版本入口
+- `aster-core` / `aster-models` 远程 tag 固定到 `v0.21.0`
+- 应用版本同步提升到 `v0.95.0`，覆盖 `package.json`、Tauri 配置与 Rust workspace/package 入口
 
 ### 🧪 测试
 
-- 发布前执行：`cd src-tauri && cargo test`
-- 发布前执行：`cd src-tauri && cargo fmt --all`
-- 发布前执行：`cd src-tauri && cargo clippy`
+- 发布前执行：`cargo fmt --all --manifest-path src-tauri/Cargo.toml`
+- 发布前执行：`cargo test --manifest-path src-tauri/Cargo.toml`
+- 发布前执行：`cargo clippy --manifest-path src-tauri/Cargo.toml`
 - 发布前执行：`npm run lint`
 
 ### 📝 文档
 
+- 补充 `docs/aiprompts/project-heatmap.md`，明确仓库热力图、治理图与 legacy-report 的配套使用方式
 - 发布说明随 `RELEASE_NOTES.md` 更新，供 GitHub Release 工作流直接读取
-
-### 📦 Windows 下载说明
-
-- `Lime_*_x64-offline-setup.exe`：推荐优先使用，内置 WebView2 离线安装器，安装更完整
-- `Lime_*_x64-online-setup.exe`：体积更小，适合网络稳定且可访问微软下载源的环境
-- 如果在线安装失败，请改用离线安装包
 
 ---
 
-**完整变更**: v0.93.0...v0.94.0
+**完整变更**: v0.94.0...v0.95.0

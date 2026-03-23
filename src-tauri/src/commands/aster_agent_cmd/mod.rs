@@ -70,10 +70,7 @@ use aster::sandbox::{
     detect_best_sandbox, execute_in_sandbox, ResourceLimits, SandboxConfig as ProcessSandboxConfig,
 };
 use aster::session::extension_data::{ExtensionData, ExtensionState};
-use aster::session::{
-    list_subagent_child_sessions, require_shared_thread_runtime_store,
-    resolve_subagent_session_metadata, SessionManager, SessionType, SubagentSessionMetadata,
-};
+use aster::session::{SessionType, SubagentSessionMetadata};
 use aster::tools::task_output_tool::TaskOutputInput;
 use aster::tools::{
     BashTool, KillShellTool, PermissionBehavior, PermissionCheckResult, TaskManager,
@@ -93,19 +90,21 @@ use lime_agent::request_tool_policy::{
 use lime_agent::{
     acquire_provider_runtime_permit, acquire_team_runtime_permit,
     build_subagent_customization_prompt, builtin_profile_descriptor_by_id,
-    builtin_team_preset_descriptor_by_id, builtin_team_preset_label_by_id, is_virtual_memory_path,
-    list_subagent_cascade_session_ids, load_subagent_runtime_status,
+    builtin_team_preset_descriptor_by_id, builtin_team_preset_label_by_id, create_subagent_session,
+    is_virtual_memory_path, list_child_subagent_sessions, list_subagent_cascade_session_ids,
+    list_subagent_status_scope_session_ids, load_subagent_runtime_status,
     merge_system_prompt_with_runtime_agents, message_suggests_news_expansion,
-    normalize_team_runtime_provider_group, preview_provider_runtime_wait_snapshot,
-    preview_team_runtime_wait_snapshot, read_subagent_control_state,
-    release_provider_runtime_permit, release_team_runtime_permit,
+    normalize_team_runtime_provider_group, persist_compaction_session_metrics_update,
+    persist_session_extension_data, preview_provider_runtime_wait_snapshot,
+    preview_team_runtime_wait_snapshot, read_session, read_subagent_control_state,
+    release_provider_runtime_permit, release_team_runtime_permit, replace_session_conversation,
     resolve_provider_runtime_parallel_budget, resolve_virtual_memory_path,
     snapshot_provider_runtime_lease, snapshot_team_runtime_session, summarize_builtin_skill,
-    virtual_memory_relative_path, write_subagent_control_state, ProviderContinuationCapability,
-    ProviderContinuationCapable, ProviderContinuationState, ProviderRuntimeGovernorSnapshot,
-    RuntimeProjectionSnapshot, SessionStateSnapshot, SubagentControlState,
-    SubagentCustomizationState, SubagentRuntimeStatus, SubagentRuntimeStatusKind,
-    SubagentSkillPromptBlock, SubagentSkillSummary, TauriRuntimeStatus,
+    virtual_memory_relative_path, write_subagent_control_state, CompactionSessionMetricsUpdate,
+    ProviderContinuationCapability, ProviderContinuationCapable, ProviderContinuationState,
+    ProviderRuntimeGovernorSnapshot, RuntimeProjectionSnapshot, SessionStateSnapshot,
+    SubagentControlState, SubagentCustomizationState, SubagentRuntimeStatus,
+    SubagentRuntimeStatusKind, SubagentSkillPromptBlock, SubagentSkillSummary, TauriRuntimeStatus,
     TeamRuntimeGovernorSnapshot, TurnInputEnvelopeBuilder, TurnPromptAugmentationStageKind,
     TurnProviderRoutingSnapshot, TurnRequestToolPolicySnapshot, TurnState, TurnSystemPromptSource,
     DURABLE_MEMORY_VIRTUAL_ROOT,
@@ -297,22 +296,27 @@ pub(crate) use browser_assist::{
 };
 #[allow(unused_imports)]
 pub(crate) use command_api::{
-    agent_runtime_close_subagent, agent_runtime_create_session, agent_runtime_get_session,
-    agent_runtime_get_tool_inventory, agent_runtime_interrupt_turn, agent_runtime_list_sessions,
-    agent_runtime_promote_queued_turn, agent_runtime_remove_queued_turn,
-    agent_runtime_resume_subagent, agent_runtime_send_subagent_input, agent_runtime_spawn_subagent,
+    agent_runtime_close_subagent, agent_runtime_compact_session, agent_runtime_create_session,
+    agent_runtime_get_session, agent_runtime_get_thread_read, agent_runtime_get_tool_inventory,
+    agent_runtime_interrupt_turn, agent_runtime_list_sessions, agent_runtime_promote_queued_turn,
+    agent_runtime_remove_queued_turn, agent_runtime_replay_request, agent_runtime_resume_subagent,
+    agent_runtime_resume_thread, agent_runtime_send_subagent_input, agent_runtime_spawn_subagent,
     agent_runtime_submit_turn, agent_runtime_update_session, agent_runtime_wait_subagents,
     aster_agent_configure_from_pool, aster_agent_configure_provider, aster_agent_init,
     aster_agent_reset, aster_agent_status,
 };
 pub(crate) use dto::{
-    AgentRuntimeActionType, AgentRuntimeCloseSubagentRequest, AgentRuntimeCloseSubagentResponse,
-    AgentRuntimeInterruptTurnRequest, AgentRuntimePromoteQueuedTurnRequest,
-    AgentRuntimeRemoveQueuedTurnRequest, AgentRuntimeRespondActionRequest,
-    AgentRuntimeResumeSubagentRequest, AgentRuntimeResumeSubagentResponse,
+    build_incidents, build_last_outcome, build_pending_requests, AgentRuntimeActionType,
+    AgentRuntimeCloseSubagentRequest, AgentRuntimeCloseSubagentResponse,
+    AgentRuntimeCompactSessionRequest, AgentRuntimeIncidentView, AgentRuntimeInterruptTurnRequest,
+    AgentRuntimeOutcomeView, AgentRuntimePromoteQueuedTurnRequest,
+    AgentRuntimeRemoveQueuedTurnRequest, AgentRuntimeReplayRequestRequest,
+    AgentRuntimeReplayedActionRequiredView, AgentRuntimeRequestView,
+    AgentRuntimeRespondActionRequest, AgentRuntimeResumeSubagentRequest,
+    AgentRuntimeResumeSubagentResponse, AgentRuntimeResumeThreadRequest,
     AgentRuntimeSendSubagentInputRequest, AgentRuntimeSendSubagentInputResponse,
     AgentRuntimeSessionDetail, AgentRuntimeSpawnSubagentRequest, AgentRuntimeSpawnSubagentResponse,
-    AgentRuntimeSubmitTurnRequest, AgentRuntimeToolInventoryRequest,
+    AgentRuntimeSubmitTurnRequest, AgentRuntimeThreadReadModel, AgentRuntimeToolInventoryRequest,
     AgentRuntimeUpdateSessionRequest, AgentRuntimeWaitSubagentsRequest,
     AgentRuntimeWaitSubagentsResponse, AsterAgentStatus, AsterChatRequest, AutoContinuePayload,
     ConfigureFromPoolRequest, ConfigureProviderRequest,

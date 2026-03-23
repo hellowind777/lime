@@ -190,6 +190,13 @@ export interface AgentThreadWarningItem extends AgentThreadItemBase {
   code?: string;
 }
 
+export interface AgentThreadContextCompactionItem extends AgentThreadItemBase {
+  type: "context_compaction";
+  stage: "started" | "completed" | string;
+  trigger?: string;
+  detail?: string;
+}
+
 export interface AgentThreadErrorItem extends AgentThreadItemBase {
   type: "error";
   message: string;
@@ -213,6 +220,7 @@ export type AgentThreadItem =
   | AgentThreadFileArtifactItem
   | AgentThreadSubagentActivityItem
   | AgentThreadWarningItem
+  | AgentThreadContextCompactionItem
   | AgentThreadErrorItem
   | AgentThreadTurnSummaryItem;
 

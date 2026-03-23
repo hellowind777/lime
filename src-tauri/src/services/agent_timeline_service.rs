@@ -171,6 +171,40 @@ impl AgentTimelineRecorder {
                 self.persist_and_emit_item(app, event_name, item)?;
             }
             TauriAgentEvent::ActionRequired { .. } => {}
+            TauriAgentEvent::ContextCompactionStarted {
+                item_id,
+                trigger,
+                detail,
+            } => {
+                let item = self.build_item(
+                    item_id.clone(),
+                    AgentThreadItemStatus::InProgress,
+                    None,
+                    AgentThreadItemPayload::ContextCompaction {
+                        stage: "started".to_string(),
+                        trigger: Some(trigger.clone()),
+                        detail: detail.clone(),
+                    },
+                );
+                self.persist_and_emit_item(app, event_name, item)?;
+            }
+            TauriAgentEvent::ContextCompactionCompleted {
+                item_id,
+                trigger,
+                detail,
+            } => {
+                let item = self.build_item(
+                    item_id.clone(),
+                    AgentThreadItemStatus::Completed,
+                    Some(Utc::now().to_rfc3339()),
+                    AgentThreadItemPayload::ContextCompaction {
+                        stage: "completed".to_string(),
+                        trigger: Some(trigger.clone()),
+                        detail: detail.clone(),
+                    },
+                );
+                self.persist_and_emit_item(app, event_name, item)?;
+            }
             TauriAgentEvent::Warning { code, message } => {
                 let item = self.build_item(
                     format!("warning:{}:{}", self.turn_id, self.sequence_counter + 1),

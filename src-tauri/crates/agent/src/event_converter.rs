@@ -604,6 +604,24 @@ pub enum TauriAgentEvent {
     #[serde(rename = "context_trace")]
     ContextTrace { steps: Vec<TauriContextTraceStep> },
 
+    /// 上下文压缩开始
+    #[serde(rename = "context_compaction_started")]
+    ContextCompactionStarted {
+        item_id: String,
+        trigger: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+
+    /// 上下文压缩完成
+    #[serde(rename = "context_compaction_completed")]
+    ContextCompactionCompleted {
+        item_id: String,
+        trigger: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+
     /// 当前回合运行态摘要
     #[serde(rename = "runtime_status")]
     RuntimeStatus { status: TauriRuntimeStatus },
@@ -822,12 +840,7 @@ pub fn convert_agent_event(event: AgentEvent) -> Vec<TauriAgentEvent> {
         AgentEvent::ModelChange { model, mode } => {
             vec![TauriAgentEvent::ModelChange { model, mode }]
         }
-        AgentEvent::HistoryReplaced(_conversation) => vec![TauriAgentEvent::ContextTrace {
-            steps: vec![TauriContextTraceStep {
-                stage: "context_management".to_string(),
-                detail: "会话历史已自动压缩，以继续当前对话。".to_string(),
-            }],
-        }],
+        AgentEvent::HistoryReplaced(_conversation) => vec![],
         AgentEvent::ContextTrace { steps } => vec![TauriAgentEvent::ContextTrace {
             steps: steps
                 .into_iter()
@@ -836,6 +849,28 @@ pub fn convert_agent_event(event: AgentEvent) -> Vec<TauriAgentEvent> {
                     detail: step.detail,
                 })
                 .collect(),
+        }],
+        AgentEvent::ContextCompactionStarted {
+            item_id,
+            trigger,
+            detail,
+        } => vec![TauriAgentEvent::ContextCompactionStarted {
+            item_id,
+            trigger,
+            detail,
+        }],
+        AgentEvent::ContextCompactionCompleted {
+            item_id,
+            trigger,
+            detail,
+        } => vec![TauriAgentEvent::ContextCompactionCompleted {
+            item_id,
+            trigger,
+            detail,
+        }],
+        AgentEvent::ContextCompactionWarning { message } => vec![TauriAgentEvent::Warning {
+            code: Some("context_compaction_accuracy".to_string()),
+            message,
         }],
     }
 }
@@ -1439,18 +1474,67 @@ mod tests {
     }
 
     #[test]
-    fn test_convert_history_replaced_to_context_management_trace() {
+    fn test_convert_history_replaced_returns_empty_for_runtime_projection() {
         let event = AgentEvent::HistoryReplaced(aster::conversation::Conversation::empty());
 
         let events = convert_agent_event(event);
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            TauriAgentEvent::ContextTrace { steps } => {
-                assert_eq!(steps.len(), 1);
-                assert_eq!(steps[0].stage, "context_management");
-                assert!(steps[0].detail.contains("自动压缩"));
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn test_convert_context_compaction_lifecycle_events() {
+        let started_events = convert_agent_event(AgentEvent::ContextCompactionStarted {
+            item_id: "compact-1".to_string(),
+            trigger: "manual".to_string(),
+            detail: Some("压缩最近 8 轮历史".to_string()),
+        });
+        assert_eq!(started_events.len(), 1);
+        match &started_events[0] {
+            TauriAgentEvent::ContextCompactionStarted {
+                item_id,
+                trigger,
+                detail,
+            } => {
+                assert_eq!(item_id, "compact-1");
+                assert_eq!(trigger, "manual");
+                assert_eq!(detail.as_deref(), Some("压缩最近 8 轮历史"));
             }
-            _ => panic!("Expected ContextTrace event"),
+            other => panic!("Expected ContextCompactionStarted event, got {other:?}"),
+        }
+
+        let completed_events = convert_agent_event(AgentEvent::ContextCompactionCompleted {
+            item_id: "compact-1".to_string(),
+            trigger: "auto".to_string(),
+            detail: Some("已生成摘要并替换旧上下文".to_string()),
+        });
+        assert_eq!(completed_events.len(), 1);
+        match &completed_events[0] {
+            TauriAgentEvent::ContextCompactionCompleted {
+                item_id,
+                trigger,
+                detail,
+            } => {
+                assert_eq!(item_id, "compact-1");
+                assert_eq!(trigger, "auto");
+                assert_eq!(detail.as_deref(), Some("已生成摘要并替换旧上下文"));
+            }
+            other => panic!("Expected ContextCompactionCompleted event, got {other:?}"),
+        }
+
+        let warning_events = convert_agent_event(AgentEvent::ContextCompactionWarning {
+            message: "长对话和多次上下文压缩会降低模型准确性；如果后续结果开始漂移，建议新开会话。"
+                .to_string(),
+        });
+        assert_eq!(warning_events.len(), 1);
+        match &warning_events[0] {
+            TauriAgentEvent::Warning { code, message } => {
+                assert_eq!(code.as_deref(), Some("context_compaction_accuracy"));
+                assert_eq!(
+                    message,
+                    "长对话和多次上下文压缩会降低模型准确性；如果后续结果开始漂移，建议新开会话。"
+                );
+            }
+            other => panic!("Expected Warning event, got {other:?}"),
         }
     }
 

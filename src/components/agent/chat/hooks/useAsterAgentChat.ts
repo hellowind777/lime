@@ -6,9 +6,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import type { AsterExecutionStrategy } from "@/lib/api/agentRuntime";
 import { parseStreamEvent } from "@/lib/api/agentStream";
 import { logAgentDebug } from "@/lib/agentDebug";
+import {
+  executeCodexSlashCommand,
+  parseCodexSlashCommand,
+} from "../commands";
 import {
   defaultAgentRuntimeAdapter,
   type AgentRuntimeAdapter,
@@ -94,6 +99,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     messages: session.messages,
     setMessages: session.setMessages,
     setThreadItems: session.setThreadItems,
+    refreshSessionReadModel: session.refreshSessionReadModel,
   });
 
   resetPendingActionsRef.current = () => tools.setPendingActions([]);
@@ -120,9 +126,118 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     queuedTurns: session.queuedTurns,
     setQueuedTurns: session.setQueuedTurns,
     setPendingActions: tools.setPendingActions,
+    refreshSessionReadModel: session.refreshSessionReadModel,
   });
+  const setChatMessages = session.setMessages;
+  const clearChatMessages = session.clearMessages;
+  const createFreshSession = session.createFreshSession;
+  const currentTurnId = session.currentTurnId;
+  const activeSessionId = session.sessionId;
+  const queuedTurnsCount = session.queuedTurns.length;
+  const rawSendMessage = stream.sendMessage;
+  const compactCurrentSession = stream.compactSession;
+  const isStreamSending = stream.isSending;
 
-  sendMessageRef.current = stream.sendMessage;
+  const appendLocalAssistantMessage = useCallback(
+    (content: string) => {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content,
+          timestamp: new Date(),
+        },
+      ]);
+    },
+    [setChatMessages],
+  );
+
+  const sendMessage = useCallback<SendMessageFn>(
+    async (
+      content,
+      images,
+      webSearch,
+      thinking,
+      skipUserMessage,
+      executionStrategyOverride,
+      modelOverride,
+      autoContinue,
+      sendOptions,
+    ) => {
+      if (!skipUserMessage) {
+        const parsedCodexCommand = parseCodexSlashCommand(content);
+        if (parsedCodexCommand) {
+          const effectiveModel =
+            modelOverride?.trim() || context.modelRef.current;
+          const effectiveExecutionStrategy =
+            executionStrategyOverride || context.executionStrategy;
+          const handled = await executeCodexSlashCommand({
+            command: parsedCodexCommand,
+            statusSnapshot: {
+              sessionId: activeSessionId,
+              currentTurnId,
+              providerType: context.providerTypeRef.current,
+              model: effectiveModel,
+              executionStrategy: effectiveExecutionStrategy,
+              queuedTurnsCount,
+              isSending: isStreamSending,
+            },
+            sendPrompt: async (prompt) => {
+              await rawSendMessage(
+                prompt,
+                images,
+                webSearch,
+                thinking,
+                skipUserMessage,
+                executionStrategyOverride,
+                modelOverride,
+                autoContinue,
+                sendOptions,
+              );
+            },
+            compactSession: compactCurrentSession,
+            clearMessages: clearChatMessages,
+            createFreshSession,
+            appendAssistantMessage: appendLocalAssistantMessage,
+            notifyInfo: (message) => toast.info(message),
+            notifySuccess: (message) => toast.success(message),
+          });
+          if (handled) {
+            return;
+          }
+        }
+      }
+
+      await rawSendMessage(
+        content,
+        images,
+        webSearch,
+        thinking,
+        skipUserMessage,
+        executionStrategyOverride,
+        modelOverride,
+        autoContinue,
+        sendOptions,
+      );
+    },
+    [
+      appendLocalAssistantMessage,
+      activeSessionId,
+      clearChatMessages,
+      compactCurrentSession,
+      context.executionStrategy,
+      context.modelRef,
+      context.providerTypeRef,
+      createFreshSession,
+      currentTurnId,
+      isStreamSending,
+      queuedTurnsCount,
+      rawSendMessage,
+    ],
+  );
+
+  sendMessageRef.current = sendMessage;
   topicsUpdaterRef.current = session.updateTopicExecutionStrategy;
 
   const hasActiveTopic = Boolean(
@@ -406,9 +521,13 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     childSubagentSessions: session.childSubagentSessions,
     subagentParentContext: session.subagentParentContext,
     queuedTurns: session.queuedTurns,
+    threadRead: session.threadRead,
     isSending: stream.isSending,
-    sendMessage: stream.sendMessage,
+    sendMessage,
+    compactSession: stream.compactSession,
     stopSending: stream.stopSending,
+    resumeThread: stream.resumeThread,
+    replayPendingAction: tools.replayPendingAction,
     promoteQueuedTurn: stream.promoteQueuedTurn,
     removeQueuedTurn: stream.removeQueuedTurn,
     clearMessages: session.clearMessages,
@@ -428,6 +547,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     updateTopicSnapshot: session.updateTopicSnapshot,
 
     pendingActions: tools.pendingActions,
+    submittedActionsInFlight: tools.submittedActionsInFlight,
     confirmAction: tools.confirmAction,
 
     workspacePathMissing: context.workspacePathMissing,

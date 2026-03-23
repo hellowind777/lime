@@ -1,8 +1,8 @@
 //! Lime 运行时 AGENTS 指令加载
 //!
 //! 仅用于 Lime 应用运行时会话：
-//! - 全局：`~/.lime/AGENTS.md`
-//! - 工作区：`<workspace>/.lime/AGENTS.md`
+//! - 全局：`app_paths::resolve_user_memory_path()`
+//! - 工作区：当前 workspace 的 runtime AGENTS 文件
 
 use lime_core::app_paths;
 use std::collections::HashSet;
@@ -33,7 +33,7 @@ pub fn merge_system_prompt_with_runtime_agents(
 
 pub fn build_runtime_agents_prompt(working_dir: Option<&Path>) -> Option<String> {
     let global_path = app_paths::best_effort_user_memory_path();
-    let workspace_path = working_dir.map(|dir| dir.join(".lime").join("AGENTS.md"));
+    let workspace_path = working_dir.map(app_paths::resolve_workspace_runtime_agents_path);
     build_runtime_agents_prompt_with_paths(Some(global_path.as_path()), workspace_path.as_deref())
 }
 
@@ -99,7 +99,8 @@ mod tests {
     fn should_build_prompt_with_global_and_workspace_layers() {
         let tmp = TempDir::new().expect("create temp dir");
         let global_path = tmp.path().join("global").join("AGENTS.md");
-        let workspace_path = tmp.path().join("workspace").join(".lime").join("AGENTS.md");
+        let workspace_root = tmp.path().join("workspace");
+        let workspace_path = app_paths::resolve_workspace_runtime_agents_path(&workspace_root);
         fs::create_dir_all(global_path.parent().expect("global parent")).expect("create global");
         fs::create_dir_all(workspace_path.parent().expect("workspace parent"))
             .expect("create workspace");

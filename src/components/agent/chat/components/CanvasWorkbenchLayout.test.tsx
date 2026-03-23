@@ -465,7 +465,7 @@ describe("CanvasWorkbenchLayout", () => {
     expect(container.textContent).toContain("该文件为二进制内容");
   });
 
-  it("启用 teamView 且没有默认预览时应优先展示 Team Workbench", async () => {
+  it("启用 teamView 且没有默认预览时应优先展示团队预览，并默认收起右侧工作台", async () => {
     const renderPreview = vi.fn((_target: CanvasWorkbenchPreviewTarget) => (
       <div data-testid="fallback-preview">fallback</div>
     ));
@@ -507,10 +507,13 @@ describe("CanvasWorkbenchLayout", () => {
     await flushEffects();
 
     expect(container.querySelector('[data-testid="team-preview"]')).not.toBeNull();
-    expect(container.querySelector('[data-testid="team-panel"]')).not.toBeNull();
-    expect(container.textContent).toContain("多 agent 实时协作");
+    expect(container.querySelector('[data-testid="team-panel"]')).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="展开画布工作台"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("团队");
     expect(renderTeamPreview).toHaveBeenCalled();
-    expect(renderTeamPanel).toHaveBeenCalled();
+    expect(renderTeamPanel).not.toHaveBeenCalled();
     expect(renderPreview).not.toHaveBeenCalled();
   });
 
@@ -774,6 +777,49 @@ describe("CanvasWorkbenchLayout", () => {
     expect(previewRegion).not.toBeNull();
     expect(previewRegion?.className).toContain("flex-1");
     expect(previewRegion?.className).toContain("h-full");
+  });
+
+  it("Team 固定工作台在桌面宽度下应保持右侧侧栏，并默认以闭合态展示", async () => {
+    const container = mount({
+      artifacts: [],
+      canvasState: null,
+      taskFiles: [],
+      workspaceRoot: "/workspace",
+      workspaceUnavailable: false,
+      defaultPreview: null,
+      loadFilePreview: vi.fn(async (path: string) => ({
+        path,
+        content: "README 内容",
+        isBinary: false,
+        size: 12,
+        error: null,
+      })),
+      onOpenPath: vi.fn(async () => undefined),
+      onRevealPath: vi.fn(async () => undefined),
+      renderPreview: () => <div data-testid="fallback-preview">fallback</div>,
+      teamView: {
+        enabled: true,
+        title: "Team Workbench",
+        subtitle: "多成员实时协作",
+        preferFixedPanel: true,
+        renderPreview: () => <div data-testid="team-preview">team-preview</div>,
+        renderPanel: () => <div data-testid="team-panel">team-panel</div>,
+      },
+    });
+
+    await flushEffects();
+    await resizeWorkbench(900);
+
+    expect(
+      container
+        .querySelector('[data-testid="canvas-workbench-layout"]')
+        ?.getAttribute("data-panel-placement"),
+    ).toBe("side");
+    expect(container.querySelector('[data-testid="canvas-workbench-trigger"]')).toBeNull();
+    expect(container.querySelector('[data-testid="team-panel"]')).toBeNull();
+    expect(
+      container.querySelector('button[aria-label="展开画布工作台"]'),
+    ).not.toBeNull();
   });
 
   it("窄屏右侧抽屉工作台应支持拖拽调整宽度", async () => {

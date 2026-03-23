@@ -1,13 +1,18 @@
 import { safeListen } from "@/lib/dev-bridge";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
+  compactAgentRuntimeSession,
   createAgentRuntimeSession,
   deleteAgentRuntimeSession,
+  type AgentRuntimeReplayedActionRequiredView,
   getAgentRuntimeSession,
+  getAgentRuntimeThreadRead,
   initAsterAgent,
   interruptAgentRuntimeTurn,
   promoteAgentRuntimeQueuedTurn,
+  replayAgentRuntimeRequest,
   removeAgentRuntimeQueuedTurn,
+  resumeAgentRuntimeThread,
   listAgentRuntimeSessions,
   respondAgentRuntimeAction,
   submitAgentRuntimeTurn,
@@ -62,6 +67,11 @@ export interface AgentRuntimeAdapter {
   ): Promise<string>;
   listSessions(): Promise<AsterSessionInfo[]>;
   getSession(sessionId: string): Promise<AsterSessionDetail>;
+  getSessionReadModel(sessionId: string): Promise<AsterSessionDetail["thread_read"]>;
+  replayRequest(
+    sessionId: string,
+    requestId: string,
+  ): Promise<AgentRuntimeReplayedActionRequiredView | null>;
   renameSession(sessionId: string, title: string): Promise<void>;
   deleteSession(sessionId: string): Promise<void>;
   setSessionExecutionStrategy(
@@ -69,7 +79,9 @@ export interface AgentRuntimeAdapter {
     executionStrategy: AsterExecutionStrategy,
   ): Promise<void>;
   submitTurn(request: AgentRuntimeTurnRequest): Promise<void>;
+  compactSession(sessionId: string, eventName: string): Promise<void>;
   interruptTurn(sessionId: string): Promise<boolean>;
+  resumeThread(sessionId: string): Promise<boolean>;
   promoteQueuedTurn(sessionId: string, queuedTurnId: string): Promise<boolean>;
   removeQueuedTurn(sessionId: string, queuedTurnId: string): Promise<boolean>;
   respondToAction(request: AgentRuntimeActionResponse): Promise<void>;
@@ -95,6 +107,15 @@ export const defaultAgentRuntimeAdapter: AgentRuntimeAdapter = {
   },
   async getSession(sessionId) {
     return getAgentRuntimeSession(sessionId);
+  },
+  async getSessionReadModel(sessionId) {
+    return getAgentRuntimeThreadRead(sessionId);
+  },
+  async replayRequest(sessionId, requestId) {
+    return replayAgentRuntimeRequest({
+      session_id: sessionId,
+      request_id: requestId,
+    });
   },
   async renameSession(sessionId, title) {
     await updateAgentRuntimeSession({
@@ -132,8 +153,19 @@ export const defaultAgentRuntimeAdapter: AgentRuntimeAdapter = {
       queued_turn_id: request.queuedTurnId,
     });
   },
+  async compactSession(sessionId, eventName) {
+    await compactAgentRuntimeSession({
+      session_id: sessionId,
+      event_name: eventName,
+    });
+  },
   async interruptTurn(sessionId) {
     return interruptAgentRuntimeTurn({
+      session_id: sessionId,
+    });
+  },
+  async resumeThread(sessionId) {
+    return resumeAgentRuntimeThread({
       session_id: sessionId,
     });
   },

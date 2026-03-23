@@ -24,6 +24,7 @@ pub mod novel_service;
 pub mod openclaw_service;
 pub mod runtime_agents_template_service;
 pub mod sysinfo_service;
+pub mod thread_reliability_projection_service;
 pub mod update_check_service;
 pub mod update_window;
 pub mod web_search_prompt_service;

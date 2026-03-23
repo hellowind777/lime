@@ -14,8 +14,12 @@ import type {
   ActionRequired,
   AgentThreadItem,
 } from "../types";
-import { resolveActionPromptKey } from "./agentChatCoreUtils";
+import {
+  normalizeActionQuestions,
+  resolveActionPromptKey,
+} from "./agentChatCoreUtils";
 import type { AgentRuntimeAdapter } from "./agentRuntimeAdapter";
+import { upsertAssistantActionRequest } from "./agentChatActionState";
 import { markThreadActionItemSubmitted } from "./agentThreadState";
 import { buildActionRequestSubmissionContext } from "../utils/actionRequestA2UI";
 import { buildActionResumeRuntimeStatus } from "../utils/agentRuntimeStatus";
@@ -28,6 +32,16 @@ interface UseAgentToolsOptions {
   messages: Message[];
   setMessages: Dispatch<SetStateAction<Message[]>>;
   setThreadItems: Dispatch<SetStateAction<AgentThreadItem[]>>;
+  refreshSessionReadModel: (targetSessionId?: string) => Promise<boolean>;
+}
+
+function upsertSubmittedAction(
+  actions: ActionRequired[],
+  nextAction: ActionRequired,
+): ActionRequired[] {
+  const next = actions.filter((item) => item.requestId !== nextAction.requestId);
+  next.push(nextAction);
+  return next;
 }
 
 export function useAgentTools(options: UseAgentToolsOptions) {
@@ -39,9 +53,13 @@ export function useAgentTools(options: UseAgentToolsOptions) {
     messages,
     setMessages,
     setThreadItems,
+    refreshSessionReadModel,
   } = options;
 
   const [pendingActions, setPendingActions] = useState<ActionRequired[]>([]);
+  const [submittedActionsInFlight, setSubmittedActionsInFlight] = useState<
+    ActionRequired[]
+  >([]);
   const warnedKeysRef = useRef<Set<string>>(new Set());
   const queuedFallbackResponsesRef = useRef<
     Map<
@@ -54,6 +72,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
 
   const confirmAction = useCallback(
     async (response: ConfirmResponse) => {
+      const acknowledgedRequestIds = new Set<string>([response.requestId]);
       try {
         const pendingAction = pendingActions.find(
           (item) => item.requestId === response.requestId,
@@ -73,7 +92,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
         let submittedUserData: unknown = response.userData;
         let effectiveRequestId = response.requestId;
         let metadataAction = persistedAction;
-        const acknowledgedRequestIds = new Set<string>([response.requestId]);
+        let refreshSessionId: string | null = null;
 
         if (actionType === "elicitation" || actionType === "ask_user") {
           const activeSessionId =
@@ -81,6 +100,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
           if (!activeSessionId) {
             throw new Error("缺少会话 ID，无法提交 elicitation 响应");
           }
+          refreshSessionId = activeSessionId;
 
           let userData: unknown;
           if (!response.confirmed) {
@@ -175,6 +195,20 @@ export function useAgentTools(options: UseAgentToolsOptions) {
             }
           }
 
+          setSubmittedActionsInFlight((prev) =>
+            upsertSubmittedAction(prev, {
+              ...(metadataAction || persistedAction || {
+                requestId: effectiveRequestId,
+                actionType,
+              }),
+              requestId: effectiveRequestId,
+              actionType,
+              status: "submitted",
+              submittedResponse: normalizedResponse || undefined,
+              submittedUserData,
+            }),
+          );
+
           const submissionContext = metadataAction
             ? buildActionRequestSubmissionContext(metadataAction, userData)
             : null;
@@ -195,8 +229,22 @@ export function useAgentTools(options: UseAgentToolsOptions) {
             actionScope: metadataAction?.scope,
           });
         } else {
+          refreshSessionId = sessionIdRef.current;
+          setSubmittedActionsInFlight((prev) =>
+            upsertSubmittedAction(prev, {
+              ...(metadataAction || persistedAction || {
+                requestId: effectiveRequestId,
+                actionType,
+              }),
+              requestId: effectiveRequestId,
+              actionType,
+              status: "submitted",
+              submittedResponse: normalizedResponse || undefined,
+              submittedUserData,
+            }),
+          );
           await runtime.respondToAction({
-            sessionId: sessionIdRef.current || "",
+            sessionId: refreshSessionId || "",
             requestId: effectiveRequestId,
             actionType,
             confirmed: response.confirmed,
@@ -263,7 +311,16 @@ export function useAgentTools(options: UseAgentToolsOptions) {
             submittedUserData,
           ),
         );
+        if (refreshSessionId) {
+          await refreshSessionReadModel(refreshSessionId);
+        }
+        setSubmittedActionsInFlight((prev) =>
+          prev.filter((item) => !acknowledgedRequestIds.has(item.requestId)),
+        );
       } catch (error) {
+        setSubmittedActionsInFlight((prev) =>
+          prev.filter((item) => !acknowledgedRequestIds.has(item.requestId)),
+        );
         console.error("[AsterChat] 确认失败:", error);
         toast.error(
           error instanceof Error && error.message
@@ -278,6 +335,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
       messages,
       pendingActions,
       runtime,
+      refreshSessionReadModel,
       sessionIdRef,
       setMessages,
       setThreadItems,
@@ -322,11 +380,91 @@ export function useAgentTools(options: UseAgentToolsOptions) {
     [confirmAction],
   );
 
+  const replayPendingAction = useCallback(
+    async (requestId: string, assistantMessageId: string) => {
+      const activeSessionId = sessionIdRef.current;
+      if (!activeSessionId) {
+        toast.error("当前没有激活会话，无法重新拉起请求");
+        return false;
+      }
+
+      try {
+        const replayedAction = await runtime.replayRequest(
+          activeSessionId,
+          requestId,
+        );
+
+        if (!replayedAction) {
+          await refreshSessionReadModel(activeSessionId);
+          toast.error("待处理请求已不存在，无法重新拉起");
+          return false;
+        }
+
+        const actionData: ActionRequired = {
+          requestId: replayedAction.request_id,
+          actionType: replayedAction.action_type,
+          toolName: replayedAction.tool_name,
+          arguments:
+            replayedAction.arguments &&
+            typeof replayedAction.arguments === "object" &&
+            !Array.isArray(replayedAction.arguments)
+              ? replayedAction.arguments
+              : undefined,
+          prompt: replayedAction.prompt,
+          questions: normalizeActionQuestions(
+            replayedAction.questions,
+            replayedAction.prompt,
+          ),
+          requestedSchema: replayedAction.requested_schema,
+          scope: replayedAction.scope
+            ? {
+                sessionId: replayedAction.scope.session_id,
+                threadId: replayedAction.scope.thread_id,
+                turnId: replayedAction.scope.turn_id,
+              }
+            : undefined,
+          status: "pending",
+          isFallback: false,
+        };
+
+        upsertAssistantActionRequest({
+          assistantMsgId: assistantMessageId,
+          actionData,
+          replaceByPrompt:
+            actionData.actionType === "ask_user" ||
+            actionData.actionType === "elicitation",
+          setPendingActions,
+          setMessages,
+        });
+        setSubmittedActionsInFlight((prev) =>
+          prev.filter(
+            (item) =>
+              item.requestId !== requestId &&
+              item.requestId !== actionData.requestId,
+          ),
+        );
+        toast.success("已重新拉起待处理请求");
+        return true;
+      } catch (error) {
+        console.error("[AsterChat] 重新拉起请求失败:", error);
+        toast.error(
+          error instanceof Error && error.message
+            ? error.message
+            : "重新拉起请求失败",
+        );
+        return false;
+      }
+    },
+    [refreshSessionReadModel, runtime, sessionIdRef, setMessages],
+  );
+
   return {
     pendingActions,
+    submittedActionsInFlight,
     setPendingActions,
     warnedKeysRef,
     confirmAction,
     handlePermissionResponse,
+    replayPendingAction,
   };
 }

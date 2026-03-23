@@ -110,6 +110,7 @@ interface UseAgentStreamOptions {
   queuedTurns: QueuedTurnSnapshot[];
   setQueuedTurns: Dispatch<SetStateAction<QueuedTurnSnapshot[]>>;
   setPendingActions: Dispatch<SetStateAction<ActionRequired[]>>;
+  refreshSessionReadModel: (targetSessionId?: string) => Promise<boolean>;
 }
 
 export function useAgentStream(options: UseAgentStreamOptions) {
@@ -135,6 +136,7 @@ export function useAgentStream(options: UseAgentStreamOptions) {
     queuedTurns,
     setQueuedTurns,
     setPendingActions,
+    refreshSessionReadModel,
   } = options;
 
   const [isSending, setIsSending] = useState(false);
@@ -796,8 +798,12 @@ export function useAgentStream(options: UseAgentStreamOptions) {
     }
 
     setActiveStream(null);
+    if (activeSessionId) {
+      await refreshSessionReadModel(activeSessionId);
+    }
     toast.info("已停止生成");
   }, [
+    refreshSessionReadModel,
     runtime,
     sessionIdRef,
     setActiveStream,
@@ -830,15 +836,137 @@ export function useAgentStream(options: UseAgentStreamOptions) {
               })),
           );
         }
+        await refreshSessionReadModel(activeSessionId);
         return removed;
       } catch (error) {
         console.error("[AsterChat] 移除排队消息失败:", error);
+        await refreshSessionReadModel(activeSessionId);
         toast.error("移除排队消息失败");
         return false;
       }
     },
-    [runtime, sessionIdRef, setQueuedTurns],
+    [refreshSessionReadModel, runtime, sessionIdRef, setQueuedTurns],
   );
+
+  const compactSession = useCallback(async () => {
+    const activeSessionId = sessionIdRef.current;
+    if (!activeSessionId) {
+      toast.error("当前没有可压缩的会话");
+      return;
+    }
+
+    if (activeStreamRef.current) {
+      toast.info("当前仍有任务执行中，稍后再压缩上下文");
+      return;
+    }
+
+    const eventName = `agent_context_compaction_${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2)}`;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const disposeListener = () => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+      listenerMapRef.current.delete(eventName);
+    };
+
+    setActiveStream({
+      assistantMsgId: `context_compaction:${crypto.randomUUID()}`,
+      eventName,
+      sessionId: activeSessionId,
+    });
+
+    try {
+      unlisten = await runtime.listenToTurnEvents(eventName, (event) => {
+        const data = parseStreamEvent(event.payload);
+        if (!data) {
+          return;
+        }
+
+        switch (data.type) {
+          case "turn_started":
+            setCurrentTurnId(data.turn.id);
+            setThreadTurns((prev) => upsertThreadTurnState(prev, data.turn));
+            break;
+          case "item_started":
+          case "item_updated":
+          case "item_completed":
+            setThreadItems((prev) => upsertThreadItemState(prev, data.item));
+            break;
+          case "turn_completed":
+          case "turn_failed":
+            setCurrentTurnId(data.turn.id);
+            setThreadTurns((prev) => upsertThreadTurnState(prev, data.turn));
+            break;
+          case "warning": {
+            const warningKey = `${activeSessionId}:${data.code || data.message}`;
+            if (!warnedKeysRef.current.has(warningKey)) {
+              warnedKeysRef.current.add(warningKey);
+              toast.warning(data.message);
+            }
+            break;
+          }
+          case "error":
+            toast.error(`压缩上下文失败: ${data.message}`);
+            clearActiveStreamIfMatch(eventName);
+            disposeListener();
+            break;
+          case "final_done":
+            clearActiveStreamIfMatch(eventName);
+            disposeListener();
+            break;
+          default:
+            break;
+        }
+      });
+
+      listenerMapRef.current.set(eventName, unlisten);
+      await runtime.compactSession(activeSessionId, eventName);
+    } catch (error) {
+      console.error("[AsterChat] 压缩上下文失败:", error);
+      clearActiveStreamIfMatch(eventName);
+      disposeListener();
+      toast.error(
+        error instanceof Error ? error.message : "压缩上下文失败，请稍后重试",
+      );
+    }
+  }, [
+    clearActiveStreamIfMatch,
+    runtime,
+    sessionIdRef,
+    setActiveStream,
+    setCurrentTurnId,
+    setThreadItems,
+    setThreadTurns,
+    warnedKeysRef,
+  ]);
+
+  const resumeThread = useCallback(async () => {
+    const activeSessionId = sessionIdRef.current;
+    if (!activeSessionId) {
+      return false;
+    }
+
+    try {
+      const resumed = await runtime.resumeThread(activeSessionId);
+      await refreshSessionReadModel(activeSessionId);
+      if (resumed) {
+        toast.info("正在恢复排队执行");
+      }
+      return resumed;
+    } catch (error) {
+      console.error("[AsterChat] 恢复线程执行失败:", error);
+      await refreshSessionReadModel(activeSessionId);
+      toast.error("恢复线程执行失败");
+      return false;
+    }
+  }, [refreshSessionReadModel, runtime, sessionIdRef]);
 
   const promoteQueuedTurn = useCallback(
     async (queuedTurnId: string) => {
@@ -861,9 +989,8 @@ export function useAgentStream(options: UseAgentStreamOptions) {
           activeSessionId,
           queuedTurnId,
         );
+        await refreshSessionReadModel(activeSessionId);
         if (!promoted) {
-          const detail = await runtime.getSession(activeSessionId);
-          setQueuedTurns(detail.queued_turns ?? []);
           return false;
         }
 
@@ -871,23 +998,20 @@ export function useAgentStream(options: UseAgentStreamOptions) {
         return true;
       } catch (error) {
         console.error("[AsterChat] 立即执行排队消息失败:", error);
+        await refreshSessionReadModel(activeSessionId);
         toast.error("立即执行排队消息失败");
-        try {
-          const detail = await runtime.getSession(activeSessionId);
-          setQueuedTurns(detail.queued_turns ?? []);
-        } catch (refreshError) {
-          console.error("[AsterChat] 刷新排队状态失败:", refreshError);
-        }
         return false;
       }
     },
-    [runtime, sessionIdRef, setQueuedTurns],
+    [refreshSessionReadModel, runtime, sessionIdRef, setQueuedTurns],
   );
 
   return {
     isSending,
     sendMessage,
+    compactSession,
     stopSending,
+    resumeThread,
     promoteQueuedTurn,
     removeQueuedTurn,
   };

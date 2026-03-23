@@ -157,6 +157,42 @@ describe("agentStream.parseStreamEvent", () => {
     });
   });
 
+  it("应保留 context_compaction item 类型", () => {
+    expect(
+      parseStreamEvent({
+        type: "item_started",
+        item: {
+          id: "context-compaction-1",
+          thread_id: "thread-1",
+          turn_id: "turn-1",
+          sequence: 3,
+          status: "in_progress",
+          started_at: "2026-03-23T00:00:00Z",
+          updated_at: "2026-03-23T00:00:00Z",
+          type: "context_compaction",
+          stage: "started",
+          trigger: "manual",
+          detail: "Compacting session history",
+        },
+      }),
+    ).toEqual({
+      type: "item_started",
+      item: {
+        id: "context-compaction-1",
+        thread_id: "thread-1",
+        turn_id: "turn-1",
+        sequence: 3,
+        status: "in_progress",
+        started_at: "2026-03-23T00:00:00Z",
+        updated_at: "2026-03-23T00:00:00Z",
+        type: "context_compaction",
+        stage: "started",
+        trigger: "manual",
+        detail: "Compacting session history",
+      },
+    });
+  });
+
   it("应兼容 camelCase 的队列快照字段", () => {
     expect(
       parseStreamEvent({

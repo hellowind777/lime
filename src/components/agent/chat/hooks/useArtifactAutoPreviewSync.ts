@@ -6,6 +6,7 @@ import type {
 } from "../types";
 import {
   buildArtifactFromWrite,
+  resolveArtifactFilePath,
   resolveArtifactWritePhase,
 } from "../utils/messageArtifacts";
 
@@ -28,16 +29,6 @@ const EMPTY_COMPLETE_SYNC_TIMEOUT_MS = 8000;
 const PREVIEW_TEXT_MAX_CHARS = 480;
 const LATEST_CHUNK_MAX_CHARS = 240;
 
-function resolveArtifactFilePath(artifact: Pick<Artifact, "title" | "meta">): string {
-  if (typeof artifact.meta.filePath === "string" && artifact.meta.filePath.trim()) {
-    return artifact.meta.filePath.trim();
-  }
-  if (typeof artifact.meta.filename === "string" && artifact.meta.filename.trim()) {
-    return artifact.meta.filename.trim();
-  }
-  return artifact.title;
-}
-
 function normalizePreviewText(value: string, maxChars: number): string {
   const trimmed = value.trim();
   if (trimmed.length <= maxChars) {
@@ -48,6 +39,10 @@ function normalizePreviewText(value: string, maxChars: number): string {
 
 export function shouldAutoSyncArtifactPreview(artifact: Artifact | null): boolean {
   if (!artifact) {
+    return false;
+  }
+
+  if (artifact.type === "browser_assist") {
     return false;
   }
 

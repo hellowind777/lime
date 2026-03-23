@@ -1,7 +1,7 @@
 /**
  * 角色与技能引用组件
  *
- * 在输入框中检测 @ 符号，显示角色和技能列表供选择
+ * 在输入框中检测 @ 或 / 符号，显示角色、技能与命令列表供选择
  */
 
 import React, {
@@ -13,14 +13,11 @@ import React, {
   useRef,
   useCallback,
 } from "react";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { createPortal } from "react-dom";
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
 import { toast } from "sonner";
+import { filterCodexSlashCommands, type CodexSlashCommandDefinition } from "../../../commands";
 import { scheduleIdleModulePreload } from "./scheduleIdleModulePreload";
 import {
   filterBuiltinCommands,
@@ -55,6 +52,67 @@ interface CharacterMentionProps {
   onNavigateToSettings?: () => void;
 }
 
+type TriggerMode = "mention" | "slash";
+
+interface ActiveTrigger {
+  mode: TriggerMode;
+  triggerIndex: number;
+  query: string;
+}
+
+function resolveMentionTrigger(textBeforeCursor: string): ActiveTrigger | null {
+  const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+  if (lastAtIndex === -1) {
+    return null;
+  }
+
+  const textAfterAt = textBeforeCursor.slice(lastAtIndex + 1);
+  if (textAfterAt.includes(" ") || textAfterAt.includes("\n")) {
+    return null;
+  }
+
+  return {
+    mode: "mention",
+    triggerIndex: lastAtIndex,
+    query: textAfterAt,
+  };
+}
+
+function resolveSlashTrigger(textBeforeCursor: string): ActiveTrigger | null {
+  const slashMatch = textBeforeCursor.match(/(?:^|[\s\n])(\/[^\s\n/]*)$/);
+  if (!slashMatch) {
+    return null;
+  }
+
+  const slashToken = slashMatch[1];
+  const triggerIndex = textBeforeCursor.length - slashToken.length;
+  return {
+    mode: "slash",
+    triggerIndex,
+    query: slashToken.slice(1),
+  };
+}
+
+function resolveActiveTrigger(
+  value: string,
+  cursorPos: number,
+): ActiveTrigger | null {
+  const textBeforeCursor = value.slice(0, cursorPos);
+  const mentionTrigger = resolveMentionTrigger(textBeforeCursor);
+  const slashTrigger = resolveSlashTrigger(textBeforeCursor);
+
+  if (!mentionTrigger) {
+    return slashTrigger;
+  }
+  if (!slashTrigger) {
+    return mentionTrigger;
+  }
+
+  return mentionTrigger.triggerIndex > slashTrigger.triggerIndex
+    ? mentionTrigger
+    : slashTrigger;
+}
+
 export function CharacterMention({
   characters,
   skills = [],
@@ -68,13 +126,16 @@ export function CharacterMention({
 }: CharacterMentionProps) {
   const [showMentions, setShowMentions] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
+  const [triggerMode, setTriggerMode] = useState<TriggerMode>("mention");
   const [panelAnchor, setPanelAnchor] = useState({
     top: 0,
     left: 0,
     width: 320,
+    bottom: 0,
+    maxHeight: 320,
   });
-  const popoverRef = useRef<HTMLDivElement>(null);
   const commandRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return scheduleIdleModulePreload(() => {
@@ -86,8 +147,11 @@ export function CharacterMention({
     () => filterBuiltinCommands(mentionQuery),
     [mentionQuery],
   );
+  const filteredSlashCommands = useMemo(
+    () => filterCodexSlashCommands(mentionQuery),
+    [mentionQuery],
+  );
 
-  // 过滤角色列表
   const filteredCharacters = useMemo(() => {
     if (!mentionQuery) return characters;
     const query = mentionQuery.toLowerCase();
@@ -98,7 +162,6 @@ export function CharacterMention({
     );
   }, [characters, mentionQuery]);
 
-  // 过滤已安装技能
   const installedSkills = useMemo(() => {
     const installed = skills.filter((s) => s.installed);
     if (!mentionQuery) return installed;
@@ -111,7 +174,6 @@ export function CharacterMention({
     );
   }, [skills, mentionQuery]);
 
-  // 过滤未安装技能
   const availableSkills = useMemo(() => {
     const available = skills.filter((s) => !s.installed);
     if (!mentionQuery) return available;
@@ -132,38 +194,43 @@ export function CharacterMention({
     }
 
     const cursorPos = textarea.selectionStart ?? textarea.value.length;
-    const textBeforeCursor = textarea.value.slice(0, cursorPos);
-    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
-
-    if (lastAtIndex !== -1) {
-      const textAfterAt = textBeforeCursor.slice(lastAtIndex + 1);
-      if (!textAfterAt.includes(" ") && !textAfterAt.includes("\n")) {
-        setMentionQuery(textAfterAt);
-        setShowMentions(true);
-
-        const rect = textarea.getBoundingClientRect();
-        const viewportWidth =
-          window.innerWidth || document.documentElement.clientWidth || 1280;
-        const panelWidth = Math.min(Math.max(rect.width - 24, 320), 420);
-        const centerLeft = rect.left + rect.width / 2;
-        const safeHalfWidth = panelWidth / 2 + 16;
-        const left = Math.min(
-          Math.max(centerLeft, safeHalfWidth),
-          viewportWidth - safeHalfWidth,
-        );
-        setPanelAnchor({
-          top: rect.top,
-          left,
-          width: panelWidth,
-        });
-        return;
-      }
+    const activeTrigger = resolveActiveTrigger(textarea.value, cursorPos);
+    if (!activeTrigger) {
+      setShowMentions(false);
+      return;
     }
 
-    setShowMentions(false);
+    setMentionQuery(activeTrigger.query);
+    setTriggerMode(activeTrigger.mode);
+    setShowMentions(true);
+
+    const rect = textarea.getBoundingClientRect();
+    const viewportWidth =
+      window.innerWidth || document.documentElement.clientWidth || 1280;
+    const viewportHeight =
+      window.innerHeight || document.documentElement.clientHeight || 800;
+    const screenPadding = viewportWidth < 640 ? 12 : 16;
+    const panelGap = viewportWidth < 640 ? 6 : 8;
+    const panelWidth = Math.min(
+      rect.width,
+      Math.max(viewportWidth - screenPadding * 2, 240),
+    );
+    const left = Math.min(
+      Math.max(rect.left, screenPadding),
+      viewportWidth - panelWidth - screenPadding,
+    );
+    setPanelAnchor({
+      top: rect.top,
+      left,
+      width: panelWidth,
+      bottom: Math.max(viewportHeight - rect.top + panelGap, panelGap),
+      maxHeight: Math.max(
+        Math.min(rect.top - panelGap - screenPadding, 420),
+        120,
+      ),
+    });
   }, [inputRef]);
 
-  // 检测 @ 符号
   useEffect(() => {
     const textarea = inputRef.current;
     if (!textarea) return;
@@ -199,73 +266,113 @@ export function CharacterMention({
     };
   }, [showMentions, updateMentionState]);
 
-  // 插入角色引用
+  useEffect(() => {
+    if (!showMentions) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      if (panelRef.current?.contains(target) || inputRef.current?.contains(target)) {
+        return;
+      }
+      setShowMentions(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [inputRef, showMentions]);
+
   const handleSelectCharacter = (character: Character) => {
     const textarea = inputRef.current;
     if (!textarea) return;
 
-    const cursorPos = textarea.selectionStart;
-    const textBeforeCursor = value.slice(0, cursorPos);
-    const textAfterCursor = value.slice(cursorPos);
-    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+    const currentValue = textarea.value || value;
+    const cursorPos = textarea.selectionStart ?? currentValue.length;
+    const textAfterCursor = currentValue.slice(cursorPos);
+    const activeTrigger = resolveActiveTrigger(currentValue, cursorPos);
+    if (!activeTrigger || activeTrigger.mode !== "mention") {
+      return;
+    }
 
-    // 替换 @ 和后面的查询文本为角色名
     const newValue =
-      value.slice(0, lastAtIndex) + `@${character.name} ` + textAfterCursor;
+      currentValue.slice(0, activeTrigger.triggerIndex) +
+      `@${character.name} ` +
+      textAfterCursor;
 
     onChange(newValue);
     setShowMentions(false);
-
-    // 通知父组件
     onSelectCharacter?.(character);
 
-    // 恢复焦点并设置光标位置
     setTimeout(() => {
       textarea.focus();
-      const newCursorPos = lastAtIndex + character.name.length + 2; // @ + 名字 + 空格
+      const newCursorPos = activeTrigger.triggerIndex + character.name.length + 2;
       textarea.setSelectionRange(newCursorPos, newCursorPos);
     }, 0);
   };
 
-  // 选择已安装技能 → 通知父组件，清除 @ 查询文本
   const handleSelectInstalledSkill = (skill: Skill) => {
     const textarea = inputRef.current;
     if (!textarea) return;
 
-    const cursorPos = textarea.selectionStart;
-    const textBeforeCursor = value.slice(0, cursorPos);
-    const textAfterCursor = value.slice(cursorPos);
-    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+    const currentValue = textarea.value || value;
+    const cursorPos = textarea.selectionStart ?? currentValue.length;
+    const textAfterCursor = currentValue.slice(cursorPos);
+    const activeTrigger = resolveActiveTrigger(currentValue, cursorPos);
+    if (!activeTrigger) {
+      return;
+    }
 
-    // Inputbar 场景：由父组件接管 activeSkill（显示 SkillBadge）
+    if (activeTrigger.mode === "slash") {
+      const newValue =
+        currentValue.slice(0, activeTrigger.triggerIndex) +
+        `/${skill.key} ` +
+        textAfterCursor;
+      onChange(newValue);
+      setShowMentions(false);
+
+      setTimeout(() => {
+        textarea.focus();
+        const newCursorPos = activeTrigger.triggerIndex + skill.key.length + 2;
+        textarea.setSelectionRange(newCursorPos, newCursorPos);
+      }, 0);
+      return;
+    }
+
     if (onSelectSkill) {
-      const newValue = value.slice(0, lastAtIndex) + textAfterCursor;
+      const newValue =
+        currentValue.slice(0, activeTrigger.triggerIndex) + textAfterCursor;
       onChange(newValue.trimEnd() === "" ? "" : newValue);
       setShowMentions(false);
       onSelectSkill(skill);
 
       setTimeout(() => {
         textarea.focus();
-        const newCursorPos = Math.max(0, lastAtIndex);
+        const newCursorPos = Math.max(0, activeTrigger.triggerIndex);
         textarea.setSelectionRange(newCursorPos, newCursorPos);
       }, 0);
       return;
     }
 
-    // 通用场景（例如 EmptyState）：直接回填为 /skillKey，保证可见且可发送
     const newValue =
-      value.slice(0, lastAtIndex) + `/${skill.key} ` + textAfterCursor;
+      currentValue.slice(0, activeTrigger.triggerIndex) +
+      `/${skill.key} ` +
+      textAfterCursor;
     onChange(newValue);
     setShowMentions(false);
 
     setTimeout(() => {
       textarea.focus();
-      const newCursorPos = lastAtIndex + skill.key.length + 2;
+      const newCursorPos = activeTrigger.triggerIndex + skill.key.length + 2;
       textarea.setSelectionRange(newCursorPos, newCursorPos);
     }, 0);
   };
 
-  // 选择未安装技能 → toast 提示
   const handleSelectAvailableSkill = (skill: Skill) => {
     setShowMentions(false);
 
@@ -283,38 +390,72 @@ export function CharacterMention({
     const textarea = inputRef.current;
     if (!textarea) return;
 
-    const cursorPos = textarea.selectionStart;
-    const textBeforeCursor = value.slice(0, cursorPos);
-    const textAfterCursor = value.slice(cursorPos);
-    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+    const currentValue = textarea.value || value;
+    const cursorPos = textarea.selectionStart ?? currentValue.length;
+    const textAfterCursor = currentValue.slice(cursorPos);
+    const activeTrigger = resolveActiveTrigger(currentValue, cursorPos);
+    if (!activeTrigger || activeTrigger.mode !== "mention") {
+      return;
+    }
 
     if (onSelectBuiltinCommand) {
-      const newValue = value.slice(0, lastAtIndex) + textAfterCursor;
+      const newValue =
+        currentValue.slice(0, activeTrigger.triggerIndex) + textAfterCursor;
       onChange(newValue.trimEnd() === "" ? "" : newValue);
       setShowMentions(false);
       onSelectBuiltinCommand(command);
 
       setTimeout(() => {
         textarea.focus();
-        const newCursorPos = Math.max(0, lastAtIndex);
+        const newCursorPos = Math.max(0, activeTrigger.triggerIndex);
         textarea.setSelectionRange(newCursorPos, newCursorPos);
       }, 0);
       return;
     }
 
     const newValue =
-      value.slice(0, lastAtIndex) + `${command.commandPrefix} ` + textAfterCursor;
+      currentValue.slice(0, activeTrigger.triggerIndex) +
+      `${command.commandPrefix} ` +
+      textAfterCursor;
     onChange(newValue);
     setShowMentions(false);
 
     setTimeout(() => {
       textarea.focus();
-      const newCursorPos = lastAtIndex + command.commandPrefix.length + 1;
+      const newCursorPos =
+        activeTrigger.triggerIndex + command.commandPrefix.length + 1;
       textarea.setSelectionRange(newCursorPos, newCursorPos);
     }, 0);
   };
 
-  // 处理键盘事件：Escape 关闭，ArrowUp/ArrowDown/Enter 转发给 cmdk
+  const handleSelectSlashCommand = (command: CodexSlashCommandDefinition) => {
+    const textarea = inputRef.current;
+    if (!textarea) return;
+
+    const currentValue = textarea.value || value;
+    const cursorPos = textarea.selectionStart ?? currentValue.length;
+    const textAfterCursor = currentValue.slice(cursorPos);
+    const activeTrigger = resolveActiveTrigger(currentValue, cursorPos);
+    if (!activeTrigger || activeTrigger.mode !== "slash") {
+      return;
+    }
+
+    const newValue =
+      currentValue.slice(0, activeTrigger.triggerIndex) +
+      `${command.commandPrefix} ` +
+      textAfterCursor;
+
+    onChange(newValue);
+    setShowMentions(false);
+
+    setTimeout(() => {
+      textarea.focus();
+      const newCursorPos =
+        activeTrigger.triggerIndex + command.commandPrefix.length + 1;
+      textarea.setSelectionRange(newCursorPos, newCursorPos);
+    }, 0);
+  };
+
   useEffect(() => {
     const textarea = inputRef.current;
     if (!textarea || !showMentions) return;
@@ -334,7 +475,6 @@ export function CharacterMention({
         return;
       }
 
-      // 转发 ArrowUp/ArrowDown/Enter 给 cmdk Command 根元素
       if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
@@ -357,67 +497,72 @@ export function CharacterMention({
 
   if (!showMentions) return null;
 
-  return (
-    <Popover open={showMentions} onOpenChange={setShowMentions}>
-      <PopoverTrigger asChild>
-        <div
-          data-testid="mention-anchor"
-          style={{
-            position: "fixed",
-            top: panelAnchor.top,
-            left: panelAnchor.left,
-            width: 1,
-            height: 1,
-            pointerEvents: "none",
-          }}
-        />
-      </PopoverTrigger>
-      <PopoverContent
-        ref={popoverRef}
-        data-testid="mention-popover-content"
-        className="p-0 bg-background border shadow-md"
-        align="center"
-        side="top"
-        sideOffset={12}
-        avoidCollisions={false}
+  return createPortal(
+    <>
+      <div
+        data-testid="mention-anchor"
         style={{
+          position: "fixed",
+          top: panelAnchor.top,
+          left: panelAnchor.left,
+          width: panelAnchor.width,
+          height: 1,
+          pointerEvents: "none",
+          zIndex: 79,
+        }}
+      />
+      <div
+        ref={panelRef}
+        data-testid="mention-popover-content"
+        data-side="top"
+        data-align="start"
+        data-avoid-collisions="false"
+        className="border bg-background p-0 shadow-md"
+        style={{
+          position: "fixed",
+          left: panelAnchor.left,
+          bottom: panelAnchor.bottom,
           width: `${panelAnchor.width}px`,
           maxWidth: "calc(100vw - 24px)",
+          maxHeight: `${panelAnchor.maxHeight}px`,
+          overflow: "auto",
+          zIndex: 80,
         }}
-        onOpenAutoFocus={(e) => e.preventDefault()}
       >
-        {showMentions ? (
-          <Suspense
-            fallback={
-              <div className="px-3 py-6 text-center text-sm text-muted-foreground">
-                加载中...
-              </div>
+        <Suspense
+          fallback={
+            <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+              加载中...
+            </div>
+          }
+        >
+          <CharacterMentionPanel
+            mode={triggerMode}
+            mentionQuery={mentionQuery}
+            builtinCommands={filteredBuiltinCommands}
+            slashCommands={filteredSlashCommands}
+            filteredCharacters={filteredCharacters}
+            installedSkills={installedSkills}
+            availableSkills={availableSkills}
+            commandRef={commandRef}
+            onQueryChange={setMentionQuery}
+            onSelectBuiltinCommand={handleSelectBuiltinCommand}
+            onSelectSlashCommand={handleSelectSlashCommand}
+            onSelectCharacter={handleSelectCharacter}
+            onSelectInstalledSkill={handleSelectInstalledSkill}
+            onSelectAvailableSkill={handleSelectAvailableSkill}
+            onNavigateToSettings={
+              onNavigateToSettings
+                ? () => {
+                    setShowMentions(false);
+                    onNavigateToSettings();
+                  }
+                : undefined
             }
-          >
-            <CharacterMentionPanel
-              mentionQuery={mentionQuery}
-              builtinCommands={filteredBuiltinCommands}
-              filteredCharacters={filteredCharacters}
-              installedSkills={installedSkills}
-              availableSkills={availableSkills}
-              commandRef={commandRef}
-              onQueryChange={setMentionQuery}
-              onSelectBuiltinCommand={handleSelectBuiltinCommand}
-              onSelectCharacter={handleSelectCharacter}
-              onSelectInstalledSkill={handleSelectInstalledSkill}
-              onSelectAvailableSkill={handleSelectAvailableSkill}
-              onNavigateToSettings={
-                onNavigateToSettings
-                  ? () => {
-                      setShowMentions(false);
-                      onNavigateToSettings();
-                    }
-                  : undefined
-              }
-            />
-          </Suspense>
-        ) : null}
-      </PopoverContent>
-    </Popover>
+          />
+        </Suspense>
+      </div>
+    </>,
+    document.body,
   );
 }

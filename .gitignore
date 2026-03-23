@@ -78,3 +78,7 @@ lime.db
 
 .codex-*
 target-codex*
+
+tmp/
+
+governance/

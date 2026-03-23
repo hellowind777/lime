@@ -1,4 +1,5 @@
 use super::*;
+use lime_agent::restore_aster_runtime_queued_turns;
 
 const SUBAGENT_RUNTIME_EVENT_PREFIX: &str = "agent_subagent_stream";
 const SUBAGENT_STATUS_EVENT_PREFIX: &str = "agent_subagent_status";
@@ -338,38 +339,6 @@ fn should_emit_subagent_status_for_runtime_event(event: &TauriAgentEvent) -> boo
     )
 }
 
-async fn list_subagent_status_scope_session_ids(session_id: &str) -> Vec<String> {
-    let mut scope_ids = Vec::new();
-    let mut seen = HashSet::new();
-    let mut current_session_id = session_id.to_string();
-
-    while seen.insert(current_session_id.clone()) {
-        scope_ids.push(current_session_id.clone());
-
-        let session = match SessionManager::get_session(&current_session_id, false).await {
-            Ok(session) => session,
-            Err(error) => {
-                tracing::warn!(
-                    "[AsterAgent][Subagent] 解析 team 事件 scope 失败: session_id={}, error={}",
-                    current_session_id,
-                    error
-                );
-                break;
-            }
-        };
-        let Some(metadata) = resolve_subagent_session_metadata(&session.extension_data) else {
-            break;
-        };
-        let Some(parent_session_id) = normalize_optional_text(Some(metadata.parent_session_id))
-        else {
-            break;
-        };
-        current_session_id = parent_session_id;
-    }
-
-    scope_ids
-}
-
 pub(crate) async fn emit_subagent_status_changed_events(app: &AppHandle, session_id: &str) {
     let status = match load_subagent_runtime_status(session_id).await {
         Ok(status) => status,
@@ -454,9 +423,8 @@ fn normalize_wait_timeout_ms(timeout_ms: Option<i64>) -> Result<i64, String> {
 }
 
 async fn count_active_team_subagents(parent_session_id: &str) -> Result<usize, String> {
-    let child_sessions = list_subagent_child_sessions(parent_session_id)
-        .await
-        .map_err(|error| format!("读取 team child sessions 失败: {error}"))?;
+    let child_sessions =
+        list_child_subagent_sessions(parent_session_id, "读取 team child sessions 失败").await?;
     let mut active_count = 0usize;
 
     for child_session in child_sessions {
@@ -479,9 +447,7 @@ pub(crate) fn subagent_counts_toward_team_limit(status: SubagentRuntimeStatusKin
 }
 
 async fn enforce_team_spawn_limits(parent_session_id: &str) -> Result<(), String> {
-    let parent_session = SessionManager::get_session(parent_session_id, false)
-        .await
-        .map_err(|error| format!("读取父会话失败: {error}"))?;
+    let parent_session = read_session(parent_session_id, false, "读取父会话失败").await?;
 
     if parent_session.session_type == SessionType::SubAgent {
         return Err(
@@ -526,15 +492,9 @@ async fn restore_stashed_subagent_queue(
         return Ok(());
     }
 
-    let store = require_shared_thread_runtime_store()
-        .map_err(|error| format!("读取 shared runtime store 失败: {error}"))?;
-    for queued_turn in queued_turns {
-        store
-            .enqueue_turn(queued_turn)
-            .await
-            .map_err(|error| format!("恢复 subagent queued turn 失败: {error}"))?;
-    }
-    Ok(())
+    restore_aster_runtime_queued_turns(queued_turns)
+        .await
+        .map_err(|error| format!("恢复 subagent queued turn 失败: {error}"))
 }
 
 async fn inherit_subagent_provider(
@@ -543,9 +503,8 @@ async fn inherit_subagent_provider(
     child_session_id: &str,
     model_override: Option<&str>,
 ) -> Result<(), String> {
-    let parent_session = SessionManager::get_session(parent_session_id, false)
-        .await
-        .map_err(|error| format!("读取父会话 provider 信息失败: {error}"))?;
+    let parent_session =
+        read_session(parent_session_id, false, "读取父会话 provider 信息失败").await?;
     let parent_provider_selector = resolve_session_provider_selector(&parent_session)
         .or_else(|| normalize_optional_text(parent_session.provider_name.clone()));
 
@@ -599,9 +558,7 @@ async fn create_runtime_subagent_session(
         normalize_required_text(&request.parent_session_id, "parent_session_id")?;
     let message = normalize_required_text(&request.message, "message")?;
     enforce_team_spawn_limits(&parent_session_id).await?;
-    let parent_session = SessionManager::get_session(&parent_session_id, false)
-        .await
-        .map_err(|error| format!("读取父会话失败: {error}"))?;
+    let parent_session = read_session(&parent_session_id, false, "读取父会话失败").await?;
     let customization = build_subagent_customization_state(request)?;
     let system_prompt = build_subagent_customization_system_prompt(customization.as_ref())?;
     let profile_name = customization
@@ -609,7 +566,7 @@ async fn create_runtime_subagent_session(
         .and_then(|state| state.profile_name.as_deref());
     let role_hint = resolve_subagent_role_hint(request, customization.as_ref());
 
-    let session = SessionManager::create_session(
+    let session = create_subagent_session(
         parent_session.working_dir.clone(),
         build_subagent_session_name(
             &message,
@@ -619,10 +576,8 @@ async fn create_runtime_subagent_session(
                 .and_then(|state| state.blueprint_role_label.as_deref()),
             profile_name,
         ),
-        SessionType::SubAgent,
     )
-    .await
-    .map_err(|error| format!("创建 subagent session 失败: {error}"))?;
+    .await?;
 
     if let Some(parent_metadata) =
         AsterAgentWrapper::get_persisted_session_metadata_sync(&runtime.db, &parent_session_id)?
@@ -652,11 +607,12 @@ async fn create_runtime_subagent_session(
             .to_extension_data(&mut extension_data)
             .map_err(|error| format!("持久化 subagent customization 失败: {error}"))?;
     }
-    SessionManager::update_session(&session.id)
-        .extension_data(extension_data)
-        .apply()
-        .await
-        .map_err(|error| format!("写入 subagent session metadata 失败: {error}"))?;
+    persist_session_extension_data(
+        &session.id,
+        extension_data,
+        "写入 subagent session metadata",
+    )
+    .await?;
 
     inherit_subagent_provider(
         runtime,

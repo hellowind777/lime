@@ -632,6 +632,63 @@ pub fn create_tables(conn: &Connection) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
+    // Agent turn outcome 表
+    // 存储每个 turn 的稳定结果摘要，用于 operator-facing reliability 读模型
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_turn_outcomes (
+            turn_id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            outcome_type TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            primary_cause TEXT,
+            retryable INTEGER NOT NULL DEFAULT 0,
+            details_json TEXT,
+            ended_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_turn_outcomes_thread_ended
+         ON agent_turn_outcomes(thread_id, ended_at DESC)",
+        [],
+    )?;
+
+    // Agent thread incident 表
+    // 存储 thread 级当前活跃与已清理的 reliability incident
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS agent_thread_incidents (
+            id TEXT PRIMARY KEY,
+            thread_id TEXT NOT NULL,
+            turn_id TEXT,
+            item_id TEXT,
+            incident_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            status TEXT NOT NULL,
+            title TEXT NOT NULL,
+            details_json TEXT,
+            detected_at TEXT NOT NULL,
+            cleared_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_thread_incidents_thread_status_detected
+         ON agent_thread_incidents(thread_id, status, detected_at DESC)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_thread_incidents_turn_status
+         ON agent_thread_incidents(turn_id, status)",
+        [],
+    )?;
+
     // ============================================================================
     // Workspace 相关表
     // ============================================================================
@@ -1662,5 +1719,35 @@ mod tests {
         assert!(column_names.iter().any(|name| name == "enabled_codex"));
         assert!(column_names.iter().any(|name| name == "enabled_gemini"));
         assert!(column_names.iter().any(|name| name == "created_at"));
+    }
+
+    #[test]
+    fn should_create_reliability_projection_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        create_tables(&conn).expect("应成功创建 reliability projection 表");
+
+        let mut tables = conn
+            .prepare(
+                "SELECT name
+                 FROM sqlite_master
+                 WHERE type = 'table'
+                   AND name IN ('agent_turn_outcomes', 'agent_thread_incidents')
+                 ORDER BY name",
+            )
+            .unwrap();
+        let table_names = tables
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(
+            table_names,
+            vec![
+                "agent_thread_incidents".to_string(),
+                "agent_turn_outcomes".to_string(),
+            ]
+        );
     }
 }

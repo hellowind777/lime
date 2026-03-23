@@ -320,7 +320,7 @@ const EmptyStateEyebrow = styled.div`
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   color: #475569;
   font-size: 11px;
   font-weight: 700;
@@ -527,14 +527,11 @@ export function TeamWorkspaceDock({
     runtimeTeamState?.blueprint?.summary?.trim() ||
     selectedTeamSummary?.trim() ||
     null;
-  const [expanded, setExpanded] = useState(
-    () => placement === "inline" && hasRealTeamGraph,
-  );
+  const [expanded, setExpanded] = useState(false);
   const [userDismissedAutoExpand, setUserDismissedAutoExpand] = useState(false);
   const hasInitializedRef = useRef(false);
   const previousSessionIdRef = useRef<string | null>(currentSessionId ?? null);
-  const previousHasRealGraphRef = useRef(false);
-  const previousPlacementRef = useRef(placement);
+  const previousHasRealGraphRef = useRef(hasRealTeamGraph);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const [inlinePanelLayout, setInlinePanelLayout] =
     useState<InlinePanelLayout | null>(null);
@@ -678,12 +675,8 @@ export function TeamWorkspaceDock({
     const normalizedSessionId = currentSessionId ?? null;
 
     if (!hasInitializedRef.current) {
-      if (placement === "inline" && hasRealTeamGraph) {
-        setExpanded(true);
-      }
       previousSessionIdRef.current = normalizedSessionId;
       previousHasRealGraphRef.current = hasRealTeamGraph;
-      previousPlacementRef.current = placement;
       hasInitializedRef.current = true;
       return;
     }
@@ -691,8 +684,8 @@ export function TeamWorkspaceDock({
     if (previousSessionIdRef.current !== normalizedSessionId) {
       previousSessionIdRef.current = normalizedSessionId;
       previousHasRealGraphRef.current = hasRealTeamGraph;
-      previousPlacementRef.current = placement;
       setUserDismissedAutoExpand(false);
+      setExpanded(false);
       return;
     }
 
@@ -700,19 +693,6 @@ export function TeamWorkspaceDock({
       !previousHasRealGraphRef.current && hasRealTeamGraph;
     const graphCleared =
       previousHasRealGraphRef.current && !hasRealTeamGraph;
-
-    if (
-      previousPlacementRef.current !== placement &&
-      placement === "inline" &&
-      hasRealTeamGraph &&
-      !userDismissedAutoExpand
-    ) {
-      setExpanded(true);
-      previousSessionIdRef.current = normalizedSessionId;
-      previousHasRealGraphRef.current = hasRealTeamGraph;
-      previousPlacementRef.current = placement;
-      return;
-    }
 
     if (graphCleared) {
       setUserDismissedAutoExpand(false);
@@ -724,8 +704,7 @@ export function TeamWorkspaceDock({
 
     previousSessionIdRef.current = normalizedSessionId;
     previousHasRealGraphRef.current = hasRealTeamGraph;
-    previousPlacementRef.current = placement;
-  }, [currentSessionId, hasRealTeamGraph, placement, userDismissedAutoExpand]);
+  }, [currentSessionId, hasRealTeamGraph, userDismissedAutoExpand]);
 
   const updateInlinePanelLayout = useCallback(() => {
     if (

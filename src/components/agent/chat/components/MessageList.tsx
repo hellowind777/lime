@@ -40,12 +40,17 @@ import {
 } from "../utils/internalImagePlaceholder";
 import {
   Message,
+  type ActionRequired,
   type AgentThreadItem,
   type AgentThreadTurn,
   type WriteArtifactContext,
 } from "../types";
 import type { A2UIFormData } from "@/components/content-creator/a2ui/types";
 import type { ConfirmResponse } from "../types";
+import type {
+  AgentRuntimeThreadReadModel,
+  QueuedTurnSnapshot,
+} from "@/lib/api/agentRuntime";
 import { buildMessageTurnTimeline } from "../utils/threadTimelineView";
 import { buildMessageTurnGroups } from "../utils/messageTurnGrouping";
 import logoImg from "/logo.png";
@@ -55,6 +60,11 @@ interface MessageListProps {
   turns?: AgentThreadTurn[];
   threadItems?: AgentThreadItem[];
   currentTurnId?: string | null;
+  threadRead?: AgentRuntimeThreadReadModel | null;
+  pendingActions?: ActionRequired[];
+  submittedActionsInFlight?: ActionRequired[];
+  queuedTurns?: QueuedTurnSnapshot[];
+  isSending?: boolean;
   assistantLabel?: string;
   onDeleteMessage?: (id: string) => void;
   onEditMessage?: (id: string, content: string) => void;
@@ -88,6 +98,19 @@ interface MessageListProps {
   onCodeBlockClick?: (language: string, code: string) => void;
   /** 是否将待处理问答提升为输入区 A2UI 表单 */
   promoteActionRequestsToA2UI?: boolean;
+  /** 中断当前执行 */
+  onInterruptCurrentTurn?: () => void | Promise<void>;
+  /** 恢复当前线程排队执行 */
+  onResumeThread?: () => boolean | Promise<boolean>;
+  /** 重新拉起当前最重要的待处理请求 */
+  onReplayPendingRequest?: (
+    requestId: string,
+    assistantMessageId: string,
+  ) => boolean | Promise<boolean>;
+  /** 立即恢复下一条排队回合 */
+  onPromoteQueuedTurn?: (queuedTurnId: string) => boolean | Promise<boolean>;
+  /** 是否压缩左侧留白，适用于工作台右栏 */
+  compactLeadingSpacing?: boolean;
 }
 
 const MessageListInner: React.FC<MessageListProps> = ({
@@ -95,6 +118,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
   turns = [],
   threadItems = [],
   currentTurnId = null,
+  threadRead = null,
   assistantLabel = "Lime",
   onDeleteMessage,
   onEditMessage,
@@ -111,6 +135,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
   shouldCollapseCodeBlock,
   onCodeBlockClick,
   promoteActionRequestsToA2UI = false,
+  compactLeadingSpacing = false,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -284,7 +309,11 @@ const MessageListInner: React.FC<MessageListProps> = ({
     const showIdentity = options?.showIdentity ?? true;
 
     return (
-      <MessageWrapper key={msg.id} $isUser={msg.role === "user"}>
+      <MessageWrapper
+        key={msg.id}
+        $isUser={msg.role === "user"}
+        $compactLeadingSpacing={compactLeadingSpacing}
+      >
         <AvatarColumn>
           {msg.role === "user" ? (
             <AvatarCircle $isUser={true}>
@@ -415,6 +444,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
               <AgentThreadTimeline
                 turn={timeline.turn}
                 items={timeline.items}
+                threadRead={threadRead}
                 actionRequests={msg.actionRequests}
                 isCurrentTurn={timeline.turn.id === currentTurnId}
                 onFileClick={onFileClick}
@@ -555,7 +585,13 @@ const MessageListInner: React.FC<MessageListProps> = ({
 
   return (
     <MessageListContainer ref={containerRef}>
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col gap-4 pl-7 pr-4 py-3">
+      <div
+        className={
+          compactLeadingSpacing
+            ? "mx-auto flex w-full max-w-[1180px] flex-col gap-4 py-3 pl-2.5 pr-3"
+            : "mx-auto flex w-full max-w-[1180px] flex-col gap-4 py-3 pl-5 pr-4"
+        }
+      >
         {messageGroups.length === 0 && (
           <div className="flex flex-col items-center justify-center h-64 text-muted-foreground opacity-50">
             <img
@@ -596,7 +632,11 @@ const MessageListInner: React.FC<MessageListProps> = ({
               key={group.id}
               data-testid="message-turn-group"
               data-group-index={groupIndex + 1}
-              className="border-t border-slate-200/70 pl-3 pr-1 py-4 first:border-t-0 first:pt-0 dark:border-slate-800/70"
+              className={
+                compactLeadingSpacing
+                  ? "border-t border-slate-200/70 py-4 pl-0 pr-0 first:border-t-0 first:pt-0 dark:border-slate-800/70"
+                  : "border-t border-slate-200/70 py-4 pl-2 pr-1 first:border-t-0 first:pt-0 dark:border-slate-800/70"
+              }
             >
               <div
                 data-testid={`message-turn-group:${groupIndex + 1}:header`}

@@ -507,6 +507,71 @@ describe("MessageList", () => {
       (streamingNodes[1] as Node).compareDocumentPosition(timelineNodes[0] as Node) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(timelineNodes[0]?.previousElementSibling).toBe(streamingNodes[1]);
+    expect(
+      container.querySelector('[data-testid="agent-thread-reliability-panel"]'),
+    ).toBeNull();
+  });
+
+  it("应不再在消息区渲染 reliability panel，避免占用对话列表空间", () => {
+    const messages: Message[] = [
+      {
+        id: "msg-assistant-earlier",
+        role: "assistant",
+        content: "较早的中间反馈。",
+        timestamp: new Date("2026-03-15T09:00:05Z"),
+      },
+      {
+        id: "msg-assistant-latest",
+        role: "assistant",
+        content: "最新回合的输出。",
+        timestamp: new Date("2026-03-15T09:00:20Z"),
+      },
+    ];
+
+    const container = render(messages, {
+      currentTurnId: "turn-latest",
+      turns: [
+        {
+          id: "turn-latest",
+          thread_id: "thread-1",
+          prompt_text: "继续执行发布",
+          status: "running",
+          started_at: "2026-03-15T09:00:00Z",
+          created_at: "2026-03-15T09:00:00Z",
+          updated_at: "2026-03-15T09:00:06Z",
+        },
+      ],
+      threadItems: [
+        {
+          id: "item-latest",
+          thread_id: "thread-1",
+          turn_id: "turn-latest",
+          sequence: 1,
+          status: "completed",
+          started_at: "2026-03-15T09:00:01Z",
+          completed_at: "2026-03-15T09:00:02Z",
+          updated_at: "2026-03-15T09:00:02Z",
+          type: "plan",
+          text: "继续执行当前任务",
+        },
+      ],
+      pendingActions: [
+        {
+          requestId: "req-1",
+          actionType: "ask_user",
+          prompt: "请确认是否继续发布",
+          status: "pending",
+        },
+      ],
+    });
+
+    const timelineNodes = Array.from(
+      container.querySelectorAll('[data-testid="agent-thread-timeline"]'),
+    );
+
+    expect(
+      container.querySelector('[data-testid="agent-thread-reliability-panel"]'),
+    ).toBeNull();
+    expect(timelineNodes).toHaveLength(1);
   });
 });

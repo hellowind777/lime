@@ -186,6 +186,23 @@ npm run test:contracts
 
 > 聊天能力后续统一收敛到 `useAgentChatUnified -> useAsterAgentChat -> agent_runtime_* + lime_core::database::agent_session_repository`。
 
+## 文件级治理图谱配套规则
+
+如果要维护文件 / 页面级治理图谱，仓库内默认配套：
+
+- 人工治理规则：`governance/surfaces.yml`
+- 交互图谱命令：`npm run governance:graph`
+- 既有边界扫描：`npm run governance:legacy-report`
+
+约束：
+
+- `current / compat / deprecated / dead` 只能来自人工治理规则或仓库内既有治理规则
+- 自动脚本只能补 `dead-candidate`、`unused-file`、`unused-export`、`zero-inbound`、`page-unreachable` 等信号
+- `dead` 不能由脚本自动判定，必须人工确认
+- `compat` 规则必须写清 `sourceOfTruth`
+- `deprecated` 规则必须写清 `exitCriteria`
+- 如遇构建期 alias、运行时桥接、特殊入口等静态分析盲区，可补 `ignoreSignals` 仅压制误报 signal，不改变事实源判断
+
 ### 第三步：优先做减法
 
 默认优先做这些动作，而不是再加一层抽象：

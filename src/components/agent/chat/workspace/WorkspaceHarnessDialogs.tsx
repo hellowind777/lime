@@ -1,0 +1,122 @@
+import type { ComponentProps } from "react";
+import { AgentRuntimeStrip } from "../components/AgentRuntimeStrip";
+import { HarnessStatusPanel } from "../components/HarnessStatusPanel";
+import { WorkspaceHarnessDialog } from "./WorkspaceHarnessDialog";
+
+type HarnessPanelBaseProps = Pick<
+  ComponentProps<typeof HarnessStatusPanel>,
+  | "harnessState"
+  | "compatSubagentRuntime"
+  | "environment"
+  | "childSubagentSessions"
+  | "selectedTeamLabel"
+  | "selectedTeamSummary"
+  | "selectedTeamRoles"
+  | "threadRead"
+  | "turns"
+  | "threadItems"
+  | "currentTurnId"
+  | "pendingActions"
+  | "submittedActionsInFlight"
+  | "queuedTurns"
+  | "canInterrupt"
+  | "onInterruptCurrentTurn"
+  | "onResumeThread"
+  | "onReplayPendingRequest"
+  | "onPromoteQueuedTurn"
+  | "toolInventory"
+  | "toolInventoryLoading"
+  | "toolInventoryError"
+  | "onRefreshToolInventory"
+  | "onOpenSubagentSession"
+  | "onLoadFilePreview"
+  | "onOpenFile"
+>;
+
+interface ThemeWorkbenchHarnessDialogSectionProps extends HarnessPanelBaseProps {
+  enabled: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}
+
+export function ThemeWorkbenchHarnessDialogSection({
+  enabled,
+  open,
+  onOpenChange,
+  ...panelBaseProps
+}: ThemeWorkbenchHarnessDialogSectionProps) {
+  if (!enabled) {
+    return null;
+  }
+
+  return (
+    <WorkspaceHarnessDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      maxWidth="max-w-7xl"
+      panelProps={{
+        ...panelBaseProps,
+        layout: "dialog",
+      }}
+    />
+  );
+}
+
+interface GeneralWorkbenchDialogSectionProps extends HarnessPanelBaseProps {
+  enabled: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  activeTheme: ComponentProps<typeof AgentRuntimeStrip>["activeTheme"];
+  toolPreferences: ComponentProps<typeof AgentRuntimeStrip>["toolPreferences"];
+  isSending: ComponentProps<typeof AgentRuntimeStrip>["isSending"];
+  runtimeStatusTitle: ComponentProps<typeof AgentRuntimeStrip>["runtimeStatusTitle"];
+  selectedTeamRoleCount: ComponentProps<
+    typeof AgentRuntimeStrip
+  >["selectedTeamRoleCount"];
+}
+
+export function GeneralWorkbenchDialogSection({
+  enabled,
+  open,
+  onOpenChange,
+  activeTheme,
+  toolPreferences,
+  isSending,
+  runtimeStatusTitle,
+  selectedTeamRoleCount,
+  ...panelBaseProps
+}: GeneralWorkbenchDialogSectionProps) {
+  if (!enabled) {
+    return null;
+  }
+
+  return (
+    <WorkspaceHarnessDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      maxWidth="max-w-6xl"
+      panelProps={{
+        ...panelBaseProps,
+        layout: "dialog",
+        title: "处理工作台",
+        description: "集中查看计划、待确认事项、协作成员、文件活动和处理结果。",
+        toggleLabel: "工作台详情",
+        leadContent: (
+          <AgentRuntimeStrip
+            activeTheme={activeTheme}
+            toolPreferences={toolPreferences}
+            harnessState={panelBaseProps.harnessState}
+            childSubagentSessions={panelBaseProps.childSubagentSessions}
+            compatSubagentRuntime={panelBaseProps.compatSubagentRuntime}
+            variant="embedded"
+            isSending={isSending}
+            runtimeStatusTitle={runtimeStatusTitle}
+            selectedTeamLabel={panelBaseProps.selectedTeamLabel}
+            selectedTeamSummary={panelBaseProps.selectedTeamSummary}
+            selectedTeamRoleCount={selectedTeamRoleCount}
+          />
+        ),
+      }}
+    />
+  );
+}

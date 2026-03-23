@@ -611,6 +611,73 @@ describe("TeamWorkspaceDock", () => {
     expect(container.textContent).toContain("收起协作面板");
   });
 
+  it("旧会话初次挂载时即使已有真实成员，也不应自动展开", async () => {
+    const { container } = await renderDock({
+      placement: "inline",
+      currentSessionId: "parent-history",
+      childSubagentSessions: [
+        {
+          id: "child-history-1",
+          name: "研究员",
+          created_at: 1_710_000_000,
+          updated_at: 1_710_000_100,
+          session_type: "sub_agent",
+          runtime_status: "running",
+          task_summary: "整理历史任务结论",
+          role_hint: "explorer",
+        },
+      ],
+    });
+
+    expect(
+      document.body.querySelector('[data-testid="team-workspace-dock-panel"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("查看任务进展 · 1");
+  });
+
+  it("已有真实成员的 Dock 切到 inline 时，不应因为布局变化自动展开", async () => {
+    const { container, render } = await renderDock({
+      placement: "floating",
+      childSubagentSessions: [
+        {
+          id: "child-layout-1",
+          name: "执行者",
+          created_at: 1_710_000_000,
+          updated_at: 1_710_000_100,
+          session_type: "sub_agent",
+          runtime_status: "running",
+          task_summary: "继续执行历史任务",
+          role_hint: "executor",
+        },
+      ],
+    });
+
+    expect(
+      document.body.querySelector('[data-testid="team-workspace-dock-panel"]'),
+    ).toBeNull();
+
+    await render({
+      placement: "inline",
+      childSubagentSessions: [
+        {
+          id: "child-layout-1",
+          name: "执行者",
+          created_at: 1_710_000_000,
+          updated_at: 1_710_000_100,
+          session_type: "sub_agent",
+          runtime_status: "running",
+          task_summary: "继续执行历史任务",
+          role_hint: "executor",
+        },
+      ],
+    });
+
+    expect(
+      document.body.querySelector('[data-testid="team-workspace-dock-panel"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("查看任务进展 · 1");
+  });
+
   it("本轮协作方案已就绪时，应在空态 Dock 展示成员摘要", async () => {
     const { container } = await renderDock({
       runtimeTeamState: {

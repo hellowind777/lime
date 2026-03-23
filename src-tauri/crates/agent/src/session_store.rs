@@ -5,8 +5,7 @@
 
 use aster::session::extension_data::{resolve_todo_list_state, TodoListItem, TodoListItemStatus};
 use aster::session::{
-    list_subagent_child_sessions, resolve_subagent_session_metadata, Session as AsterSession,
-    SessionManager, SessionRuntimeSnapshot,
+    resolve_subagent_session_metadata, Session as AsterSession, SessionRuntimeSnapshot,
 };
 use chrono::Utc;
 use lime_core::agent::types::{AgentMessage, AgentSession, ContentPart, MessageContent};
@@ -28,6 +27,7 @@ use crate::aster_runtime_support::load_aster_runtime_snapshot;
 use crate::event_converter::{
     convert_item_runtime, convert_turn_runtime, TauriMessage, TauriMessageContent,
 };
+use crate::session_query::{list_child_subagent_sessions, read_session};
 use crate::subagent_control::{load_subagent_runtime_status, SubagentRuntimeStatusKind};
 use crate::subagent_profiles::{SubagentCustomizationState, SubagentSkillSummary};
 use crate::tool_io_offload::{
@@ -140,6 +140,57 @@ pub struct ChildSubagentSession {
     pub queue_reason: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub retryable_overload: bool,
+}
+
+impl ChildSubagentSession {
+    fn new_base(
+        id: String,
+        name: String,
+        created_at: i64,
+        updated_at: i64,
+        session_type: String,
+        model: Option<String>,
+        provider_name: Option<String>,
+        working_dir: Option<String>,
+        workspace_id: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            name,
+            created_at,
+            updated_at,
+            session_type,
+            model,
+            provider_name,
+            working_dir,
+            workspace_id,
+            task_summary: None,
+            role_hint: None,
+            origin_tool: None,
+            created_from_turn_id: None,
+            blueprint_role_id: None,
+            blueprint_role_label: None,
+            profile_id: None,
+            profile_name: None,
+            role_key: None,
+            team_preset_id: None,
+            theme: None,
+            output_contract: None,
+            skill_ids: Vec::new(),
+            skills: Vec::new(),
+            runtime_status: None,
+            latest_turn_status: None,
+            queued_turn_count: 0,
+            team_phase: None,
+            team_parallel_budget: None,
+            team_active_count: None,
+            team_queued_count: None,
+            provider_concurrency_group: None,
+            provider_parallel_budget: None,
+            queue_reason: None,
+            retryable_overload: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -378,12 +429,111 @@ fn resolve_child_subagent_runtime_status_from_snapshot(
         .unwrap_or(ChildSubagentRuntimeStatus::Idle)
 }
 
+#[derive(Debug, Clone, Default)]
+struct SubagentPresentationProjection {
+    parent_session_id: String,
+    task_summary: Option<String>,
+    role_hint: Option<String>,
+    origin_tool: Option<String>,
+    created_from_turn_id: Option<String>,
+    blueprint_role_id: Option<String>,
+    blueprint_role_label: Option<String>,
+    profile_id: Option<String>,
+    profile_name: Option<String>,
+    role_key: Option<String>,
+    team_preset_id: Option<String>,
+    theme: Option<String>,
+    output_contract: Option<String>,
+    skill_ids: Vec<String>,
+    skills: Vec<SubagentSkillSummary>,
+}
+
+impl SubagentPresentationProjection {
+    fn from_session(session: &AsterSession) -> Option<Self> {
+        let metadata = resolve_subagent_session_metadata(&session.extension_data)?;
+        let customization = SubagentCustomizationState::from_session(session).unwrap_or_default();
+        Some(Self {
+            parent_session_id: metadata.parent_session_id,
+            task_summary: normalize_optional_nonempty_body(metadata.task_summary),
+            role_hint: normalize_optional_text(metadata.role_hint),
+            origin_tool: normalize_optional_text(Some(metadata.origin_tool)),
+            created_from_turn_id: normalize_optional_text(metadata.created_from_turn_id),
+            blueprint_role_id: customization.blueprint_role_id,
+            blueprint_role_label: customization.blueprint_role_label,
+            profile_id: customization.profile_id,
+            profile_name: customization.profile_name,
+            role_key: customization.role_key,
+            team_preset_id: customization.team_preset_id,
+            theme: customization.theme,
+            output_contract: customization.output_contract,
+            skill_ids: customization.skill_ids,
+            skills: customization.skills,
+        })
+    }
+
+    fn apply_to_child_summary(self, summary: &mut ChildSubagentSession) {
+        summary.task_summary = self.task_summary;
+        summary.role_hint = self.role_hint;
+        summary.origin_tool = self.origin_tool;
+        summary.created_from_turn_id = self.created_from_turn_id;
+        summary.blueprint_role_id = self.blueprint_role_id;
+        summary.blueprint_role_label = self.blueprint_role_label;
+        summary.profile_id = self.profile_id;
+        summary.profile_name = self.profile_name;
+        summary.role_key = self.role_key;
+        summary.team_preset_id = self.team_preset_id;
+        summary.theme = self.theme;
+        summary.output_contract = self.output_contract;
+        summary.skill_ids = self.skill_ids;
+        summary.skills = self.skills;
+    }
+
+    fn into_parent_context(
+        self,
+        parent_session_name: String,
+        current_session_id: &str,
+        sibling_subagent_sessions: Vec<ChildSubagentSession>,
+    ) -> SubagentParentContext {
+        SubagentParentContext {
+            parent_session_id: self.parent_session_id,
+            parent_session_name,
+            role_hint: self.role_hint,
+            task_summary: self.task_summary,
+            origin_tool: self.origin_tool,
+            created_from_turn_id: self.created_from_turn_id,
+            blueprint_role_id: self.blueprint_role_id,
+            blueprint_role_label: self.blueprint_role_label,
+            profile_id: self.profile_id,
+            profile_name: self.profile_name,
+            role_key: self.role_key,
+            team_preset_id: self.team_preset_id,
+            theme: self.theme,
+            output_contract: self.output_contract,
+            skill_ids: self.skill_ids,
+            skills: self.skills,
+            sibling_subagent_sessions: filter_sibling_subagent_sessions(
+                current_session_id,
+                sibling_subagent_sessions,
+            ),
+        }
+    }
+}
+
+fn filter_sibling_subagent_sessions(
+    current_session_id: &str,
+    sibling_subagent_sessions: Vec<ChildSubagentSession>,
+) -> Vec<ChildSubagentSession> {
+    sibling_subagent_sessions
+        .into_iter()
+        .filter(|session| session.id != current_session_id)
+        .collect()
+}
+
 fn build_child_subagent_session_summary(
     db: Option<&DbConnection>,
     session: AsterSession,
 ) -> Option<ChildSubagentSession> {
-    let metadata = resolve_subagent_session_metadata(&session.extension_data)?;
-    let customization = SubagentCustomizationState::from_session(&session).unwrap_or_default();
+    let projection = SubagentPresentationProjection::from_session(&session)?;
     let working_dir =
         normalize_optional_text(Some(session.working_dir.to_string_lossy().to_string()));
     let workspace_id =
@@ -393,42 +543,19 @@ fn build_child_subagent_session_summary(
     let name = normalize_optional_text(Some(session.name.clone()))
         .unwrap_or_else(|| "子代理会话".to_string());
 
-    Some(ChildSubagentSession {
-        id: session.id,
+    let mut summary = ChildSubagentSession::new_base(
+        session.id,
         name,
-        created_at: session.created_at.timestamp(),
-        updated_at: session.updated_at.timestamp(),
-        session_type: session.session_type.to_string(),
+        session.created_at.timestamp(),
+        session.updated_at.timestamp(),
+        session.session_type.to_string(),
         model,
         provider_name,
         working_dir,
         workspace_id,
-        task_summary: normalize_optional_nonempty_body(metadata.task_summary),
-        role_hint: normalize_optional_text(metadata.role_hint),
-        origin_tool: normalize_optional_text(Some(metadata.origin_tool)),
-        created_from_turn_id: normalize_optional_text(metadata.created_from_turn_id),
-        blueprint_role_id: customization.blueprint_role_id,
-        blueprint_role_label: customization.blueprint_role_label,
-        profile_id: customization.profile_id,
-        profile_name: customization.profile_name,
-        role_key: customization.role_key,
-        team_preset_id: customization.team_preset_id,
-        theme: customization.theme,
-        output_contract: customization.output_contract,
-        skill_ids: customization.skill_ids,
-        skills: customization.skills,
-        runtime_status: None,
-        latest_turn_status: None,
-        queued_turn_count: 0,
-        team_phase: None,
-        team_parallel_budget: None,
-        team_active_count: None,
-        team_queued_count: None,
-        provider_concurrency_group: None,
-        provider_parallel_budget: None,
-        queue_reason: None,
-        retryable_overload: false,
-    })
+    );
+    projection.apply_to_child_summary(&mut summary);
+    Some(summary)
 }
 
 fn apply_runtime_status_to_child_subagent_session(
@@ -471,46 +598,26 @@ fn build_child_subagent_session_summaries(
 fn build_subagent_parent_context(
     current_session_id: &str,
     parent_session: Option<&AsterSession>,
-    metadata: aster::session::SubagentSessionMetadata,
-    customization: Option<SubagentCustomizationState>,
+    projection: SubagentPresentationProjection,
     sibling_subagent_sessions: Vec<ChildSubagentSession>,
 ) -> SubagentParentContext {
     let parent_session_name = parent_session
         .and_then(|session| normalize_optional_text(Some(session.name.clone())))
         .unwrap_or_else(|| "父会话".to_string());
 
-    let customization = customization.unwrap_or_default();
-    SubagentParentContext {
-        parent_session_id: metadata.parent_session_id,
+    projection.into_parent_context(
         parent_session_name,
-        role_hint: normalize_optional_text(metadata.role_hint),
-        task_summary: normalize_optional_nonempty_body(metadata.task_summary),
-        origin_tool: normalize_optional_text(Some(metadata.origin_tool)),
-        created_from_turn_id: normalize_optional_text(metadata.created_from_turn_id),
-        blueprint_role_id: customization.blueprint_role_id,
-        blueprint_role_label: customization.blueprint_role_label,
-        profile_id: customization.profile_id,
-        profile_name: customization.profile_name,
-        role_key: customization.role_key,
-        team_preset_id: customization.team_preset_id,
-        theme: customization.theme,
-        output_contract: customization.output_contract,
-        skill_ids: customization.skill_ids,
-        skills: customization.skills,
-        sibling_subagent_sessions: sibling_subagent_sessions
-            .into_iter()
-            .filter(|session| session.id != current_session_id)
-            .collect(),
-    }
+        current_session_id,
+        sibling_subagent_sessions,
+    )
 }
 
 async fn load_child_subagent_sessions(
     db: &DbConnection,
     session_id: &str,
 ) -> Result<Vec<ChildSubagentSession>, String> {
-    let sessions = list_subagent_child_sessions(session_id)
-        .await
-        .map_err(|error| format!("读取 child subagent sessions 失败: {error}"))?;
+    let sessions =
+        list_child_subagent_sessions(session_id, "读取 child subagent sessions 失败").await?;
     let mut summaries = build_child_subagent_session_summaries(Some(db), sessions);
     for summary in &mut summaries {
         match load_subagent_runtime_status(&summary.id).await {
@@ -531,39 +638,35 @@ async fn load_subagent_parent_context(
     db: &DbConnection,
     session_id: &str,
 ) -> Result<Option<SubagentParentContext>, String> {
-    let current_session = SessionManager::get_session(session_id, false)
-        .await
-        .map_err(|error| format!("读取当前 subagent session 失败: {error}"))?;
-    let Some(metadata) = resolve_subagent_session_metadata(&current_session.extension_data) else {
+    let current_session = read_session(session_id, false, "读取当前 subagent session 失败").await?;
+    let Some(projection) = SubagentPresentationProjection::from_session(&current_session) else {
         return Ok(None);
     };
+    let parent_session_id = projection.parent_session_id.clone();
 
-    let parent_session = match SessionManager::get_session(&metadata.parent_session_id, false).await
+    let parent_session = match read_session(&parent_session_id, false, "读取 parent session 失败")
+        .await
     {
         Ok(session) => Some(session),
         Err(error) => {
             tracing::warn!(
                 "[SessionStore] 读取 parent session 失败，已降级为匿名父会话: session_id={}, parent_session_id={}, error={}",
                 session_id,
-                metadata.parent_session_id,
+                parent_session_id,
                 error
             );
             None
         }
     };
 
-    let sibling_subagent_sessions = match load_child_subagent_sessions(
-        db,
-        &metadata.parent_session_id,
-    )
-    .await
+    let sibling_subagent_sessions = match load_child_subagent_sessions(db, &parent_session_id).await
     {
         Ok(sessions) => sessions,
         Err(error) => {
             tracing::warn!(
                 "[SessionStore] 读取 sibling subagent sessions 失败，已降级为空列表: session_id={}, parent_session_id={}, error={}",
                 session_id,
-                metadata.parent_session_id,
+                parent_session_id,
                 error
             );
             Vec::new()
@@ -573,8 +676,7 @@ async fn load_subagent_parent_context(
     Ok(Some(build_subagent_parent_context(
         session_id,
         parent_session.as_ref(),
-        metadata,
-        SubagentCustomizationState::from_session(&current_session),
+        projection,
         sibling_subagent_sessions,
     )))
 }
@@ -1375,10 +1477,15 @@ mod tests {
     #[test]
     fn build_subagent_parent_context_should_keep_parent_name_and_filter_current_session() {
         let now = Utc::now();
-        let metadata = SubagentSessionMetadata::new("parent-1".to_string())
-            .with_task_summary(Some("处理父线程拆分出来的图片任务".to_string()))
-            .with_role_hint(Some("Image #1".to_string()))
-            .with_created_from_turn_id(Some("turn-2".to_string()));
+        let session = build_test_subagent_session(
+            "child-current",
+            "Image #1",
+            Some("parent-1"),
+            now - Duration::seconds(10),
+            Some("处理父线程拆分出来的图片任务"),
+            Some("Image #1"),
+            Some("turn-2"),
+        );
         let parent_session = AsterSession {
             id: "parent-1".to_string(),
             name: "主线程会话".to_string(),
@@ -1408,12 +1515,13 @@ mod tests {
                 ),
             ],
         );
+        let projection =
+            SubagentPresentationProjection::from_session(&session).expect("parent projection");
 
         let context = build_subagent_parent_context(
             "child-current",
             Some(&parent_session),
-            metadata,
-            None,
+            projection,
             sibling_subagent_sessions,
         );
 
@@ -1427,6 +1535,67 @@ mod tests {
         assert_eq!(context.created_from_turn_id.as_deref(), Some("turn-2"));
         assert_eq!(context.sibling_subagent_sessions.len(), 1);
         assert_eq!(context.sibling_subagent_sessions[0].id, "child-sibling");
+    }
+
+    #[test]
+    fn build_subagent_parent_context_should_merge_customization_projection() {
+        let now = Utc::now();
+        let mut session = build_test_subagent_session(
+            "child-customized",
+            "自定义子代理",
+            Some("parent-1"),
+            now,
+            Some("整理 customization"),
+            Some("Image #1"),
+            Some("turn-9"),
+        );
+        session.extension_data = SubagentCustomizationState {
+            blueprint_role_id: Some("runtime-explorer".to_string()),
+            blueprint_role_label: Some("分析".to_string()),
+            profile_id: Some("code-explorer".to_string()),
+            profile_name: Some("代码分析员".to_string()),
+            role_key: Some("explorer".to_string()),
+            team_preset_id: Some("code-triage-team".to_string()),
+            theme: Some("engineering".to_string()),
+            output_contract: Some("输出证据、影响面与建议。".to_string()),
+            system_overlay: None,
+            skill_ids: vec!["repo-exploration".to_string()],
+            skills: vec![SubagentSkillSummary {
+                id: "repo-exploration".to_string(),
+                name: "仓库探索".to_string(),
+                description: Some("优先读事实源".to_string()),
+                source: Some("builtin".to_string()),
+                directory: None,
+            }],
+        }
+        .into_updated_extension_data(&session)
+        .expect("merge customization");
+
+        let context = build_subagent_parent_context(
+            "child-customized",
+            None,
+            SubagentPresentationProjection::from_session(&session)
+                .expect("parent projection should exist"),
+            Vec::new(),
+        );
+
+        assert_eq!(
+            context.blueprint_role_id.as_deref(),
+            Some("runtime-explorer")
+        );
+        assert_eq!(context.blueprint_role_label.as_deref(), Some("分析"));
+        assert_eq!(context.profile_id.as_deref(), Some("code-explorer"));
+        assert_eq!(context.profile_name.as_deref(), Some("代码分析员"));
+        assert_eq!(context.role_key.as_deref(), Some("explorer"));
+        assert_eq!(context.team_preset_id.as_deref(), Some("code-triage-team"));
+        assert_eq!(context.theme.as_deref(), Some("engineering"));
+        assert_eq!(
+            context.output_contract.as_deref(),
+            Some("输出证据、影响面与建议。")
+        );
+        assert_eq!(context.skill_ids, vec!["repo-exploration".to_string()]);
+        assert_eq!(context.skills.len(), 1);
+        assert_eq!(context.skills[0].name, "仓库探索");
     }
 
     #[test]
@@ -1480,42 +1649,21 @@ mod tests {
 
     #[test]
     fn apply_runtime_status_to_child_subagent_session_should_keep_runtime_detail() {
-        let mut summary = ChildSubagentSession {
-            id: "child-1".to_string(),
-            name: "研究员".to_string(),
-            created_at: 1_710_000_000,
-            updated_at: 1_710_000_100,
-            session_type: "sub_agent".to_string(),
-            model: Some("claude-sonnet-4".to_string()),
-            provider_name: Some("openai".to_string()),
-            working_dir: Some("/tmp/workspace-child".to_string()),
-            workspace_id: Some("workspace-1".to_string()),
-            task_summary: Some("整理事实源".to_string()),
-            role_hint: Some("explorer".to_string()),
-            origin_tool: Some("spawn_agent".to_string()),
-            created_from_turn_id: Some("turn-1".to_string()),
-            blueprint_role_id: None,
-            blueprint_role_label: None,
-            profile_id: None,
-            profile_name: None,
-            role_key: None,
-            team_preset_id: None,
-            theme: None,
-            output_contract: None,
-            skill_ids: Vec::new(),
-            skills: Vec::new(),
-            runtime_status: None,
-            latest_turn_status: None,
-            queued_turn_count: 0,
-            team_phase: None,
-            team_parallel_budget: None,
-            team_active_count: None,
-            team_queued_count: None,
-            provider_concurrency_group: None,
-            provider_parallel_budget: None,
-            queue_reason: None,
-            retryable_overload: false,
-        };
+        let mut summary = ChildSubagentSession::new_base(
+            "child-1".to_string(),
+            "研究员".to_string(),
+            1_710_000_000,
+            1_710_000_100,
+            "sub_agent".to_string(),
+            Some("claude-sonnet-4".to_string()),
+            Some("openai".to_string()),
+            Some("/tmp/workspace-child".to_string()),
+            Some("workspace-1".to_string()),
+        );
+        summary.task_summary = Some("整理事实源".to_string());
+        summary.role_hint = Some("explorer".to_string());
+        summary.origin_tool = Some("spawn_agent".to_string());
+        summary.created_from_turn_id = Some("turn-1".to_string());
 
         apply_runtime_status_to_child_subagent_session(
             &mut summary,

@@ -38,21 +38,35 @@ const {
   mockEmitProviderDataChanged: vi.fn(),
 }));
 
-vi.mock("@/lib/api/agentRuntime", () => ({
-  initAsterAgent: mockInitAsterAgent,
-  createAgentRuntimeSession: mockCreateAgentRuntimeSession,
-  listAgentRuntimeSessions: mockListAgentRuntimeSessions,
-  getAgentRuntimeSession: mockGetAgentRuntimeSession,
-  updateAgentRuntimeSession: mockUpdateAgentRuntimeSession,
-}));
+vi.mock("@/lib/api/agentRuntime", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api/agentRuntime")>(
+    "@/lib/api/agentRuntime",
+  );
+
+  return {
+    ...actual,
+    initAsterAgent: mockInitAsterAgent,
+    createAgentRuntimeSession: mockCreateAgentRuntimeSession,
+    listAgentRuntimeSessions: mockListAgentRuntimeSessions,
+    getAgentRuntimeSession: mockGetAgentRuntimeSession,
+    updateAgentRuntimeSession: mockUpdateAgentRuntimeSession,
+  };
+});
 
 vi.mock("@/lib/api/agentStream", () => ({
   parseStreamEvent: mockParseStreamEvent,
 }));
 
-vi.mock("@/lib/dev-bridge", () => ({
-  safeListen: mockSafeListen,
-}));
+vi.mock("@/lib/dev-bridge", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/dev-bridge")>(
+    "@/lib/dev-bridge",
+  );
+
+  return {
+    ...actual,
+    safeListen: mockSafeListen,
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: mockToast,

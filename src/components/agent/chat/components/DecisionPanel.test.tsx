@@ -7,7 +7,9 @@ import type { ActionRequired, ConfirmResponse } from "../types";
 interface RenderResult {
   container: HTMLDivElement;
   root: Root;
-  onSubmit: ReturnType<typeof vi.fn<(response: ConfirmResponse) => void>>;
+  onSubmit: ReturnType<
+    typeof vi.fn<(response: ConfirmResponse) => void | Promise<void>>
+  >;
 }
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -24,7 +26,7 @@ function renderDecisionPanel(request: ActionRequired): RenderResult {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  const onSubmit = vi.fn<(response: ConfirmResponse) => void>();
+  const onSubmit = vi.fn<(response: ConfirmResponse) => void | Promise<void>>();
 
   act(() => {
     root.render(<DecisionPanel request={request} onSubmit={onSubmit} />);
@@ -297,6 +299,34 @@ describe("DecisionPanel ask_user", () => {
     expect(container.textContent).not.toContain("提交答案");
     expect(container.textContent).not.toContain("取消");
   });
+
+  it("自动提交选项等待回调完成时，应展示提交中并禁用交互", async () => {
+    const request = createAskUserRequest("req-ask-user-loading");
+    let resolveSubmit: (() => void) | null = null;
+    const { container, onSubmit } = renderDecisionPanel(request);
+    onSubmit.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+
+    const optionButton = findButtonByText(container, "自动执行（Auto）");
+
+    await act(async () => {
+      optionButton.click();
+      await Promise.resolve();
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(optionButton.disabled).toBe(true);
+    expect(container.querySelector("svg.animate-spin")).not.toBeNull();
+
+    await act(async () => {
+      resolveSubmit?.();
+      await Promise.resolve();
+    });
+  });
 });
 
 describe("DecisionPanel copywriting", () => {
@@ -311,6 +341,41 @@ describe("DecisionPanel copywriting", () => {
 
     expect(container.textContent).toContain("助手想要使用");
     expect(container.textContent).not.toContain("Claude");
+  });
+
+  it("tool_confirmation 提交中时，应展示处理中并禁用按钮", async () => {
+    const request: ActionRequired = {
+      requestId: "req-tool-confirm-loading",
+      actionType: "tool_confirmation",
+      toolName: "exec_command",
+      arguments: { cmd: "ls" },
+    };
+    let resolveSubmit: (() => void) | null = null;
+    const { container, onSubmit } = renderDecisionPanel(request);
+    onSubmit.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+
+    const allowButton = findButtonByText(container, "允许");
+    const denyButton = findButtonByText(container, "拒绝");
+
+    await act(async () => {
+      allowButton.click();
+      await Promise.resolve();
+    });
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(allowButton.textContent).toContain("处理中");
+    expect(allowButton.disabled).toBe(true);
+    expect(denyButton.disabled).toBe(true);
+
+    await act(async () => {
+      resolveSubmit?.();
+      await Promise.resolve();
+    });
   });
 });
 

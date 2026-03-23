@@ -15,10 +15,13 @@ import {
   getAsterAgentStatus,
   generateAgentRuntimeSessionTitle,
   getAgentRuntimeSession,
+  getAgentRuntimeThreadRead,
   getAgentRuntimeToolInventory,
   interruptAgentRuntimeTurn,
   listAgentRuntimeSessions,
   promoteAgentRuntimeQueuedTurn,
+  replayAgentRuntimeRequest,
+  resumeAgentRuntimeThread,
   resumeAgentRuntimeSubagent,
   respondAgentRuntimeAction,
   sendAgentRuntimeSubagentInput,
@@ -235,6 +238,87 @@ describe("Agent API 治理护栏", () => {
     );
   });
 
+  it("resumeAgentRuntimeThread 应走统一 runtime resume 命令", async () => {
+    mockSafeInvoke.mockResolvedValueOnce(true);
+
+    await expect(
+      resumeAgentRuntimeThread({
+        session_id: "session-runtime-resume",
+      }),
+    ).resolves.toBe(true);
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_resume_thread",
+      {
+        request: {
+          session_id: "session-runtime-resume",
+        },
+      },
+    );
+  });
+
+  it("replayAgentRuntimeRequest 应走统一 runtime replay 命令", async () => {
+    mockSafeInvoke.mockResolvedValueOnce({
+      type: "action_required",
+      request_id: "req-runtime-replay",
+      action_type: "ask_user",
+      prompt: "请选择执行模式",
+    });
+
+    await expect(
+      replayAgentRuntimeRequest({
+        session_id: "session-runtime-replay",
+        request_id: "req-runtime-replay",
+      }),
+    ).resolves.toMatchObject({
+      request_id: "req-runtime-replay",
+      action_type: "ask_user",
+    });
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_replay_request",
+      {
+        request: {
+          session_id: "session-runtime-replay",
+          request_id: "req-runtime-replay",
+        },
+      },
+    );
+  });
+
+  it("getAgentRuntimeThreadRead 应走独立 thread_read 命令并归一化 queued_turns", async () => {
+    mockSafeInvoke.mockResolvedValueOnce({
+      thread_id: "thread-runtime",
+      status: "waiting_request",
+      queued_turns: [
+        {
+          queued_turn_id: "queued-turn-1",
+          message_preview: "继续执行",
+          created_at: 1711184400,
+          position: 1,
+        },
+      ],
+    });
+
+    await expect(getAgentRuntimeThreadRead("session-runtime")).resolves.toMatchObject({
+      thread_id: "thread-runtime",
+      status: "waiting_request",
+      queued_turns: [
+        expect.objectContaining({
+          queued_turn_id: "queued-turn-1",
+          position: 1,
+        }),
+      ],
+    });
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith(
+      "agent_runtime_get_thread_read",
+      {
+        sessionId: "session-runtime",
+      },
+    );
+  });
+
   it("promoteAgentRuntimeQueuedTurn 应走统一 runtime promote 命令", async () => {
     mockSafeInvoke.mockResolvedValueOnce(true);
 
@@ -377,6 +461,20 @@ describe("Agent API 治理护栏", () => {
           position: 2,
         },
       ],
+      thread_read: {
+        thread_id: "thread-runtime-2",
+        status: "running",
+        queued_turns: [
+          {
+            queued_turn_id: "queued-2",
+            message_text: "线程读模型中的排队任务",
+            message_preview: "线程读模型中的排队任务",
+            created_at: 1710001510,
+            image_count: 0,
+            position: 1,
+          },
+        ],
+      },
       messages: [
         {
           role: "user",
@@ -444,6 +542,20 @@ describe("Agent API 治理护栏", () => {
           position: 2,
         },
       ],
+      thread_read: {
+        thread_id: "thread-runtime-2",
+        status: "running",
+        queued_turns: [
+          {
+            queued_turn_id: "queued-2",
+            message_text: "线程读模型中的排队任务",
+            message_preview: "线程读模型中的排队任务",
+            created_at: 1710001510,
+            image_count: 0,
+            position: 1,
+          },
+        ],
+      },
       messages: [
         {
           role: "user",

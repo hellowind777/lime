@@ -39,12 +39,17 @@ export const MessageListContainer = styled(ScrollArea)`
 `;
 
 // Linear Layout Wrapper: Always Row, Left Aligned
-export const MessageWrapper = styled.div<{ $isUser: boolean }>`
+export const MessageWrapper = styled.div<{
+  $isUser: boolean;
+  $compactLeadingSpacing?: boolean;
+}>`
   display: flex;
   flex-direction: row;
   align-items: flex-start;
-  padding: 14px 8px;
-  gap: 14px;
+  padding: ${({ $compactLeadingSpacing }) =>
+    $compactLeadingSpacing ? "14px 2px" : "14px 6px"};
+  gap: ${({ $compactLeadingSpacing }) =>
+    $compactLeadingSpacing ? "10px" : "12px"};
   width: 100%;
   max-width: none;
   margin: 0;

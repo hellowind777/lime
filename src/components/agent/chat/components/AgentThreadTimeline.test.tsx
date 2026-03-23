@@ -9,6 +9,7 @@ import type {
   AgentThreadItem,
   AgentThreadTurn,
 } from "../types";
+import type { AgentRuntimeThreadReadModel } from "@/lib/api/agentRuntime";
 
 const parseAIResponseMock = vi.fn();
 
@@ -130,6 +131,7 @@ function renderTimeline(
   props?: {
     isCurrentTurn?: boolean;
     turn?: Partial<AgentThreadTurn>;
+    threadRead?: AgentRuntimeThreadReadModel | null;
     actionRequests?: ActionRequired[];
     onOpenSubagentSession?: (sessionId: string) => void;
   },
@@ -143,6 +145,7 @@ function renderTimeline(
       <AgentThreadTimeline
         turn={createTurn(props?.turn)}
         items={items}
+        threadRead={props?.threadRead}
         actionRequests={props?.actionRequests}
         isCurrentTurn={props?.isCurrentTurn}
         onOpenSubagentSession={props?.onOpenSubagentSession}
@@ -168,6 +171,66 @@ function clickTimelineToggle(container: HTMLElement) {
 }
 
 describe("AgentThreadTimeline", () => {
+  it("应在时间线头部展示当前 turn 的 compact outcome 与 incident 徽标", () => {
+    const container = renderTimeline(
+      [
+        {
+          ...createBaseItem("summary-1", 1),
+          type: "turn_summary",
+          text: "最近一次 Provider 调用失败，等待人工处理。",
+        },
+      ],
+      {
+        threadRead: {
+          thread_id: "thread-1",
+          status: "failed",
+          active_turn_id: "turn-1",
+          pending_requests: [],
+          last_outcome: {
+            thread_id: "thread-1",
+            turn_id: "turn-1",
+            outcome_type: "failed_provider",
+            summary: "Provider 请求失败",
+            primary_cause: "429 rate limited",
+            retryable: true,
+            ended_at: at(9),
+          },
+          incidents: [
+            {
+              id: "incident-1",
+              thread_id: "thread-1",
+              turn_id: "turn-1",
+              incident_type: "provider_failure",
+              severity: "high",
+              status: "active",
+              title: "Provider 连续失败",
+            },
+          ],
+        },
+      },
+    );
+
+    expect(
+      container.querySelector('[data-testid="agent-thread-compact-outcome"]')
+        ?.textContent,
+    ).toContain("Provider 失败");
+    expect(
+      container.querySelector('[data-testid="agent-thread-compact-incident"]')
+        ?.textContent,
+    ).toContain("1 个 incident");
+
+    clickTimelineToggle(container);
+
+    expect(
+      container.querySelector('[data-testid="agent-thread-summary-outcome"]')
+        ?.textContent,
+    ).toContain("Provider 失败");
+    expect(
+      container.querySelector('[data-testid="agent-thread-summary-incident"]')
+        ?.textContent,
+    ).toContain("1 个 incident");
+  });
+
   it("应渲染当前阶段概览与按时序组织的分组块", () => {
     const items: AgentThreadItem[] = [
       {

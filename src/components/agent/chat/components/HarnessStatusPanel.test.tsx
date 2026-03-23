@@ -400,6 +400,38 @@ describe("HarnessStatusPanel", () => {
     expect(document.body.textContent).toContain("等待首个模型事件");
   });
 
+  it("存在线程可靠性信号时应在工作台展示可靠性入口与面板", () => {
+    renderPanel({
+      layout: "dialog",
+      turns: [
+        {
+          id: "turn-reliability",
+          thread_id: "thread-1",
+          prompt_text: "继续发布文章",
+          status: "running",
+          started_at: "2026-03-24T09:00:00Z",
+          created_at: "2026-03-24T09:00:00Z",
+          updated_at: "2026-03-24T09:00:12Z",
+        },
+      ],
+      currentTurnId: "turn-reliability",
+      pendingActions: [
+        {
+          requestId: "req-reliability-1",
+          actionType: "ask_user",
+          prompt: "请确认是否继续发布",
+          status: "pending",
+        },
+      ],
+    });
+
+    expect(document.body.textContent).toContain("线程可靠性");
+    expect(document.body.textContent).toContain("请确认是否继续发布");
+    expect(
+      document.body.querySelector('button[aria-label="跳转到可靠性"]'),
+    ).not.toBeNull();
+  });
+
   it("runtimeStatus 为 failed 时应展示失败阶段与失败详情", () => {
     renderPanel({
       harnessState: createHarnessState({

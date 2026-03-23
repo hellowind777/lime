@@ -54,11 +54,9 @@ function validateAsterRepo(asterRepoPath) {
 }
 
 function buildConfigContent(asterRepoPath) {
-  const asterPath = normalizePath(
-    path.relative(cargoConfigDir, path.join(asterRepoPath, "crates", "aster")),
-  );
+  const asterPath = normalizePath(path.join(asterRepoPath, "crates", "aster"));
   const asterModelsPath = normalizePath(
-    path.relative(cargoConfigDir, path.join(asterRepoPath, "crates", "aster-models")),
+    path.join(asterRepoPath, "crates", "aster-models"),
   );
 
   return `${blockStart}

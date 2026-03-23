@@ -30,8 +30,10 @@ pub mod queued_turn;
 pub mod request_tool_policy;
 pub mod runtime_projection_snapshot;
 pub mod runtime_queue;
+mod session_query;
 pub mod session_state_snapshot;
 mod session_store;
+mod session_update;
 pub mod skill_execution;
 pub mod subagent_control;
 pub mod subagent_profiles;
@@ -44,7 +46,7 @@ pub mod turn_state;
 mod write_artifact_events;
 
 pub use ask_bridge::{create_ask_callback, extract_response as extract_ask_response};
-pub use aster_runtime_support::initialize_aster_runtime;
+pub use aster_runtime_support::{initialize_aster_runtime, restore_aster_runtime_queued_turns};
 pub use aster_state::{AsterAgentState, ProviderConfig, QueuedTurnTask};
 pub use aster_state_support::{
     build_project_system_prompt, create_lime_identity, create_lime_tool_config, message_helpers,
@@ -92,6 +94,10 @@ pub use runtime_queue::{
     resume_runtime_queue_if_needed, submit_runtime_turn, RuntimeQueueEventEmitter,
     RuntimeQueueExecutor,
 };
+pub use session_query::{
+    collect_subagent_cascade_session_ids, list_child_subagent_sessions,
+    list_subagent_cascade_session_ids, list_subagent_status_scope_session_ids, read_session,
+};
 pub use session_state_snapshot::SessionStateSnapshot;
 pub use session_store::{
     create_session_sync, delete_session, get_persisted_session_metadata_sync,
@@ -101,13 +107,16 @@ pub use session_store::{
     PersistedSessionMetadata, SessionDetail, SessionInfo, SessionTitlePreviewMessage,
     SessionTodoItem, SubagentParentContext,
 };
+pub use session_update::{
+    create_subagent_session, persist_compaction_session_metrics_update,
+    persist_session_extension_data, replace_session_conversation, CompactionSessionMetricsUpdate,
+};
 pub use skill_execution::{
     execute_skill_prompt, execute_skill_workflow, SkillEventEmitter, SkillExecutionError,
     SkillExecutionResult, SkillWorkflowExecution, StepResult,
 };
 pub use subagent_control::{
-    collect_subagent_cascade_session_ids, derive_subagent_runtime_status_kind,
-    list_subagent_cascade_session_ids, load_subagent_runtime_status, read_subagent_control_state,
+    derive_subagent_runtime_status_kind, load_subagent_runtime_status, read_subagent_control_state,
     write_subagent_control_state, SubagentControlState, SubagentRuntimeStatus,
     SubagentRuntimeStatusInput, SubagentRuntimeStatusKind,
 };

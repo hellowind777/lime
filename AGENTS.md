@@ -57,6 +57,7 @@
 | [workspace.md](docs/aiprompts/workspace.md) | Workspace 设计文档 |
 | [content-creator.md](docs/aiprompts/content-creator.md) | 内容创作系统 |
 | [aster-integration.md](docs/aiprompts/aster-integration.md) | Aster 集成方案 |
+| [project-heatmap.md](docs/aiprompts/project-heatmap.md) | 项目热力图与治理图再生成指南 |
 | [playwright-e2e.md](docs/aiprompts/playwright-e2e.md) | Playwright MCP 续测与 E2E 指南 |
 
 ## 构建命令
@@ -103,6 +104,10 @@ npm run lint
 - 需要继续浏览器 E2E、复用现有 Playwright MCP 会话、排查 DevBridge/console 错误时，先读 `docs/aiprompts/playwright-e2e.md`
 - 如果只是仓库级规则，不要继续往本文件堆叠步骤说明
 
+## 项目热力图入口
+
+- 需要重新生成仓库观察热力图、治理候选图、打开现有 HTML 报告或向后续 AI 交接这套流程时，先读 `docs/aiprompts/project-heatmap.md`
+
 ## UI 设计入口
 
 - 需要统一配色、修正渐变、调整页面宽度策略、重排卡片工作台时，先读 `docs/aiprompts/design-language.md`
@@ -114,7 +119,7 @@ npm run lint
 - 后端：Rust + Tauri
 - 数据库：SQLite (rusqlite)
 
-### 核心模块
+### prrovide模块
 
 1. **Provider 系统** (`src-tauri/src/providers/`)
    - Kiro/CodeWhisperer OAuth 认证
@@ -136,13 +141,6 @@ npm run lint
 4. **协议转换** (`src-tauri/src/converter/`)
    - OpenAI ↔ CodeWhisperer 转换
    - OpenAI ↔ Claude 转换
-
-### 凭证管理策略（方案 B）
-
-Kiro 凭证采用完全独立的副本策略：
-- 上传凭证时，自动合并 `clientIdHash` 文件中的 `client_id`/`client_secret` 到副本
-- 每个副本文件完全独立，支持多账号场景
-- 刷新 Token 时只使用副本文件中的凭证，不依赖原始文件
 
 ## 开发指南
 

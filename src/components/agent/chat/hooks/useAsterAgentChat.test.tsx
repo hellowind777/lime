@@ -9,9 +9,14 @@ const {
   mockCreateAgentRuntimeSession,
   mockListAgentRuntimeSessions,
   mockGetAgentRuntimeSession,
+  mockGetAgentRuntimeThreadRead,
   mockUpdateAgentRuntimeSession,
   mockDeleteAgentRuntimeSession,
+  mockCompactAgentRuntimeSession,
   mockInterruptAgentRuntimeTurn,
+  mockResumeAgentRuntimeThread,
+  mockReplayAgentRuntimeRequest,
+  mockPromoteAgentRuntimeQueuedTurn,
   mockRemoveAgentRuntimeQueuedTurn,
   mockRespondAgentRuntimeAction,
   mockParseStreamEvent,
@@ -26,9 +31,14 @@ const {
   mockCreateAgentRuntimeSession: vi.fn(),
   mockListAgentRuntimeSessions: vi.fn(),
   mockGetAgentRuntimeSession: vi.fn(),
+  mockGetAgentRuntimeThreadRead: vi.fn(),
   mockUpdateAgentRuntimeSession: vi.fn(),
   mockDeleteAgentRuntimeSession: vi.fn(),
+  mockCompactAgentRuntimeSession: vi.fn(),
   mockInterruptAgentRuntimeTurn: vi.fn(),
+  mockResumeAgentRuntimeThread: vi.fn(),
+  mockReplayAgentRuntimeRequest: vi.fn(),
+  mockPromoteAgentRuntimeQueuedTurn: vi.fn(),
   mockRemoveAgentRuntimeQueuedTurn: vi.fn(),
   mockRespondAgentRuntimeAction: vi.fn(),
   mockParseStreamEvent: vi.fn((payload: unknown) => payload),
@@ -52,9 +62,14 @@ vi.mock("@/lib/api/agentRuntime", () => ({
   createAgentRuntimeSession: mockCreateAgentRuntimeSession,
   listAgentRuntimeSessions: mockListAgentRuntimeSessions,
   getAgentRuntimeSession: mockGetAgentRuntimeSession,
+  getAgentRuntimeThreadRead: mockGetAgentRuntimeThreadRead,
   updateAgentRuntimeSession: mockUpdateAgentRuntimeSession,
   deleteAgentRuntimeSession: mockDeleteAgentRuntimeSession,
+  compactAgentRuntimeSession: mockCompactAgentRuntimeSession,
   interruptAgentRuntimeTurn: mockInterruptAgentRuntimeTurn,
+  resumeAgentRuntimeThread: mockResumeAgentRuntimeThread,
+  replayAgentRuntimeRequest: mockReplayAgentRuntimeRequest,
+  promoteAgentRuntimeQueuedTurn: mockPromoteAgentRuntimeQueuedTurn,
   removeAgentRuntimeQueuedTurn: mockRemoveAgentRuntimeQueuedTurn,
   respondAgentRuntimeAction: mockRespondAgentRuntimeAction,
 }));
@@ -142,16 +157,31 @@ async function flushEffects() {
 }
 
 function captureTurnStream() {
+  return captureRuntimeStream((eventName) => {
+    return (
+      typeof eventName === "string" && eventName.startsWith("aster_stream_")
+    );
+  });
+}
+
+function captureContextCompactionStream() {
+  return captureRuntimeStream((eventName) => {
+    return (
+      typeof eventName === "string" &&
+      eventName.startsWith("agent_context_compaction_")
+    );
+  });
+}
+
+function captureRuntimeStream(matcher: (eventName: unknown) => boolean) {
   let streamHandler: ((event: { payload: unknown }) => void) | null = null;
   let activeEventName: string | null = null;
 
   mockSafeListen.mockImplementation(async (eventName, handler) => {
-    if (
-      typeof eventName === "string" &&
-      eventName.startsWith("aster_stream_")
-    ) {
+    if (matcher(eventName)) {
       streamHandler = handler as (event: { payload: unknown }) => void;
-      activeEventName = eventName;
+      activeEventName =
+        typeof eventName === "string" ? eventName : String(eventName);
       return () => {
         if (streamHandler === handler) {
           streamHandler = null;
@@ -204,9 +234,13 @@ beforeEach(() => {
   mockCreateAgentRuntimeSession.mockReset();
   mockListAgentRuntimeSessions.mockReset();
   mockGetAgentRuntimeSession.mockReset();
+  mockGetAgentRuntimeThreadRead.mockReset();
   mockUpdateAgentRuntimeSession.mockReset();
   mockDeleteAgentRuntimeSession.mockReset();
+  mockCompactAgentRuntimeSession.mockReset();
   mockInterruptAgentRuntimeTurn.mockReset();
+  mockReplayAgentRuntimeRequest.mockReset();
+  mockPromoteAgentRuntimeQueuedTurn.mockReset();
   mockRemoveAgentRuntimeQueuedTurn.mockReset();
   mockRespondAgentRuntimeAction.mockReset();
   mockParseStreamEvent.mockReset();
@@ -229,9 +263,13 @@ beforeEach(() => {
     id: "session-from-api",
     messages: [],
   });
+  mockGetAgentRuntimeThreadRead.mockResolvedValue(undefined);
   mockUpdateAgentRuntimeSession.mockResolvedValue(undefined);
   mockDeleteAgentRuntimeSession.mockResolvedValue(undefined);
+  mockCompactAgentRuntimeSession.mockResolvedValue(undefined);
   mockInterruptAgentRuntimeTurn.mockResolvedValue(undefined);
+  mockReplayAgentRuntimeRequest.mockResolvedValue(null);
+  mockPromoteAgentRuntimeQueuedTurn.mockResolvedValue(true);
   mockRemoveAgentRuntimeQueuedTurn.mockResolvedValue(true);
   mockRespondAgentRuntimeAction.mockResolvedValue(undefined);
   mockParseStreamEvent.mockImplementation((payload: unknown) => payload);
@@ -381,9 +419,9 @@ describe("useAsterAgentChat 首页新会话", () => {
       expect(harness.getValue().sessionId).toBe("session-live-missing");
       expect(harness.getValue().messages.length).toBeGreaterThan(0);
       expect(
-        harness.getValue().topics.some(
-          (topic) => topic.id === "session-live-missing",
-        ),
+        harness
+          .getValue()
+          .topics.some((topic) => topic.id === "session-live-missing"),
       ).toBe(true);
       expect(mockGetAgentRuntimeSession).toHaveBeenCalledWith(
         "session-live-missing",
@@ -455,7 +493,9 @@ describe("useAsterAgentChat 首页新会话", () => {
       expect(mockGetAgentRuntimeSession).toHaveBeenCalledWith(missingSessionId);
       expect(harness.getValue().sessionId).toBe(activeSessionId);
       expect(
-        harness.getValue().topics.some((topic) => topic.id === missingSessionId),
+        harness
+          .getValue()
+          .topics.some((topic) => topic.id === missingSessionId),
       ).toBe(false);
       expect(harness.getValue().messages).toHaveLength(0);
     } finally {
@@ -465,6 +505,97 @@ describe("useAsterAgentChat 首页新会话", () => {
 });
 
 describe("useAsterAgentChat 任务快照", () => {
+  it("停止后刷新会话详情暂未返回历史时，应保留右侧本地对话内容", async () => {
+    const workspaceId = "ws-task-stop-refresh-empty-history";
+    const sessionId = "session-task-stop-refresh-empty-history";
+    captureTurnStream();
+    mockCreateAgentRuntimeSession.mockResolvedValue(sessionId);
+    mockListAgentRuntimeSessions.mockResolvedValue([]);
+    mockGetAgentRuntimeSession.mockResolvedValue({
+      id: sessionId,
+      name: "当前任务",
+      created_at: 1700000300,
+      updated_at: 1700000301,
+      messages: [],
+      turns: [],
+      items: [],
+      queued_turns: [],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage(
+            "帮我继续整理这份任务",
+            [],
+            false,
+            false,
+            false,
+            "react",
+          );
+      });
+
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().stopSending();
+      });
+
+      await flushEffects();
+      await flushEffects();
+
+      expect(mockGetAgentRuntimeSession).toHaveBeenCalledWith(sessionId);
+      expect(harness.getValue().messages).toHaveLength(2);
+      expect(harness.getValue().messages[0]?.content).toContain(
+        "帮我继续整理这份任务",
+      );
+      expect(harness.getValue().messages[1]?.content).toBe("(已停止)");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("恢复态会话执行 stopSending 时也应刷新 thread_read", async () => {
+    const workspaceId = "ws-stop-refresh";
+    const sessionId = "session-stop-refresh";
+    seedSession(workspaceId, sessionId);
+    mockGetAgentRuntimeThreadRead.mockResolvedValueOnce({
+      thread_id: "thread-stop-refresh",
+      status: "interrupted",
+      pending_requests: [],
+      incidents: [],
+      queued_turns: [],
+      interrupt_state: "interrupted",
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+      await harness.getValue().stopSending();
+      });
+
+      expect(mockInterruptAgentRuntimeTurn).toHaveBeenCalledWith({
+        session_id: sessionId,
+      });
+      expect(mockGetAgentRuntimeThreadRead).toHaveBeenCalledWith(sessionId);
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-stop-refresh",
+        status: "interrupted",
+        interrupt_state: "interrupted",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
   it("空会话快照稳定后不应继续自发重渲染", async () => {
     const workspaceId = "ws-task-stable";
     const sessionId = "session-task-stable";
@@ -498,7 +629,9 @@ describe("useAsterAgentChat 任务快照", () => {
       await flushEffects();
       await flushEffects();
 
-      let topic = harness.getValue().topics.find((item) => item.id === sessionId);
+      let topic = harness
+        .getValue()
+        .topics.find((item) => item.id === sessionId);
       for (let attempt = 0; !topic && attempt < 3; attempt += 1) {
         await flushEffects();
         topic = harness.getValue().topics.find((item) => item.id === sessionId);
@@ -687,7 +820,9 @@ describe("useAsterAgentChat team 订阅", () => {
       expect(mockGetAgentRuntimeSession).toHaveBeenCalledTimes(1);
 
       const listener = listeners
-        .filter((item) => item.eventName === `agent_subagent_status:${sessionId}`)
+        .filter(
+          (item) => item.eventName === `agent_subagent_status:${sessionId}`,
+        )
         .at(-1);
       expect(listener).toBeTruthy();
 
@@ -768,7 +903,9 @@ describe("useAsterAgentChat team 订阅", () => {
       expect(mockGetAgentRuntimeSession).toHaveBeenCalledTimes(1);
 
       const listener = listeners
-        .filter((item) => item.eventName === `agent_subagent_status:${sessionId}`)
+        .filter(
+          (item) => item.eventName === `agent_subagent_status:${sessionId}`,
+        )
         .at(-1);
       expect(listener).toBeTruthy();
 
@@ -884,6 +1021,94 @@ describe("useAsterAgentChat.confirmAction", () => {
       harness.unmount();
     }
   });
+
+  it("confirmAction 成功后应刷新当前会话详情以同步 thread_read", async () => {
+    const workspaceId = "ws-ask-user-refresh";
+    seedSession(workspaceId, "session-ask-user-refresh");
+    mockGetAgentRuntimeThreadRead.mockResolvedValueOnce({
+      thread_id: "thread-ask-user-refresh",
+      status: "running",
+      pending_requests: [],
+      incidents: [],
+      queued_turns: [],
+    });
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().confirmAction({
+          requestId: "req-ask-user-refresh-1",
+          confirmed: true,
+          actionType: "ask_user",
+          response: '{"answer":"已确认"}',
+        });
+      });
+
+      expect(mockGetAgentRuntimeThreadRead).toHaveBeenCalledTimes(1);
+      expect(mockGetAgentRuntimeThreadRead).toHaveBeenCalledWith(
+        "session-ask-user-refresh",
+      );
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-ask-user-refresh",
+        status: "running",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("confirmAction 等待 read-model 回填时，应暴露 submittedActionsInFlight", async () => {
+    const workspaceId = "ws-ask-user-submitting";
+    seedSession(workspaceId, "session-ask-user-submitting");
+    let resolveRefresh: (() => void) | null = null;
+    mockGetAgentRuntimeThreadRead.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRefresh = () =>
+            resolve({
+              thread_id: "thread-ask-user-submitting",
+              status: "running",
+              pending_requests: [],
+              incidents: [],
+              queued_turns: [],
+            });
+        }),
+    );
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+
+      let submissionPromise: Promise<void>;
+      act(() => {
+        submissionPromise = harness.getValue().confirmAction({
+          requestId: "req-ask-user-submitting-1",
+          confirmed: true,
+          actionType: "ask_user",
+          response: '{"answer":"已确认"}',
+        });
+      });
+
+      await flushEffects();
+      expect(harness.getValue().submittedActionsInFlight).toMatchObject([
+        {
+          requestId: "req-ask-user-submitting-1",
+          actionType: "ask_user",
+          status: "submitted",
+        },
+      ]);
+
+      await act(async () => {
+        resolveRefresh?.();
+        await submissionPromise!;
+      });
+
+      expect(harness.getValue().submittedActionsInFlight).toEqual([]);
+    } finally {
+      harness.unmount();
+    }
+  });
 });
 
 describe("useAsterAgentChat queue hydration", () => {
@@ -931,6 +1156,355 @@ describe("useAsterAgentChat queue hydration", () => {
           position: 1,
         },
       ]);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("removeQueuedTurn 后应刷新 thread_read 与队列快照", async () => {
+    const sessionId = "session-queue-remove";
+    const harness = mountHook("ws-queue-remove");
+    let removed = false;
+    mockRemoveAgentRuntimeQueuedTurn.mockImplementation(async () => {
+      removed = true;
+      return true;
+    });
+    mockGetAgentRuntimeSession.mockImplementation(async () =>
+      removed
+        ? {
+            id: sessionId,
+            messages: [],
+            turns: [],
+            items: [],
+            queued_turns: [],
+            thread_read: {
+              thread_id: "thread-queue-remove",
+              status: "idle",
+              pending_requests: [],
+              incidents: [],
+              queued_turns: [],
+            },
+          }
+        : {
+            id: sessionId,
+            messages: [],
+            turns: [],
+            items: [],
+            queued_turns: [
+              {
+                queuedTurnId: "queued-1",
+                messagePreview: "继续生成周报",
+                messageText: "继续生成周报正文",
+                createdAt: 1700000000000,
+                imageCount: 0,
+                position: 1,
+              },
+            ],
+            thread_read: {
+              thread_id: "thread-queue-remove",
+              status: "queued",
+              pending_requests: [],
+              incidents: [],
+              queued_turns: [
+                {
+                  queuedTurnId: "queued-1",
+                  messagePreview: "继续生成周报",
+                  messageText: "继续生成周报正文",
+                  createdAt: 1700000000000,
+                  imageCount: 0,
+                  position: 1,
+                },
+              ],
+            },
+          },
+    );
+    mockGetAgentRuntimeThreadRead.mockImplementation(async () =>
+      removed
+        ? {
+            thread_id: "thread-queue-remove",
+            status: "idle",
+            pending_requests: [],
+            incidents: [],
+            queued_turns: [],
+          }
+        : {
+            thread_id: "thread-queue-remove",
+            status: "queued",
+            pending_requests: [],
+            incidents: [],
+            queued_turns: [
+              {
+                queuedTurnId: "queued-1",
+                messagePreview: "继续生成周报",
+                messageText: "继续生成周报正文",
+                createdAt: 1700000000000,
+                imageCount: 0,
+                position: 1,
+              },
+            ],
+          },
+    );
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic(sessionId);
+      });
+      await flushEffects();
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-queue-remove",
+        status: "queued",
+      });
+
+      await act(async () => {
+        await harness.getValue().removeQueuedTurn("queued-1");
+      });
+      await flushEffects();
+
+      expect(mockRemoveAgentRuntimeQueuedTurn).toHaveBeenCalledWith({
+        session_id: sessionId,
+        queued_turn_id: "queued-1",
+      });
+      expect(mockGetAgentRuntimeThreadRead).toHaveBeenCalledWith(sessionId);
+      expect(harness.getValue().queuedTurns).toEqual([]);
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-queue-remove",
+        status: "idle",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("promoteQueuedTurn 后应刷新 thread_read 为最新运行态", async () => {
+    const sessionId = "session-queue-promote";
+    const harness = mountHook("ws-queue-promote");
+    let promoted = false;
+    mockPromoteAgentRuntimeQueuedTurn.mockImplementation(async () => {
+      promoted = true;
+      return true;
+    });
+    mockGetAgentRuntimeSession.mockImplementation(async () =>
+      promoted
+        ? {
+            id: sessionId,
+            messages: [],
+            turns: [],
+            items: [],
+            queued_turns: [],
+            thread_read: {
+              thread_id: "thread-queue-promote",
+              status: "running",
+              active_turn_id: "turn-running-1",
+              pending_requests: [],
+              incidents: [],
+              queued_turns: [],
+            },
+          }
+        : {
+            id: sessionId,
+            messages: [],
+            turns: [],
+            items: [],
+            queued_turns: [
+              {
+                queuedTurnId: "queued-1",
+                messagePreview: "继续执行排队任务",
+                messageText: "继续执行排队任务正文",
+                createdAt: 1700000000000,
+                imageCount: 0,
+                position: 1,
+              },
+            ],
+            thread_read: {
+              thread_id: "thread-queue-promote",
+              status: "queued",
+              pending_requests: [],
+              incidents: [],
+              queued_turns: [
+                {
+                  queuedTurnId: "queued-1",
+                  messagePreview: "继续执行排队任务",
+                  messageText: "继续执行排队任务正文",
+                  createdAt: 1700000000000,
+                  imageCount: 0,
+                  position: 1,
+                },
+              ],
+            },
+          },
+    );
+    mockGetAgentRuntimeThreadRead.mockImplementation(async () =>
+      promoted
+        ? {
+            thread_id: "thread-queue-promote",
+            status: "running",
+            active_turn_id: "turn-running-1",
+            pending_requests: [],
+            incidents: [],
+            queued_turns: [],
+          }
+        : {
+            thread_id: "thread-queue-promote",
+            status: "queued",
+            pending_requests: [],
+            incidents: [],
+            queued_turns: [
+              {
+                queuedTurnId: "queued-1",
+                messagePreview: "继续执行排队任务",
+                messageText: "继续执行排队任务正文",
+                createdAt: 1700000000000,
+                imageCount: 0,
+                position: 1,
+              },
+            ],
+          },
+    );
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic(sessionId);
+      });
+      await flushEffects();
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-queue-promote",
+        status: "queued",
+      });
+
+      await act(async () => {
+        await harness.getValue().promoteQueuedTurn("queued-1");
+      });
+      await flushEffects();
+
+      expect(mockPromoteAgentRuntimeQueuedTurn).toHaveBeenCalledWith({
+        session_id: sessionId,
+        queued_turn_id: "queued-1",
+      });
+      expect(mockGetAgentRuntimeThreadRead).toHaveBeenCalledWith(sessionId);
+      expect(harness.getValue().queuedTurns).toEqual([]);
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-queue-promote",
+        status: "running",
+        active_turn_id: "turn-running-1",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("resumeThread 后应刷新 thread_read 为最新运行态", async () => {
+    const sessionId = "session-thread-resume";
+    const harness = mountHook("ws-thread-resume");
+    let resumed = false;
+    mockResumeAgentRuntimeThread.mockImplementation(async () => {
+      resumed = true;
+      return true;
+    });
+    mockGetAgentRuntimeSession.mockImplementation(async () =>
+      resumed
+        ? {
+            id: sessionId,
+            messages: [],
+            turns: [],
+            items: [],
+            queued_turns: [],
+            thread_read: {
+              thread_id: "thread-thread-resume",
+              status: "running",
+              active_turn_id: "turn-running-1",
+              pending_requests: [],
+              incidents: [],
+              queued_turns: [],
+            },
+          }
+        : {
+            id: sessionId,
+            messages: [],
+            turns: [],
+            items: [],
+            queued_turns: [
+              {
+                queuedTurnId: "queued-1",
+                messagePreview: "继续执行排队任务",
+                messageText: "继续执行排队任务正文",
+                createdAt: 1700000000000,
+                imageCount: 0,
+                position: 1,
+              },
+            ],
+            thread_read: {
+              thread_id: "thread-thread-resume",
+              status: "queued",
+              pending_requests: [],
+              incidents: [],
+              queued_turns: [
+                {
+                  queuedTurnId: "queued-1",
+                  messagePreview: "继续执行排队任务",
+                  messageText: "继续执行排队任务正文",
+                  createdAt: 1700000000000,
+                  imageCount: 0,
+                  position: 1,
+                },
+              ],
+            },
+          },
+    );
+    mockGetAgentRuntimeThreadRead.mockImplementation(async () =>
+      resumed
+        ? {
+            thread_id: "thread-thread-resume",
+            status: "running",
+            active_turn_id: "turn-running-1",
+            pending_requests: [],
+            incidents: [],
+            queued_turns: [],
+          }
+        : {
+            thread_id: "thread-thread-resume",
+            status: "queued",
+            pending_requests: [],
+            incidents: [],
+            queued_turns: [
+              {
+                queuedTurnId: "queued-1",
+                messagePreview: "继续执行排队任务",
+                messageText: "继续执行排队任务正文",
+                createdAt: 1700000000000,
+                imageCount: 0,
+                position: 1,
+              },
+            ],
+          },
+    );
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic(sessionId);
+      });
+      await flushEffects();
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-thread-resume",
+        status: "queued",
+      });
+
+      await act(async () => {
+        await harness.getValue().resumeThread();
+      });
+      await flushEffects();
+
+      expect(mockResumeAgentRuntimeThread).toHaveBeenCalledWith({
+        session_id: sessionId,
+      });
+      expect(mockGetAgentRuntimeThreadRead).toHaveBeenCalledWith(sessionId);
+      expect(harness.getValue().threadRead).toMatchObject({
+        thread_id: "thread-thread-resume",
+        status: "running",
+        active_turn_id: "turn-running-1",
+      });
     } finally {
       harness.unmount();
     }
@@ -1000,7 +1574,9 @@ describe("useAsterAgentChat thread timeline", () => {
   it("submitTurn 失败时应保留失败回合与失败消息，而不是清空当前过程", async () => {
     const workspaceId = "ws-thread-submit-failed";
     seedSession(workspaceId, "session-thread-submit-failed");
-    mockSubmitAgentRuntimeTurn.mockRejectedValueOnce(new Error("429 rate limit"));
+    mockSubmitAgentRuntimeTurn.mockRejectedValueOnce(
+      new Error("429 rate limit"),
+    );
     const harness = mountHook(workspaceId);
 
     try {
@@ -1019,7 +1595,7 @@ describe("useAsterAgentChat thread timeline", () => {
       expect(assistantMessage?.content).toContain("执行失败：429 rate limit");
       expect(assistantMessage?.runtimeStatus).toMatchObject({
         phase: "failed",
-        title: "当前执行失败",
+        title: "当前处理失败",
       });
       expect(harness.getValue().turns).toEqual([
         expect.objectContaining({
@@ -1033,7 +1609,9 @@ describe("useAsterAgentChat thread timeline", () => {
           status: "failed",
         }),
       ]);
-      expect(mockToast.warning).toHaveBeenCalledWith("请求过于频繁，请稍后重试");
+      expect(mockToast.warning).toHaveBeenCalledWith(
+        "请求过于频繁，请稍后重试",
+      );
     } finally {
       harness.unmount();
     }
@@ -1166,7 +1744,7 @@ describe("useAsterAgentChat thread timeline", () => {
       expect(assistantMessage?.content).toContain("执行失败：模型执行失败");
       expect(assistantMessage?.runtimeStatus).toMatchObject({
         phase: "failed",
-        title: "当前执行失败",
+        title: "当前处理失败",
       });
       expect(harness.getValue().turns).toEqual([
         expect.objectContaining({
@@ -1184,6 +1762,123 @@ describe("useAsterAgentChat thread timeline", () => {
         }),
       ]);
       expect(mockToast.error).toHaveBeenCalledWith("响应错误: 模型执行失败");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("手动压缩上下文时即使没有 assistant 正文也应完成时间线更新", async () => {
+    const workspaceId = "ws-context-compaction";
+    seedSession(workspaceId, "session-context-compaction");
+    const harness = mountHook(workspaceId);
+    const stream = captureContextCompactionStream();
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().compactSession();
+      });
+
+      expect(mockCompactAgentRuntimeSession).toHaveBeenCalledWith({
+        session_id: "session-context-compaction",
+        event_name: stream.getEventName(),
+      });
+
+      act(() => {
+        stream.emit({
+          type: "turn_started",
+          turn: {
+            id: "turn-compact-1",
+            thread_id: "session-context-compaction",
+            prompt_text: "压缩上下文",
+            status: "running",
+            started_at: "2026-03-23T09:00:00.000Z",
+            created_at: "2026-03-23T09:00:00.000Z",
+            updated_at: "2026-03-23T09:00:00.000Z",
+          },
+        });
+        stream.emit({
+          type: "item_started",
+          item: {
+            id: "compact-1",
+            thread_id: "session-context-compaction",
+            turn_id: "turn-compact-1",
+            sequence: 1,
+            status: "in_progress",
+            started_at: "2026-03-23T09:00:01.000Z",
+            updated_at: "2026-03-23T09:00:01.000Z",
+            type: "context_compaction",
+            stage: "started",
+            trigger: "manual",
+            detail: "压缩当前会话上下文",
+          },
+        });
+        stream.emit({
+          type: "item_completed",
+          item: {
+            id: "compact-1",
+            thread_id: "session-context-compaction",
+            turn_id: "turn-compact-1",
+            sequence: 1,
+            status: "completed",
+            started_at: "2026-03-23T09:00:01.000Z",
+            completed_at: "2026-03-23T09:00:03.000Z",
+            updated_at: "2026-03-23T09:00:03.000Z",
+            type: "context_compaction",
+            stage: "completed",
+            trigger: "manual",
+            detail: "已生成摘要并替换旧上下文",
+          },
+        });
+        stream.emit({
+          type: "turn_completed",
+          turn: {
+            id: "turn-compact-1",
+            thread_id: "session-context-compaction",
+            prompt_text: "压缩上下文",
+            status: "completed",
+            started_at: "2026-03-23T09:00:00.000Z",
+            completed_at: "2026-03-23T09:00:04.000Z",
+            created_at: "2026-03-23T09:00:00.000Z",
+            updated_at: "2026-03-23T09:00:04.000Z",
+          },
+        });
+        stream.emit({
+          type: "warning",
+          code: "context_compaction_accuracy",
+          message:
+            "长对话和多次上下文压缩会降低模型准确性；如果后续结果开始漂移，建议新开会话。",
+        });
+        stream.emit({
+          type: "final_done",
+        });
+      });
+
+      expect(harness.getValue().isSending).toBe(false);
+      expect(harness.getValue().currentTurnId).toBe("turn-compact-1");
+      expect(harness.getValue().turns).toEqual([
+        expect.objectContaining({
+          id: "turn-compact-1",
+          status: "completed",
+        }),
+      ]);
+      expect(harness.getValue().threadItems).toEqual([
+        expect.objectContaining({
+          id: "compact-1",
+          type: "context_compaction",
+          status: "completed",
+          stage: "completed",
+          trigger: "manual",
+          detail: "已生成摘要并替换旧上下文",
+        }),
+      ]);
+      expect(mockToast.warning).toHaveBeenCalledWith(
+        "长对话和多次上下文压缩会降低模型准确性；如果后续结果开始漂移，建议新开会话。",
+      );
+      expect(mockToast.error).not.toHaveBeenCalledWith(
+        expect.stringContaining("压缩上下文失败"),
+      );
     } finally {
       harness.unmount();
     }
@@ -1527,6 +2222,141 @@ describe("useAsterAgentChat slash skill 执行链路", () => {
 
       expect(mockTryExecuteSlashSkillCommand).toHaveBeenCalledTimes(1);
       expect(mockSubmitAgentRuntimeTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("命中 /compact 时应走本地压缩分支而非 chat_stream", async () => {
+    const workspaceId = "ws-slash-compact";
+    seedSession(workspaceId, "session-slash-compact");
+    const harness = mountHook(workspaceId);
+    const stream = captureContextCompactionStream();
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("/compact", [], false, false, false, "react");
+      });
+
+      expect(mockCompactAgentRuntimeSession).toHaveBeenCalledWith({
+        session_id: "session-slash-compact",
+        event_name: stream.getEventName(),
+      });
+      expect(mockSubmitAgentRuntimeTurn).not.toHaveBeenCalled();
+      expect(mockParseSkillSlashCommand).not.toHaveBeenCalled();
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("命中 /clear 时应清空当前任务且不发送 chat_stream", async () => {
+    const workspaceId = "ws-slash-clear";
+    seedSession(workspaceId, "session-slash-clear");
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      expect(harness.getValue().messages).toHaveLength(1);
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("/clear", [], false, false, false, "react");
+      });
+
+      expect(mockSubmitAgentRuntimeTurn).not.toHaveBeenCalled();
+      expect(harness.getValue().messages).toEqual([]);
+      expect(harness.getValue().sessionId).toBeNull();
+      expect(mockToast.success).toHaveBeenCalledWith("已清空当前任务");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("命中 /new 标题 时应创建新任务且不发送 chat_stream", async () => {
+    const workspaceId = "ws-slash-new";
+    const harness = mountHook(workspaceId);
+
+    mockCreateAgentRuntimeSession.mockResolvedValue("session-slash-new");
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("/new 重构输入命令", [], false, false, false, "react");
+      });
+
+      expect(mockCreateAgentRuntimeSession).toHaveBeenCalledWith(
+        workspaceId,
+        "重构输入命令",
+        "react",
+      );
+      expect(mockSubmitAgentRuntimeTurn).not.toHaveBeenCalled();
+      expect(harness.getValue().sessionId).toBe("session-slash-new");
+      expect(mockToast.success).toHaveBeenCalledWith("已创建新任务：重构输入命令");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("命中 /review 时应转换为预置 prompt 后走 chat_stream", async () => {
+    const workspaceId = "ws-slash-review";
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("/review src-tauri", [], false, false, false, "react");
+      });
+
+      expect(mockSubmitAgentRuntimeTurn).toHaveBeenCalledTimes(1);
+      expect(mockSubmitAgentRuntimeTurn.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("请对以下对象进行代码审查"),
+        }),
+      );
+      expect(mockSubmitAgentRuntimeTurn.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          message: expect.stringContaining("src-tauri"),
+        }),
+      );
+      expect(mockParseSkillSlashCommand).toHaveBeenCalledWith(
+        expect.stringContaining("请对以下对象进行代码审查"),
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("命中 /status 时应追加本地 assistant 状态消息", async () => {
+    const workspaceId = "ws-slash-status";
+    seedSession(workspaceId, "session-slash-status");
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("/status", [], false, false, false, "react");
+      });
+
+      const latestMessage =
+        harness.getValue().messages[harness.getValue().messages.length - 1];
+      expect(latestMessage).toEqual(
+        expect.objectContaining({
+          role: "assistant",
+          content: expect.stringContaining("当前会话状态："),
+        }),
+      );
+      expect(latestMessage?.content).toContain("session-slash-status");
+      expect(mockSubmitAgentRuntimeTurn).not.toHaveBeenCalled();
     } finally {
       harness.unmount();
     }
@@ -1896,7 +2726,7 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
       });
       expect(assistantMessage?.runtimeStatus).toMatchObject({
         phase: "routing",
-        title: "已提交补充信息，继续执行中",
+        title: "已收到补充信息，继续处理中",
       });
       expect(
         assistantMessage?.contentParts?.some(
@@ -1906,6 +2736,125 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
             part.actionRequired.status === "submitted",
         ),
       ).toBe(true);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("replayPendingAction 应调用 replay request 命令并恢复 pendingActions", async () => {
+    const workspaceId = "ws-replay-action-required";
+    seedSession(workspaceId, "session-replay-action-required");
+    const harness = mountHook(workspaceId);
+    const stream = captureTurnStream();
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        stream.emit({
+          type: "action_required",
+          request_id: "req-replay-1",
+          action_type: "ask_user",
+          prompt: "请选择执行模式",
+          questions: [
+            {
+              question: "请选择执行模式",
+              options: ["自动执行", "确认后执行"],
+            },
+          ],
+        });
+      });
+
+      await act(async () => {
+        await harness.getValue().confirmAction({
+          requestId: "req-replay-1",
+          confirmed: true,
+          actionType: "ask_user",
+          response: '{"answer":"自动执行"}',
+        });
+      });
+
+      let assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(assistantMessage?.actionRequests?.[0]).toMatchObject({
+        requestId: "req-replay-1",
+        status: "submitted",
+      });
+
+      mockReplayAgentRuntimeRequest.mockResolvedValueOnce({
+        type: "action_required",
+        request_id: "req-replay-1",
+        action_type: "ask_user",
+        prompt: "请选择执行模式",
+        questions: [
+          {
+            question: "请选择执行模式",
+            options: ["自动执行", "确认后执行"],
+          },
+        ],
+        scope: {
+          session_id: "session-replay-action-required",
+          thread_id: "thread-replay-action-required",
+          turn_id: "turn-replay-action-required",
+        },
+      });
+
+      await act(async () => {
+        await expect(
+          harness
+            .getValue()
+            .replayPendingAction("req-replay-1", assistantMessage?.id || ""),
+        ).resolves.toBe(true);
+      });
+
+      assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(mockReplayAgentRuntimeRequest).toHaveBeenCalledWith({
+        session_id: "session-replay-action-required",
+        request_id: "req-replay-1",
+      });
+      expect(harness.getValue().pendingActions).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            requestId: "req-replay-1",
+            actionType: "ask_user",
+            status: "pending",
+            scope: {
+              sessionId: "session-replay-action-required",
+              threadId: "thread-replay-action-required",
+              turnId: "turn-replay-action-required",
+            },
+          }),
+        ]),
+      );
+      expect(assistantMessage?.actionRequests).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            requestId: "req-replay-1",
+            actionType: "ask_user",
+            status: "pending",
+          }),
+        ]),
+      );
+      expect(
+        assistantMessage?.contentParts?.some(
+          (part) =>
+            part.type === "action_required" &&
+            part.actionRequired.requestId === "req-replay-1" &&
+            part.actionRequired.status === "pending",
+        ),
+      ).toBe(true);
+      expect(mockToast.success).toHaveBeenCalledWith("已重新拉起待处理请求");
     } finally {
       harness.unmount();
     }

@@ -150,6 +150,16 @@ pub(crate) async fn prepare_aster_runtime_queue_resumption() -> Result<Vec<Strin
     list_aster_runtime_queued_turn_session_ids().await
 }
 
+/// 将暂存的 queued turns 恢复回统一 Aster runtime queue 边界。
+pub async fn restore_aster_runtime_queued_turns(
+    queued_turns: Vec<QueuedTurnRuntime>,
+) -> Result<(), String> {
+    for queued_turn in queued_turns {
+        enqueue_aster_runtime_turn(queued_turn).await?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn enqueue_aster_runtime_turn(
     queued_turn: QueuedTurnRuntime,
 ) -> Result<QueuedTurnRuntime, String> {

@@ -60,7 +60,9 @@ describe("agentChatHistory", () => {
         {
           role: "user",
           timestamp: 1710000000,
-          content: [{ type: "text", text: "请给我一版可直接使用的图片 Prompt" }],
+          content: [
+            { type: "text", text: "请给我一版可直接使用的图片 Prompt" },
+          ],
         },
         {
           role: "assistant",
@@ -75,11 +77,15 @@ describe("agentChatHistory", () => {
     };
 
     const messages = hydrateSessionDetailMessages(detail, "session-1");
-    const assistantMessage = messages.find((message) => message.role === "assistant");
+    const assistantMessage = messages.find(
+      (message) => message.role === "assistant",
+    );
 
     expect(assistantMessage).toBeDefined();
     expect(assistantMessage?.content).toBe("下面是整理好的 Prompt。");
-    expect(assistantMessage?.thinkingContent).toBe("先理解主题，再组织结构。\n");
+    expect(assistantMessage?.thinkingContent).toBe(
+      "先理解主题，再组织结构。\n",
+    );
     expect(assistantMessage?.contentParts).toEqual([
       {
         type: "thinking",
@@ -173,5 +179,29 @@ describe("agentChatHistory", () => {
 
     expect(mergedMessages[0]?.images).toEqual(localMessages[0]?.images);
     expect(mergedMessages[1]?.images).toBeUndefined();
+  });
+
+  it("后端暂未返回历史时应保留本地消息，避免刷新后界面空白", () => {
+    const localMessages = [
+      {
+        id: "local-user-1",
+        role: "user" as const,
+        content: "继续刚才的任务",
+        timestamp: new Date("2026-03-19T00:00:00.000Z"),
+      },
+      {
+        id: "local-assistant-1",
+        role: "assistant" as const,
+        content: "这是刚刚停止后的对话内容",
+        timestamp: new Date("2026-03-19T00:00:01.000Z"),
+      },
+    ];
+
+    const mergedMessages = mergeHydratedMessagesWithLocalState(
+      localMessages,
+      [],
+    );
+
+    expect(mergedMessages).toEqual(localMessages);
   });
 });

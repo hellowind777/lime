@@ -33,11 +33,9 @@ export const upsertAssistantActionRequest = ({
       });
     }
 
-    if (next.some((item) => item.requestId === actionData.requestId)) {
-      return next;
-    }
-
-    return [...next, actionData];
+    next = next.filter((item) => item.requestId !== actionData.requestId);
+    next.push(actionData);
+    return next;
   });
 
   setMessages((prev) =>
@@ -66,12 +64,16 @@ export const upsertAssistantActionRequest = ({
         );
       }
 
-      if (
-        nextRequests.some((item) => item.requestId === actionData.requestId)
-      ) {
-        return msg;
-      }
-
+      nextRequests = nextRequests.filter(
+        (item) => item.requestId !== actionData.requestId,
+      );
+      nextParts = nextParts.filter(
+        (part) =>
+          !(
+            part.type === "action_required" &&
+            part.actionRequired.requestId === actionData.requestId
+          ),
+      );
       nextRequests.push(actionData);
       nextParts = appendActionRequiredToParts(nextParts, actionData);
 

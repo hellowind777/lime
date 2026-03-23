@@ -33,7 +33,21 @@ import type {
 
 interface DecisionPanelProps {
   request: ActionRequired;
-  onSubmit: (response: ConfirmResponse) => void;
+  onSubmit: (response: ConfirmResponse) => void | Promise<void>;
+}
+
+interface DecisionPanelSubmissionState {
+  key: string;
+  kind: "allow" | "deny";
+}
+
+function isPromiseLike(value: unknown): value is Promise<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as Promise<unknown>).then === "function"
+  );
 }
 
 function isBrowserPreflightRequest(request: ActionRequired): boolean {
@@ -310,6 +324,10 @@ function resolveSubmittedAnswerText(request: ActionRequired): string | undefined
 }
 
 export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
+  const requestAnchorProps = {
+    "data-request-id": request.requestId,
+    id: `agent-request-${request.requestId}`,
+  };
   // 解析问题数据（用于 ask_user 类型）
   const questions = request.questions || [];
   const questionOptions = questions.map((question) => {
@@ -333,8 +351,11 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
   const [otherInputs, setOtherInputs] = useState<Record<number, string>>({});
   const [elicitationAnswer, setElicitationAnswer] = useState("");
   const [elicitationOther, setElicitationOther] = useState("");
+  const [submissionState, setSubmissionState] =
+    useState<DecisionPanelSubmissionState | null>(null);
   const isSubmitted = request.status === "submitted";
   const isQueued = request.status === "queued";
+  const isSubmitting = submissionState !== null;
   const submittedAnswer = resolveSubmittedAnswerText(request);
   const isFallbackAskPending =
     request.actionType === "ask_user" && request.isFallback;
@@ -345,7 +366,37 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
     setOtherInputs({});
     setElicitationAnswer("");
     setElicitationOther("");
+    setSubmissionState(null);
   }, [request.requestId]);
+
+  const submitResponse = (
+    response: ConfirmResponse,
+    nextSubmissionState: DecisionPanelSubmissionState,
+  ) => {
+    if (isSubmitting) {
+      return;
+    }
+    setSubmissionState(nextSubmissionState);
+    try {
+      const result = onSubmit(response);
+      if (isPromiseLike(result)) {
+        void result.finally(() => {
+          setSubmissionState((current) =>
+            current?.key === nextSubmissionState.key ? null : current,
+          );
+        });
+        return;
+      }
+      setSubmissionState((current) =>
+        current?.key === nextSubmissionState.key ? null : current,
+      );
+    } catch (error) {
+      setSubmissionState((current) =>
+        current?.key === nextSubmissionState.key ? null : current,
+      );
+      throw error;
+    }
+  };
 
   // 切换选项
   const toggleOption = (
@@ -413,37 +464,68 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
         }
       }
 
-      onSubmit({
-        requestId: request.requestId,
-        confirmed: true,
-        response: JSON.stringify(userData),
-        actionType: request.actionType,
-        userData,
-      });
+      void submitResponse(
+        {
+          requestId: request.requestId,
+          confirmed: true,
+          response: JSON.stringify(userData),
+          actionType: request.actionType,
+          userData,
+        },
+        { key: "allow", kind: "allow" },
+      );
       return;
     }
 
     const answers = buildAnswers();
     const response = questions.length > 0 ? JSON.stringify(answers) : undefined;
-    onSubmit({
-      requestId: request.requestId,
-      confirmed: true,
-      response,
-      actionType: request.actionType,
-      userData: questions.length > 0 ? answers : undefined,
-    });
+    void submitResponse(
+      {
+        requestId: request.requestId,
+        confirmed: true,
+        response,
+        actionType: request.actionType,
+        userData: questions.length > 0 ? answers : undefined,
+      },
+      { key: "allow", kind: "allow" },
+    );
   };
 
-  // 处理拒绝
+  const handleAutoSubmitOption = (
+    optionLabel: string,
+    qIndex: number,
+    actionType: ActionRequired["actionType"],
+  ) => {
+    setSelectedOptions((prev) => ({
+      ...prev,
+      [qIndex]: [optionLabel],
+    }));
+    void submitResponse(
+      {
+        requestId: request.requestId,
+        confirmed: true,
+        response: optionLabel,
+        actionType,
+        userData: { answer: optionLabel },
+      },
+      { key: `option:${qIndex}:${optionLabel}`, kind: "allow" },
+    );
+  };
+
   const handleDeny = () => {
-    onSubmit({
-      requestId: request.requestId,
-      confirmed: false,
-      response: "用户拒绝了请求",
-      actionType: request.actionType,
-      userData:
-        request.actionType === "tool_confirmation" ? undefined : ("" as const),
-    });
+    void submitResponse(
+      {
+        requestId: request.requestId,
+        confirmed: false,
+        response: "用户拒绝了请求",
+        actionType: request.actionType,
+        userData:
+          request.actionType === "tool_confirmation"
+            ? undefined
+            : ("" as const),
+      },
+      { key: "deny", kind: "deny" },
+    );
   };
 
   if (isSubmitted || isQueued) {
@@ -463,7 +545,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
           : "border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20";
 
     return (
-      <Card className={submittedClassName}>
+      <Card className={submittedClassName} {...requestAnchorProps}>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium">
             <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
@@ -535,20 +617,26 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
       browserAction: "launch" | "continue" | "fallback",
       response: string,
     ) => {
-      onSubmit({
-        requestId: request.requestId,
-        confirmed: true,
-        response,
-        actionType: request.actionType,
-        userData: {
-          answer: response,
-          browserAction,
+      void submitResponse(
+        {
+          requestId: request.requestId,
+          confirmed: true,
+          response,
+          actionType: request.actionType,
+          userData: {
+            answer: response,
+            browserAction,
+          },
         },
-      });
+        { key: `browser:${browserAction}:${response}`, kind: "allow" },
+      );
     };
 
     return (
-      <Card className="border-amber-200 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20">
+      <Card
+        className="border-amber-200 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20"
+        {...requestAnchorProps}
+      >
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200">
             {isLaunching ? (
@@ -587,9 +675,18 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                   handleBrowserAction("continue", "我已完成登录，继续执行")
                 }
                 className="bg-amber-600 hover:bg-amber-700"
+                disabled={isSubmitting}
               >
-                <CheckCircle className="mr-1 h-4 w-4" />
-                我已完成登录，继续执行
+                {submissionState?.key ===
+                "browser:continue:我已完成登录，继续执行" ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle className="mr-1 h-4 w-4" />
+                )}
+                {submissionState?.key ===
+                "browser:continue:我已完成登录，继续执行"
+                  ? "继续中..."
+                  : "我已完成登录，继续执行"}
               </Button>
             ) : (
               <Button
@@ -601,9 +698,20 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                   )
                 }
                 className="bg-amber-600 hover:bg-amber-700"
+                disabled={isSubmitting}
               >
-                <Globe className="mr-1 h-4 w-4" />
-                {isFailed ? "重试启动浏览器" : "启动浏览器并继续"}
+                {submissionState?.key ===
+                `browser:launch:${isFailed ? "重新启动浏览器" : "启动浏览器并继续"}` ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <Globe className="mr-1 h-4 w-4" />
+                )}
+                {submissionState?.key ===
+                `browser:launch:${isFailed ? "重新启动浏览器" : "启动浏览器并继续"}`
+                  ? "启动中..."
+                  : isFailed
+                    ? "重试启动浏览器"
+                    : "启动浏览器并继续"}
               </Button>
             )}
 
@@ -612,9 +720,16 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                 size="sm"
                 variant="outline"
                 onClick={() => handleBrowserAction("launch", "重新打开浏览器")}
+                disabled={isSubmitting}
               >
-                <Globe className="mr-1 h-4 w-4" />
-                重新打开浏览器
+                {submissionState?.key === "browser:launch:重新打开浏览器" ? (
+                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                ) : (
+                  <Globe className="mr-1 h-4 w-4" />
+                )}
+                {submissionState?.key === "browser:launch:重新打开浏览器"
+                  ? "处理中..."
+                  : "重新打开浏览器"}
               </Button>
             ) : null}
 
@@ -623,8 +738,16 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                 size="sm"
                 variant="outline"
                 onClick={() => handleBrowserAction("fallback", "改为仅做网页检索")}
+                disabled={isSubmitting}
               >
-                改为仅做网页检索
+                {submissionState?.key === "browser:fallback:改为仅做网页检索" ? (
+                  <>
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    处理中...
+                  </>
+                ) : (
+                  "改为仅做网页检索"
+                )}
               </Button>
             ) : null}
           </div>
@@ -636,7 +759,10 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
   // 渲染 elicitation 面板
   if (request.actionType === "elicitation") {
     return (
-      <Card className="border-indigo-200 bg-indigo-50/50 dark:border-indigo-800 dark:bg-indigo-950/20">
+      <Card
+        className="border-indigo-200 bg-indigo-50/50 dark:border-indigo-800 dark:bg-indigo-950/20"
+        {...requestAnchorProps}
+      >
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-indigo-700 dark:text-indigo-300">
             <HelpCircle className="h-4 w-4" />
@@ -667,7 +793,9 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                       isSelected
                         ? "border-indigo-500 bg-indigo-100 dark:border-indigo-400 dark:bg-indigo-900/30"
                         : "border-border bg-background hover:border-indigo-300 hover:bg-muted",
+                      isSubmitting && "cursor-not-allowed opacity-70",
                     )}
+                    disabled={isSubmitting}
                     onClick={() => setElicitationAnswer(option)}
                   >
                     {option}
@@ -684,6 +812,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
             <Input
               placeholder="请输入回答..."
               value={elicitationAnswer}
+              disabled={isSubmitting}
               onChange={(e) => setElicitationAnswer(e.target.value)}
             />
           </div>
@@ -695,6 +824,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
             <Input
               placeholder="可选补充内容..."
               value={elicitationOther}
+              disabled={isSubmitting}
               onChange={(e) => setElicitationOther(e.target.value)}
             />
           </div>
@@ -703,15 +833,28 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
             <Button
               size="sm"
               onClick={handleAllow}
-              disabled={!canSubmit}
+              disabled={!canSubmit || isSubmitting}
               className="bg-indigo-600 hover:bg-indigo-700"
             >
-              <CheckCircle className="mr-1 h-4 w-4" />
-              提交
+              {submissionState?.key === "allow" ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle className="mr-1 h-4 w-4" />
+              )}
+              {submissionState?.key === "allow" ? "提交中..." : "提交"}
             </Button>
-            <Button size="sm" variant="outline" onClick={handleDeny}>
-              <XCircle className="mr-1 h-4 w-4" />
-              取消
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDeny}
+              disabled={isSubmitting}
+            >
+              {submissionState?.key === "deny" ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <XCircle className="mr-1 h-4 w-4" />
+              )}
+              {submissionState?.key === "deny" ? "取消中..." : "取消"}
             </Button>
           </div>
         </CardContent>
@@ -727,7 +870,10 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
   ) {
     const questions = request.questions;
     return (
-      <Card className="border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20">
+      <Card
+        className="border-blue-200 bg-blue-50/50 dark:border-blue-800 dark:bg-blue-950/20"
+        {...requestAnchorProps}
+      >
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-sm font-medium text-blue-700 dark:text-blue-300">
             <HelpCircle className="h-4 w-4" />
@@ -764,22 +910,28 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                           isSelected
                             ? "border-blue-500 bg-blue-100 dark:border-blue-400 dark:bg-blue-900/30"
                             : "border-border bg-background hover:border-blue-300 hover:bg-muted",
+                          isSubmitting && "cursor-not-allowed opacity-70",
                         )}
+                        disabled={isSubmitting}
                         onClick={() => {
                           if (shouldAutoSubmit) {
-                            onSubmit({
-                              requestId: request.requestId,
-                              confirmed: true,
-                              response: option.label,
-                              actionType: request.actionType,
-                              userData: { answer: option.label },
-                            });
+                            handleAutoSubmitOption(
+                              option.label,
+                              qIndex,
+                              request.actionType,
+                            );
                             return;
                           }
                           toggleOption(qIndex, option.label, q.multiSelect);
                         }}
                       >
-                        <div className="font-medium">{option.label}</div>
+                        <div className="flex items-center gap-2 font-medium">
+                          {submissionState?.key ===
+                          `option:${qIndex}:${option.label}` ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : null}
+                          <span>{option.label}</span>
+                        </div>
                         {option.description && (
                           <div className="mt-1 text-xs text-muted-foreground">
                             {option.description}
@@ -799,6 +951,7 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
                 <Input
                   placeholder="输入你的答案..."
                   value={otherInputs[qIndex] ?? ""}
+                  disabled={isSubmitting}
                   onChange={(e) =>
                     setOtherInputs((prev) => ({
                       ...prev,
@@ -827,15 +980,34 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
             <Button
               size="sm"
               onClick={handleAllow}
-              disabled={!canSubmit}
+              disabled={!canSubmit || isSubmitting}
               className="bg-blue-600 hover:bg-blue-700"
             >
-              <CheckCircle className="mr-1 h-4 w-4" />
-              {isFallbackAskPending ? "记录答案" : "提交答案"}
+              {submissionState?.key === "allow" ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle className="mr-1 h-4 w-4" />
+              )}
+              {submissionState?.key === "allow"
+                ? isFallbackAskPending
+                  ? "记录中..."
+                  : "提交中..."
+                : isFallbackAskPending
+                  ? "记录答案"
+                  : "提交答案"}
             </Button>
-            <Button size="sm" variant="outline" onClick={handleDeny}>
-              <XCircle className="mr-1 h-4 w-4" />
-              取消
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDeny}
+              disabled={isSubmitting}
+            >
+              {submissionState?.key === "deny" ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <XCircle className="mr-1 h-4 w-4" />
+              )}
+              {submissionState?.key === "deny" ? "取消中..." : "取消"}
             </Button>
           </div>
         </CardContent>
@@ -845,7 +1017,10 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
 
   // 渲染工具确认面板
   return (
-    <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20">
+    <Card
+      className="border-amber-200 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20"
+      {...requestAnchorProps}
+    >
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm font-medium text-amber-700 dark:text-amber-300">
           <AlertTriangle className="h-4 w-4" />
@@ -879,13 +1054,27 @@ export function DecisionPanel({ request, onSubmit }: DecisionPanelProps) {
             size="sm"
             onClick={handleAllow}
             className="bg-green-600 hover:bg-green-700"
+            disabled={isSubmitting}
           >
-            <CheckCircle className="mr-1 h-4 w-4" />
-            允许
+            {submissionState?.key === "allow" ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle className="mr-1 h-4 w-4" />
+            )}
+            {submissionState?.key === "allow" ? "处理中..." : "允许"}
           </Button>
-          <Button size="sm" variant="outline" onClick={handleDeny}>
-            <XCircle className="mr-1 h-4 w-4" />
-            拒绝
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleDeny}
+            disabled={isSubmitting}
+          >
+            {submissionState?.key === "deny" ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <XCircle className="mr-1 h-4 w-4" />
+            )}
+            {submissionState?.key === "deny" ? "处理中..." : "拒绝"}
           </Button>
         </div>
       </CardContent>

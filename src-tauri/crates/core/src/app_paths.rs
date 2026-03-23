@@ -10,7 +10,10 @@ const COMPAT_HOME_DIR_NAME: &str = ".lime";
 const DATABASE_FILE_NAME: &str = "lime.db";
 const LEGACY_DATABASE_FILE_NAME: &str = "proxycast.db";
 const MIGRATION_MARKER_FILE: &str = ".migration_completed";
+const USER_MEMORY_FILE_NAME: &str = "AGENTS.md";
 const LEGACY_USER_MEMORY_FILE_NAMES: &[&str] = &["AGENTS.md", "AGENT.md", "instructions.md"];
+const WORKSPACE_RUNTIME_DIR_NAME: &str = ".lime";
+const WORKSPACE_LOCAL_RUNTIME_AGENTS_FILE_NAME: &str = "AGENTS.local.md";
 const USER_SIGNAL_TABLES: &[&str] = &[
     "contents",
     "agent_sessions",
@@ -19,6 +22,7 @@ const USER_SIGNAL_TABLES: &[&str] = &[
     "api_keys",
     "heartbeat_executions",
 ];
+pub const WORKSPACE_LOCAL_RUNTIME_AGENTS_GITIGNORE_ENTRY: &str = ".lime/AGENTS.local.md";
 
 pub fn preferred_data_dir() -> Result<PathBuf, String> {
     let dir = dirs::data_dir()
@@ -95,6 +99,18 @@ pub fn resolve_lime_skill_roots() -> Result<Vec<PathBuf>, String> {
     }
     roots.push(resolve_skills_dir()?);
     Ok(roots)
+}
+
+pub fn resolve_workspace_runtime_agents_path(working_dir: &Path) -> PathBuf {
+    working_dir
+        .join(WORKSPACE_RUNTIME_DIR_NAME)
+        .join(USER_MEMORY_FILE_NAME)
+}
+
+pub fn resolve_workspace_local_runtime_agents_path(working_dir: &Path) -> PathBuf {
+    working_dir
+        .join(WORKSPACE_RUNTIME_DIR_NAME)
+        .join(WORKSPACE_LOCAL_RUNTIME_AGENTS_FILE_NAME)
 }
 
 pub fn resolve_user_memory_path() -> Result<PathBuf, String> {
@@ -188,7 +204,7 @@ fn fallback_user_memory_path() -> PathBuf {
     dirs::home_dir()
         .map(|home| home.join(COMPAT_HOME_DIR_NAME))
         .unwrap_or_else(|| fallback_app_data_dir().join(COMPAT_HOME_DIR_NAME))
-        .join("AGENTS.md")
+        .join(USER_MEMORY_FILE_NAME)
 }
 
 fn resolve_project_skills_dir_from_cwd(cwd: &Path) -> PathBuf {
@@ -254,7 +270,7 @@ fn resolve_user_memory_path_from_source_roots(
     preferred_root: &Path,
     legacy_roots: &[PathBuf],
 ) -> Result<PathBuf, String> {
-    let preferred_path = preferred_root.join("AGENTS.md");
+    let preferred_path = preferred_root.join(USER_MEMORY_FILE_NAME);
     if preferred_path.exists() {
         return Ok(preferred_path);
     }
@@ -801,6 +817,30 @@ mod tests {
         let cwd = Path::new("/tmp/workspace");
         let resolved = resolve_project_skills_dir_from_cwd(cwd);
         assert_eq!(resolved, cwd.join(".agents").join("skills"));
+    }
+
+    #[test]
+    fn resolve_workspace_runtime_agents_path_builds_workspace_file_path() {
+        let workspace_root = Path::new("/tmp/workspace");
+        let resolved = resolve_workspace_runtime_agents_path(workspace_root);
+        assert_eq!(
+            resolved,
+            workspace_root
+                .join(WORKSPACE_RUNTIME_DIR_NAME)
+                .join(USER_MEMORY_FILE_NAME)
+        );
+    }
+
+    #[test]
+    fn resolve_workspace_local_runtime_agents_path_builds_workspace_local_file_path() {
+        let workspace_root = Path::new("/tmp/workspace");
+        let resolved = resolve_workspace_local_runtime_agents_path(workspace_root);
+        assert_eq!(
+            resolved,
+            workspace_root
+                .join(WORKSPACE_RUNTIME_DIR_NAME)
+                .join(WORKSPACE_LOCAL_RUNTIME_AGENTS_FILE_NAME)
+        );
     }
 
     #[test]

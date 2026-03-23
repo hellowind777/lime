@@ -57,3 +57,33 @@ When upstream adds new Chinese text:
 - **Total entries:** 3,568
 - **Translated:** 3,568 (100%)
 - **Coverage:** 100%
+
+## 项目热力图
+
+可以使用下面的脚本为当前仓库生成静态项目观察报告：
+
+```bash
+npm run heatmap:project
+```
+
+常用参数：
+
+```bash
+npm run heatmap:project -- --days 90
+npm run heatmap:project -- --output "./tmp/project-heatmap"
+```
+
+报告会输出：
+
+- `index.html`：本地可直接打开的热力图报告
+- `project-heatmap.json`：可复用的聚合数据
+
+默认行为：
+
+- 分析最近 `180` 天的 Git churn
+- 以目录深度 `2` 聚合模块
+- 忽略 `node_modules`、`dist`、`target`、锁文件等噪音输入
+
+完整的 AI 操作流程、治理图生成参数、跨平台打开方式，请读：
+
+- `docs/aiprompts/project-heatmap.md`

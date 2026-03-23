@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import agentCommandCatalog from "../src/lib/governance/agentCommandCatalog.json" with { type: "json" };
 
 const repoRoot = path.resolve(process.cwd());
@@ -676,12 +677,12 @@ const rustTextSurfaceMonitors = [
   },
   {
     id: "rust-agent-runtime-legacy-queue-migration-leak",
-    classification: "dead-candidate",
+    classification: "deprecated",
     description:
-      "已零引用的 legacy runtime queue 启动迁移 helper 回流到其他模块",
+      "legacy runtime queue 启动迁移 helper 只允许停留在 aster runtime support 边界",
     patterns: ["migrate_legacy_runtime_queue_to_aster_store("],
     includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
-    allowedPaths: [],
+    allowedPaths: ["src-tauri/crates/agent/src/aster_runtime_support.rs"],
   },
   {
     id: "rust-agent-session-legacy-todo-state-leak",
@@ -804,11 +805,112 @@ const rustTextSurfaceMonitors = [
     allowedPaths: [],
   },
   {
+    id: "rust-agent-session-get-direct-read",
+    classification: "deprecated",
+    description: "session get_session 直读只允许统一 session_query helper 持有",
+    patterns: ["SessionManager::get_session("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_query.rs"],
+  },
+  {
+    id: "rust-agent-subagent-child-session-direct-read",
+    classification: "deprecated",
+    description: "subagent child session 列表直读只允许统一 session_query helper 持有",
+    patterns: ["list_subagent_child_sessions("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_query.rs"],
+  },
+  {
+    id: "rust-agent-subagent-session-list-direct-read",
+    classification: "deprecated",
+    description: "subagent 全量 session 列表直读只允许统一 session_query helper 持有",
+    patterns: ["list_subagent_sessions_with_metadata("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_query.rs"],
+  },
+  {
+    id: "rust-agent-subagent-metadata-direct-read",
+    classification: "deprecated",
+    description: "subagent metadata 直读只允许 query 与 session_store 投影边界持有",
+    patterns: ["resolve_subagent_session_metadata("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [
+      "src-tauri/crates/agent/src/session_query.rs",
+      "src-tauri/crates/agent/src/session_store.rs",
+    ],
+  },
+  {
+    id: "rust-agent-session-extension-data-direct-update",
+    classification: "deprecated",
+    description:
+      "session extension_data 直写 builder 只允许统一 session_update helper 持有",
+    patterns: [],
+    regexPatterns: [
+      String.raw`SessionManager::update_session\([\s\S]*?\)\s*[\s\S]*?\.extension_data\([\s\S]*?\)\s*[\s\S]*?\.apply\(\)`,
+    ],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_update.rs"],
+  },
+  {
+    id: "rust-agent-session-update-direct-call",
+    classification: "deprecated",
+    description: "session update_session 直写只允许统一 session_update helper 持有",
+    patterns: ["SessionManager::update_session("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_update.rs"],
+  },
+  {
+    id: "rust-agent-session-compaction-metrics-direct-update",
+    classification: "deprecated",
+    description:
+      "session compaction token 指标直写 builder 只允许统一 session_update helper 持有",
+    patterns: [],
+    regexPatterns: [
+      String.raw`SessionManager::update_session\([\s\S]*?\)\s*[\s\S]*?\.schedule_id\([\s\S]*?\)\s*[\s\S]*?\.total_tokens\([\s\S]*?\)\s*[\s\S]*?\.input_tokens\([\s\S]*?\)\s*[\s\S]*?\.output_tokens\([\s\S]*?\)\s*[\s\S]*?\.accumulated_total_tokens\([\s\S]*?\)\s*[\s\S]*?\.accumulated_input_tokens\([\s\S]*?\)\s*[\s\S]*?\.accumulated_output_tokens\([\s\S]*?\)\s*[\s\S]*?\.apply\(\)`,
+    ],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_update.rs"],
+  },
+  {
+    id: "rust-agent-session-replace-conversation-direct-update",
+    classification: "deprecated",
+    description:
+      "session conversation 直写 replace_conversation 只允许统一 session_update helper 持有",
+    patterns: ["SessionManager::replace_conversation("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_update.rs"],
+  },
+  {
+    id: "rust-agent-session-create-direct-update",
+    classification: "deprecated",
+    description:
+      "session create_session 直写只允许统一 session_update helper 持有",
+    patterns: ["SessionManager::create_session("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: ["src-tauri/crates/agent/src/session_update.rs"],
+  },
+  {
+    id: "rust-agent-session-delete-direct-update",
+    classification: "dead-candidate",
+    description: "已零引用的 session delete_session 直写回流",
+    patterns: ["SessionManager::delete_session("],
+    includePathPrefixes: ["src-tauri/src", "src-tauri/crates"],
+    allowedPaths: [],
+  },
+  {
     id: "rust-agent-session-record-create-api-leak",
     classification: "dead-candidate",
     description: "lime-agent crate 根重新暴露内部 session record 创建 API",
     patterns: ["create_session_record_sync,", "CreateSessionRecordInput,"],
     includePathPrefixes: ["src-tauri/crates/agent/src/lib.rs"],
+    allowedPaths: [],
+  },
+  {
+    id: "rust-agent-command-subagent-metadata-direct-read",
+    classification: "dead-candidate",
+    description: "命令层不再 direct 解析 subagent metadata，统一向 lime_agent 读取边界收敛",
+    patterns: ["resolve_subagent_session_metadata("],
+    includePathPrefixes: ["src-tauri/src/commands/aster_agent_cmd"],
     allowedPaths: [],
   },
   {
@@ -1375,7 +1477,7 @@ function extractInvokeCommands(sourceCode) {
 
 function stripRustTestModules(sourceCode) {
   return sourceCode.replace(
-    /(?:^|\n)\s*#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\][\s\S]*$/m,
+    /(?:^|\n)\s*#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]\s*(?:pub\s+)?mod\s+\w+\s*(?:\{[\s\S]*$|;)/m,
     "\n",
   );
 }
@@ -1770,12 +1872,7 @@ function printTextReport(result) {
 }
 
 function printTextCountReport(result) {
-  const status =
-    result.violations.length > 0
-      ? "违规"
-      : result.runtimeMatches.length === 0
-        ? "零引用"
-        : "受控";
+  const status = getTextCountStatus(result);
 
   console.log(
     `- [${status}] ${result.id} (${result.classification})：${result.description}`,
@@ -1811,161 +1908,268 @@ function printTextCountReport(result) {
   }
 }
 
-const { runtimeSources, testSources } = collectSources();
-const {
-  runtimeSources: frontendRuntimeTextSources,
-  testSources: frontendTestTextSources,
-} = collectTextSources(sourceRoots, sourceExtensions);
-const { runtimeSources: rustRuntimeSources, testSources: rustTestSources } =
-  collectTextSources(rustSourceRoots, rustSourceExtensions);
-const importResults = importSurfaceMonitors.map((monitor) =>
-  evaluateImportMonitor(monitor, runtimeSources, testSources),
-);
-const commandResults = commandSurfaceMonitors.map((monitor) =>
-  evaluateCommandMonitor(monitor, runtimeSources, testSources),
-);
-const frontendTextResults = frontendTextSurfaceMonitors.map((monitor) =>
-  evaluateTextMonitor(
-    monitor,
-    frontendRuntimeTextSources,
-    frontendTestTextSources,
-  ),
-);
-const rustTextResults = rustTextSurfaceMonitors.map((monitor) =>
-  evaluateTextMonitor(monitor, rustRuntimeSources, rustTestSources),
-);
-const rustTextCountResults = rustTextCountMonitors.map((monitor) =>
-  evaluateTextCountMonitor(monitor, rustRuntimeSources, rustTestSources),
-);
-
-const zeroReferenceCandidates = importResults
-  .filter(
-    (result) =>
-      result.references.length === 0 && result.existingTargets.length > 0,
-  )
-  .map((result) => `${result.id} (${result.description})`);
-const classificationDriftCandidates = [
-  ...importResults
-    .filter((result) =>
-      isStatusClassificationDrift(
-        getImportStatus(result),
-        result.classification,
-      ),
-    )
-    .map(
-      (result) =>
-        `${result.id} -> ${result.classification} / ${getImportStatus(result)}`,
-    ),
-  ...commandResults
-    .filter((result) =>
-      isStatusClassificationDrift(
-        getCommandStatus(result),
-        result.classification,
-      ),
-    )
-    .map(
-      (result) =>
-        `${result.id} -> ${result.classification} / ${getCommandStatus(result)}`,
-    ),
-  ...frontendTextResults
-    .filter((result) =>
-      isStatusClassificationDrift(getTextStatus(result), result.classification),
-    )
-    .map(
-      (result) =>
-        `${result.id} -> ${result.classification} / ${getTextStatus(result)}`,
-    ),
-  ...rustTextResults
-    .filter((result) =>
-      isStatusClassificationDrift(getTextStatus(result), result.classification),
-    )
-    .map(
-      (result) =>
-        `${result.id} -> ${result.classification} / ${getTextStatus(result)}`,
-    ),
-  ...rustTextCountResults
-    .filter((result) =>
-      isStatusClassificationDrift(
-        result.runtimeMatches.length === 0 ? "零引用" : "受控",
-        result.classification,
-      ),
-    )
-    .map(
-      (result) =>
-        `${result.id} -> ${result.classification} / ${
-          result.runtimeMatches.length === 0 ? "零引用" : "受控"
-        }`,
-    ),
-];
-const violations = [
-  ...importResults.flatMap((result) =>
-    result.violations.map((item) => `${result.id} -> ${item}`),
-  ),
-  ...commandResults.flatMap((result) =>
-    result.violations.map((item) => `${result.id} -> ${item}`),
-  ),
-  ...frontendTextResults.flatMap((result) =>
-    result.violations.map((item) => `${result.id} -> ${item}`),
-  ),
-  ...rustTextResults.flatMap((result) =>
-    result.violations.map((item) => `${result.id} -> ${item}`),
-  ),
-  ...rustTextCountResults.flatMap((result) =>
-    result.violations.map((item) => `${result.id} -> ${item}`),
-  ),
-];
-
-console.log("[lime] legacy surface report");
-console.log("");
-console.log("## 入口引用");
-for (const result of importResults) {
-  printImportReport(result);
+function getTextCountStatus(result) {
+  return result.violations.length > 0
+    ? "违规"
+    : result.runtimeMatches.length === 0
+      ? "零引用"
+      : "受控";
 }
 
-console.log("");
-console.log("## 命令边界");
-for (const result of commandResults) {
-  printCommandReport(result);
-}
-
-console.log("");
-console.log("## 前端护栏");
-for (const result of frontendTextResults) {
-  printTextReport(result);
-}
-
-console.log("");
-console.log("## Rust 护栏");
-for (const result of rustTextResults) {
-  printTextReport(result);
-}
-for (const result of rustTextCountResults) {
-  printTextCountReport(result);
-}
-
-console.log("");
-console.log("## 摘要");
-console.log(`- 扫描文件数：${runtimeSources.length}`);
-console.log(`- 测试文件数：${testSources.length}`);
-console.log(`- Rust 扫描文件数：${rustRuntimeSources.length}`);
-console.log(`- Rust 测试文件数：${rustTestSources.length}`);
-console.log(`- 零引用候选：${zeroReferenceCandidates.length}`);
-for (const candidate of zeroReferenceCandidates) {
-  console.log(`  - ${candidate}`);
-}
-console.log(`- 分类漂移候选：${classificationDriftCandidates.length}`);
-for (const candidate of classificationDriftCandidates) {
-  console.log(`  - ${candidate}`);
-}
-console.log(`- 边界违规：${violations.length}`);
-for (const violation of violations) {
-  console.log(`  - ${violation}`);
-}
-
-if (violations.length > 0) {
-  console.error("");
-  console.error(
-    "[lime] legacy surface report 检测到边界违规，请先治理再继续扩展。",
+export function buildLegacySurfaceReport() {
+  const { runtimeSources, testSources } = collectSources();
+  const {
+    runtimeSources: frontendRuntimeTextSources,
+    testSources: frontendTestTextSources,
+  } = collectTextSources(sourceRoots, sourceExtensions);
+  const { runtimeSources: rustRuntimeSources, testSources: rustTestSources } =
+    collectTextSources(rustSourceRoots, rustSourceExtensions);
+  const importResults = importSurfaceMonitors.map((monitor) =>
+    evaluateImportMonitor(monitor, runtimeSources, testSources),
   );
-  process.exit(1);
+  const commandResults = commandSurfaceMonitors.map((monitor) =>
+    evaluateCommandMonitor(monitor, runtimeSources, testSources),
+  );
+  const frontendTextResults = frontendTextSurfaceMonitors.map((monitor) =>
+    evaluateTextMonitor(
+      monitor,
+      frontendRuntimeTextSources,
+      frontendTestTextSources,
+    ),
+  );
+  const rustTextResults = rustTextSurfaceMonitors.map((monitor) =>
+    evaluateTextMonitor(monitor, rustRuntimeSources, rustTestSources),
+  );
+  const rustTextCountResults = rustTextCountMonitors.map((monitor) =>
+    evaluateTextCountMonitor(monitor, rustRuntimeSources, rustTestSources),
+  );
+
+  const zeroReferenceCandidates = importResults
+    .filter(
+      (result) =>
+        result.references.length === 0 && result.existingTargets.length > 0,
+    )
+    .map((result) => `${result.id} (${result.description})`);
+  const classificationDriftCandidates = [
+    ...importResults
+      .filter((result) =>
+        isStatusClassificationDrift(
+          getImportStatus(result),
+          result.classification,
+        ),
+      )
+      .map(
+        (result) =>
+          `${result.id} -> ${result.classification} / ${getImportStatus(result)}`,
+      ),
+    ...commandResults
+      .filter((result) =>
+        isStatusClassificationDrift(
+          getCommandStatus(result),
+          result.classification,
+        ),
+      )
+      .map(
+        (result) =>
+          `${result.id} -> ${result.classification} / ${getCommandStatus(result)}`,
+      ),
+    ...frontendTextResults
+      .filter((result) =>
+        isStatusClassificationDrift(getTextStatus(result), result.classification),
+      )
+      .map(
+        (result) =>
+          `${result.id} -> ${result.classification} / ${getTextStatus(result)}`,
+      ),
+    ...rustTextResults
+      .filter((result) =>
+        isStatusClassificationDrift(getTextStatus(result), result.classification),
+      )
+      .map(
+        (result) =>
+          `${result.id} -> ${result.classification} / ${getTextStatus(result)}`,
+      ),
+    ...rustTextCountResults
+      .filter((result) =>
+        isStatusClassificationDrift(
+          getTextCountStatus(result),
+          result.classification,
+        ),
+      )
+      .map(
+        (result) =>
+          `${result.id} -> ${result.classification} / ${getTextCountStatus(result)}`,
+      ),
+  ];
+  const violations = [
+    ...importResults.flatMap((result) =>
+      result.violations.map((item) => `${result.id} -> ${item}`),
+    ),
+    ...commandResults.flatMap((result) =>
+      result.violations.map((item) => `${result.id} -> ${item}`),
+    ),
+    ...frontendTextResults.flatMap((result) =>
+      result.violations.map((item) => `${result.id} -> ${item}`),
+    ),
+    ...rustTextResults.flatMap((result) =>
+      result.violations.map((item) => `${result.id} -> ${item}`),
+    ),
+    ...rustTextCountResults.flatMap((result) =>
+      result.violations.map((item) => `${result.id} -> ${item}`),
+    ),
+  ];
+
+  return {
+    repoRoot,
+    runtimeSources,
+    testSources,
+    rustRuntimeSources,
+    rustTestSources,
+    importResults,
+    commandResults,
+    frontendTextResults,
+    rustTextResults,
+    rustTextCountResults,
+    zeroReferenceCandidates,
+    classificationDriftCandidates,
+    violations,
+  };
+}
+
+function serializeMapEntries(map) {
+  return Object.fromEntries(map.entries());
+}
+
+export function toSerializableLegacySurfaceReport(report) {
+  return {
+    repoRoot: report.repoRoot,
+    summary: {
+      runtimeSourceCount: report.runtimeSources.length,
+      testSourceCount: report.testSources.length,
+      rustRuntimeSourceCount: report.rustRuntimeSources.length,
+      rustTestSourceCount: report.rustTestSources.length,
+      zeroReferenceCandidates: report.zeroReferenceCandidates,
+      classificationDriftCandidates: report.classificationDriftCandidates,
+      violations: report.violations,
+    },
+    importResults: report.importResults,
+    commandResults: report.commandResults.map((result) => ({
+      ...result,
+      referencesByCommand: serializeMapEntries(result.referencesByCommand),
+      testReferencesByCommand: serializeMapEntries(result.testReferencesByCommand),
+    })),
+    frontendTextResults: report.frontendTextResults,
+    rustTextResults: report.rustTextResults,
+    rustTextCountResults: report.rustTextCountResults,
+  };
+}
+
+export function printLegacySurfaceReport(report) {
+  console.log("[lime] legacy surface report");
+  console.log("");
+  console.log("## 入口引用");
+  for (const result of report.importResults) {
+    printImportReport(result);
+  }
+
+  console.log("");
+  console.log("## 命令边界");
+  for (const result of report.commandResults) {
+    printCommandReport(result);
+  }
+
+  console.log("");
+  console.log("## 前端护栏");
+  for (const result of report.frontendTextResults) {
+    printTextReport(result);
+  }
+
+  console.log("");
+  console.log("## Rust 护栏");
+  for (const result of report.rustTextResults) {
+    printTextReport(result);
+  }
+  for (const result of report.rustTextCountResults) {
+    printTextCountReport(result);
+  }
+
+  console.log("");
+  console.log("## 摘要");
+  console.log(`- 扫描文件数：${report.runtimeSources.length}`);
+  console.log(`- 测试文件数：${report.testSources.length}`);
+  console.log(`- Rust 扫描文件数：${report.rustRuntimeSources.length}`);
+  console.log(`- Rust 测试文件数：${report.rustTestSources.length}`);
+  console.log(`- 零引用候选：${report.zeroReferenceCandidates.length}`);
+  for (const candidate of report.zeroReferenceCandidates) {
+    console.log(`  - ${candidate}`);
+  }
+  console.log(`- 分类漂移候选：${report.classificationDriftCandidates.length}`);
+  for (const candidate of report.classificationDriftCandidates) {
+    console.log(`  - ${candidate}`);
+  }
+  console.log(`- 边界违规：${report.violations.length}`);
+  for (const violation of report.violations) {
+    console.log(`  - ${violation}`);
+  }
+}
+
+function parseCliArgs(argv) {
+  const options = {
+    json: false,
+    output: "",
+  };
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+
+    if (arg === "--json") {
+      options.json = true;
+      continue;
+    }
+
+    if (arg === "--output" && argv[index + 1]) {
+      options.output = String(argv[index + 1]).trim();
+      index += 1;
+    }
+  }
+
+  return options;
+}
+
+function runLegacySurfaceReportCli() {
+  const options = parseCliArgs(process.argv.slice(2));
+  const report = buildLegacySurfaceReport();
+
+  if (options.json) {
+    const serialized = JSON.stringify(
+      toSerializableLegacySurfaceReport(report),
+      null,
+      2,
+    );
+    if (options.output) {
+      fs.mkdirSync(path.dirname(options.output), { recursive: true });
+      fs.writeFileSync(options.output, serialized, "utf8");
+      console.log(`[lime] legacy surface report JSON: ${options.output}`);
+    } else {
+      console.log(serialized);
+    }
+  } else {
+    printLegacySurfaceReport(report);
+  }
+
+  if (report.violations.length > 0) {
+    console.error("");
+    console.error(
+      "[lime] legacy surface report 检测到边界违规，请先治理再继续扩展。",
+    );
+    process.exit(1);
+  }
+}
+
+const isMainModule =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMainModule) {
+  runLegacySurfaceReportCli();
 }

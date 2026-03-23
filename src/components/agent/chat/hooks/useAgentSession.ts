@@ -11,6 +11,7 @@ import type {
   AsterExecutionStrategy,
   AsterSubagentParentContext,
   AsterSubagentSessionInfo,
+  AgentRuntimeThreadReadModel,
   AsterTodoItem,
   QueuedTurnSnapshot,
 } from "@/lib/api/agentRuntime";
@@ -149,6 +150,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         ),
   );
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurnSnapshot[]>([]);
+  const [threadRead, setThreadRead] =
+    useState<AgentRuntimeThreadReadModel | null>(null);
   const [todoItems, setTodoItems] = useState<AsterTodoItem[]>([]);
   const [childSubagentSessions, setChildSubagentSessions] = useState<
     AsterSubagentSessionInfo[]
@@ -260,6 +263,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setThreadItems([]);
       setCurrentTurnId(null);
       setQueuedTurns([]);
+      setThreadRead(null);
       setTodoItems([]);
       setChildSubagentSessions([]);
       setSubagentParentContext(null);
@@ -295,6 +299,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     setThreadItems(scopedItems);
     setCurrentTurnId(scopedCurrentTurnId);
     setQueuedTurns([]);
+    setThreadRead(null);
     setTodoItems([]);
     setChildSubagentSessions([]);
     setSubagentParentContext(null);
@@ -434,6 +439,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setThreadItems([]);
         setCurrentTurnId(null);
         setQueuedTurns([]);
+        setThreadRead(null);
         setTodoItems([]);
         setChildSubagentSessions([]);
         setSubagentParentContext(null);
@@ -527,6 +533,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setThreadItems([]);
       setCurrentTurnId(null);
       setQueuedTurns([]);
+      setThreadRead(null);
       setTodoItems([]);
       setChildSubagentSessions([]);
       setSubagentParentContext(null);
@@ -563,6 +570,17 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     );
   }, []);
 
+  const applyRuntimeReadModel = useCallback(
+    (detail: Awaited<ReturnType<AgentRuntimeAdapter["getSession"]>>) => {
+      setQueuedTurns(normalizeQueuedTurnSnapshots(detail.queued_turns));
+      setThreadRead(detail.thread_read ?? null);
+      setTodoItems(detail.todo_items ?? []);
+      setChildSubagentSessions(detail.child_subagent_sessions ?? []);
+      setSubagentParentContext(detail.subagent_parent_context ?? null);
+    },
+    [],
+  );
+
   const applySessionDetail = useCallback(
     (
       topicId: string,
@@ -589,10 +607,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       setMessages(nextMessages);
       setThreadTurns(nextTurns);
       setThreadItems(nextItems);
-      setQueuedTurns(normalizeQueuedTurnSnapshots(detail.queued_turns));
-      setTodoItems(detail.todo_items ?? []);
-      setChildSubagentSessions(detail.child_subagent_sessions ?? []);
-      setSubagentParentContext(detail.subagent_parent_context ?? null);
+      applyRuntimeReadModel(detail);
       setCurrentTurnId(
         nextTurns.length > 0
           ? nextTurns[nextTurns.length - 1]?.id || null
@@ -610,7 +625,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setSessionId(topicId);
       }
     },
-    [sessionIdRef, setExecutionStrategyState, topics],
+    [applyRuntimeReadModel, sessionIdRef, setExecutionStrategyState, topics],
   );
 
   const switchTopic = useCallback(
@@ -671,6 +686,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           setThreadItems([]);
           setCurrentTurnId(null);
           setQueuedTurns([]);
+          setThreadRead(null);
           setTodoItems([]);
           setChildSubagentSessions([]);
           setSubagentParentContext(null);
@@ -685,6 +701,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setThreadItems([]);
         setCurrentTurnId(null);
         setQueuedTurns([]);
+        setThreadRead(null);
         setTodoItems([]);
         setChildSubagentSessions([]);
         setSubagentParentContext(null);
@@ -732,6 +749,29 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       }
     },
     [applySessionDetail, runtime, sessionIdRef],
+  );
+
+  const refreshSessionReadModel = useCallback(
+    async (targetSessionId?: string) => {
+      const resolvedSessionId = targetSessionId || sessionIdRef.current;
+      if (!resolvedSessionId?.trim()) {
+        return false;
+      }
+
+      try {
+        const threadRead = await runtime.getSessionReadModel(resolvedSessionId);
+        if (sessionIdRef.current !== resolvedSessionId) {
+          return false;
+        }
+        setQueuedTurns(normalizeQueuedTurnSnapshots(threadRead?.queued_turns));
+        setThreadRead(threadRead ?? null);
+        return true;
+      } catch (error) {
+        console.warn("[AsterChat] 刷新运行态摘要失败:", error);
+        return false;
+      }
+    },
+    [runtime, sessionIdRef],
   );
 
   useEffect(() => {
@@ -826,6 +866,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         setThreadItems([]);
         setCurrentTurnId(null);
         setQueuedTurns([]);
+        setThreadRead(null);
         setTodoItems([]);
         setChildSubagentSessions([]);
         setSubagentParentContext(null);
@@ -896,6 +937,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           setThreadItems([]);
           setCurrentTurnId(null);
           setQueuedTurns([]);
+          setThreadRead(null);
           setTodoItems([]);
           setChildSubagentSessions([]);
           setSubagentParentContext(null);
@@ -1027,6 +1069,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           setThreadItems([]);
           setCurrentTurnId(null);
           setQueuedTurns([]);
+          setThreadRead(null);
           setTodoItems([]);
           setChildSubagentSessions([]);
           setSubagentParentContext(null);
@@ -1158,6 +1201,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     childSubagentSessions,
     subagentParentContext,
     queuedTurns,
+    threadRead,
     setQueuedTurns,
     topics,
     setTopics,
@@ -1169,6 +1213,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     deleteTopic,
     renameTopic,
     refreshSessionDetail,
+    refreshSessionReadModel,
     clearMessages,
     deleteMessage,
     editMessage,

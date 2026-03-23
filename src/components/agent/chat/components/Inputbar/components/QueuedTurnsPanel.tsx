@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Play, X } from "lucide-react";
+import { Loader2, Play, X } from "lucide-react";
 import type { QueuedTurnSnapshot } from "@/lib/api/agentRuntime";
 
 interface QueuedTurnsPanelProps {
@@ -82,6 +82,7 @@ export const QueuedTurnsPanel: React.FC<QueuedTurnsPanelProps> = ({
             <div
               key={item.queued_turn_id}
               className="flex items-start gap-2 rounded-xl border border-border/80 bg-background/80 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]"
+              aria-busy={isBusy}
             >
               <button
                 type="button"
@@ -131,7 +132,11 @@ export const QueuedTurnsPanel: React.FC<QueuedTurnsPanelProps> = ({
                   disabled={isBusy}
                   aria-label="插队立即执行"
                 >
-                  <Play size={13} />
+                  {isPromoting ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <Play size={13} />
+                  )}
                   <span>{isPromoting ? "切换中" : "立即执行"}</span>
                 </button>
                 <button
@@ -141,9 +146,13 @@ export const QueuedTurnsPanel: React.FC<QueuedTurnsPanelProps> = ({
                     void runQueuedAction(item.queued_turn_id, "remove")
                   }
                   disabled={isBusy}
-                  aria-label="移除排队消息"
+                  aria-label={isRemoving ? "正在移除排队消息" : "移除排队消息"}
                 >
-                  <X size={14} />
+                  {isRemoving ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <X size={14} />
+                  )}
                 </button>
               </div>
             </div>

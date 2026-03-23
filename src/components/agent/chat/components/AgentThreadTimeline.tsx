@@ -34,12 +34,19 @@ import {
   type AgentThreadOrderedBlock,
   type AgentThreadSummaryChip,
 } from "../utils/agentThreadGrouping";
+import type { AgentRuntimeThreadReadModel } from "@/lib/api/agentRuntime";
 import { isActionRequestA2UICompatible } from "../utils/actionRequestA2UI";
 import { resolveInternalImageTaskDisplayName } from "../utils/internalImagePlaceholder";
 import { parseAIResponse } from "@/components/content-creator/a2ui/parser";
 import type { A2UIResponse } from "@/components/content-creator/a2ui/types";
 import { TIMELINE_A2UI_TASK_CARD_PRESET } from "@/components/content-creator/a2ui/taskCardPresets";
 import { cn } from "@/lib/utils";
+import {
+  resolveIncidentToneFromSeverity,
+  resolveOutcomeLabel,
+  resolveOutcomeTone,
+  type ThreadReliabilityTone,
+} from "../utils/threadReliabilityView";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { ActionRequestA2UIPreviewCard } from "./ActionRequestA2UIPreviewCard";
 import { A2UITaskCard, A2UITaskLoadingCard } from "./A2UITaskCard";
@@ -50,6 +57,7 @@ import { AgentPlanBlock } from "./AgentPlanBlock";
 interface AgentThreadTimelineProps {
   turn: AgentThreadTurn;
   items: AgentThreadItem[];
+  threadRead?: AgentRuntimeThreadReadModel | null;
   actionRequests?: ActionRequired[];
   isCurrentTurn?: boolean;
   onFileClick?: (fileName: string, content: string) => void;
@@ -70,6 +78,12 @@ type TimelineCompactTone =
   | "failed"
   | "paused"
   | "done";
+
+interface TimelineCompactReliabilityBadge {
+  key: string;
+  label: string;
+  tone: ThreadReliabilityTone;
+}
 
 function shortenInlineText(
   value: string | undefined | null,
@@ -101,6 +115,82 @@ function formatTimestamp(value?: string): string | null {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function resolveReliabilityBadgeClassName(
+  tone: ThreadReliabilityTone,
+): string {
+  if (tone === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (tone === "failed") {
+    return "border-rose-200 bg-rose-50 text-rose-700";
+  }
+  if (tone === "waiting") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (tone === "running") {
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+  if (tone === "paused") {
+    return "border-slate-200 bg-slate-50 text-slate-700";
+  }
+  return "border-slate-200 bg-slate-50 text-slate-700";
+}
+
+function buildCompactReliabilityBadges(
+  turn: AgentThreadTurn,
+  threadRead?: AgentRuntimeThreadReadModel | null,
+): TimelineCompactReliabilityBadge[] {
+  if (!threadRead) {
+    return [];
+  }
+
+  const badges: TimelineCompactReliabilityBadge[] = [];
+
+  if (threadRead.last_outcome?.turn_id === turn.id) {
+    badges.push({
+      key: "outcome",
+      label: resolveOutcomeLabel(threadRead.last_outcome.outcome_type),
+      tone: resolveOutcomeTone(threadRead.last_outcome.outcome_type),
+    });
+  }
+
+  const activeIncidents = (threadRead.incidents ?? []).filter((incident) => {
+    const normalizedStatus = (incident.status || "").toLowerCase();
+    return (
+      incident.turn_id === turn.id &&
+      !incident.cleared_at &&
+      !normalizedStatus.includes("clear")
+    );
+  });
+
+  if (activeIncidents.length > 0) {
+    const incidentTone = activeIncidents.reduce<ThreadReliabilityTone>(
+      (currentTone, incident) => {
+        const nextTone = resolveIncidentToneFromSeverity(incident.severity);
+        if (currentTone === "failed" || nextTone === currentTone) {
+          return currentTone;
+        }
+        if (nextTone === "failed") {
+          return nextTone;
+        }
+        if (nextTone === "waiting" && currentTone !== "failed") {
+          return nextTone;
+        }
+        return currentTone;
+      },
+      "neutral",
+    );
+
+    badges.push({
+      key: "incident",
+      label: `${activeIncidents.length} 个 incident`,
+      tone: incidentTone,
+    });
+  }
+
+  return badges;
 }
 
 function toQuestionOptions(
@@ -633,6 +723,57 @@ function ThinkingItemCard({
   );
 }
 
+function ContextCompactionCard({
+  item,
+}: {
+  item: Extract<AgentThreadItem, { type: "context_compaction" }>;
+}) {
+  const triggerLabel =
+    item.trigger === "manual"
+      ? "手动压缩"
+      : item.trigger === "overflow"
+        ? "超限恢复"
+        : item.trigger === "auto"
+          ? "自动压缩"
+          : "上下文压缩";
+  const title =
+    item.stage === "completed" || item.status === "completed"
+      ? "上下文已压缩"
+      : "正在压缩上下文";
+  const detail =
+    item.detail?.trim() ||
+    (item.stage === "completed" || item.status === "completed"
+      ? "较早消息已替换为摘要，后续回复会基于压缩后的上下文继续。"
+      : "系统正在将较早消息整理为摘要，以释放上下文窗口。");
+
+  return (
+    <SurfaceCard
+      icon={Sparkles}
+      title={title}
+      badge={
+        <Badge variant={resolveStatusBadgeVariant(item.status)}>
+          {item.status === "in_progress" ? (
+            <span className="inline-flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              压缩中
+            </span>
+          ) : (
+            resolveItemStatusLabel(item.status)
+          )}
+        </Badge>
+      }
+      timestamp={formatTimestamp(item.completed_at || item.updated_at)}
+    >
+      <div className="space-y-3">
+        <div className="text-sm text-muted-foreground">{detail}</div>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">{triggerLabel}</Badge>
+        </div>
+      </div>
+    </SurfaceCard>
+  );
+}
+
 function renderThinkingItemDetails(item: AgentThreadItem) {
   if (item.type === "plan") {
     return (
@@ -649,6 +790,10 @@ function renderThinkingItemDetails(item: AgentThreadItem) {
 
   if (item.type === "turn_summary") {
     return <ThinkingItemCard item={item} />;
+  }
+
+  if (item.type === "context_compaction") {
+    return <ContextCompactionCard item={item} />;
   }
 
   return null;
@@ -1445,6 +1590,7 @@ function TimelineBlockCard({
 export const AgentThreadTimeline: React.FC<AgentThreadTimelineProps> = ({
   turn,
   items,
+  threadRead,
   actionRequests = [],
   isCurrentTurn = false,
   onFileClick,
@@ -1519,6 +1665,11 @@ export const AgentThreadTimeline: React.FC<AgentThreadTimelineProps> = ({
       setDetailsExpanded(true);
     }
   }, [defaultDetailsExpanded, turn.id]);
+
+  const compactReliabilityBadges = useMemo(
+    () => buildCompactReliabilityBadges(turn, threadRead),
+    [threadRead, turn],
+  );
 
   if (visibleItems.length === 0) {
     return null;
@@ -1605,6 +1756,16 @@ export const AgentThreadTimeline: React.FC<AgentThreadTimelineProps> = ({
             >
               {turnStatusMeta.label}
             </Badge>
+            {compactReliabilityBadges.map((badge) => (
+              <Badge
+                key={badge.key}
+                variant="outline"
+                className={resolveReliabilityBadgeClassName(badge.tone)}
+                data-testid={`agent-thread-compact-${badge.key}`}
+              >
+                {badge.label}
+              </Badge>
+            ))}
             <span className="text-xs text-muted-foreground">
               {isCurrentTurn ? "当前任务" : "历史记录"}
             </span>
@@ -1668,6 +1829,16 @@ export const AgentThreadTimeline: React.FC<AgentThreadTimelineProps> = ({
                     >
                       {collapsedProcess.statusLabel}
                     </Badge>
+                    {compactReliabilityBadges.map((badge) => (
+                      <Badge
+                        key={badge.key}
+                        variant="outline"
+                        className={resolveReliabilityBadgeClassName(badge.tone)}
+                        data-testid={`agent-thread-collapsed-${badge.key}`}
+                      >
+                        {badge.label}
+                      </Badge>
+                    ))}
                   </div>
 
                   <div
@@ -1707,9 +1878,19 @@ export const AgentThreadTimeline: React.FC<AgentThreadTimelineProps> = ({
                   className="flex flex-wrap items-center gap-2"
                   data-testid="agent-thread-summary-header"
                 >
-                    <div className="text-xs font-medium tracking-wide text-muted-foreground">
+                  <div className="text-xs font-medium tracking-wide text-muted-foreground">
                     {isCurrentTurn ? "当前任务摘要" : "任务摘要"}
                   </div>
+                  {compactReliabilityBadges.map((badge) => (
+                    <Badge
+                      key={badge.key}
+                      variant="outline"
+                      className={resolveReliabilityBadgeClassName(badge.tone)}
+                      data-testid={`agent-thread-summary-${badge.key}`}
+                    >
+                      {badge.label}
+                    </Badge>
+                  ))}
                   <button
                     type="button"
                     aria-label="收起细节"
