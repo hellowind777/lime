@@ -39,7 +39,7 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             name: macOS-arm64
-          - platform: macos-latest
+          - platform: macos-13
             target: x86_64-apple-darwin
             name: macOS-x64
           - platform: windows-2022
@@ -65,6 +65,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: "pnpm-lock.yaml"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -181,7 +183,7 @@ jobs:
             --notes-file "$NOTES_FILE" || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
 
       - name: Install frontend dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Normalize updater signing key
         if: steps.updater_mode.outputs.enabled == 'true'
@@ -271,7 +273,7 @@ jobs:
 
       # macOS 签名证书设置
       - name: Import Apple Certificate
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -347,7 +349,7 @@ jobs:
 
       - name: Build macOS app (attempt 1, verbose)
         id: build_macos_primary
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos')
         continue-on-error: true
         shell: bash
         env:
@@ -377,7 +379,7 @@ jobs:
           pnpm tauri build --target "${{ matrix.target }}"
 
       - name: Inspect macOS outputs after attempt 1
-        if: matrix.platform == 'macos-latest' && always()
+        if: startsWith(matrix.platform, 'macos') && always()
         shell: bash
         run: |
           set -euo pipefail
@@ -396,7 +398,7 @@ jobs:
 
       - name: Build macOS app (retry, verbose)
         id: build_macos_retry
-        if: matrix.platform == 'macos-latest' && steps.build_macos_primary.outcome == 'failure'
+        if: startsWith(matrix.platform, 'macos') && steps.build_macos_primary.outcome == 'failure'
         continue-on-error: true
         shell: bash
         env:
@@ -418,7 +420,7 @@ jobs:
           pnpm tauri build --target "${{ matrix.target }}"
 
       - name: Inspect macOS outputs after retry
-        if: matrix.platform == 'macos-latest' && steps.build_macos_primary.outcome == 'failure' && always()
+        if: startsWith(matrix.platform, 'macos') && steps.build_macos_primary.outcome == 'failure' && always()
         shell: bash
         run: |
           set -euo pipefail
@@ -437,7 +439,7 @@ jobs:
 
       - name: Build macOS app (fallback without notarization, verbose)
         id: build_macos_fallback
-        if: matrix.platform == 'macos-latest' && steps.build_macos_primary.outcome == 'failure' && steps.build_macos_retry.outcome == 'failure'
+        if: startsWith(matrix.platform, 'macos') && steps.build_macos_primary.outcome == 'failure' && steps.build_macos_retry.outcome == 'failure'
         shell: bash
         env:
           CARGO_PROFILE_RELEASE_LTO: "off"
@@ -455,13 +457,13 @@ jobs:
           pnpm tauri build --target "${{ matrix.target }}"
 
       - name: Warn on macOS notarization fallback
-        if: matrix.platform == 'macos-latest' && steps.build_macos_primary.outcome == 'failure' && steps.build_macos_retry.outcome == 'failure'
+        if: startsWith(matrix.platform, 'macos') && steps.build_macos_primary.outcome == 'failure' && steps.build_macos_retry.outcome == 'failure'
         run: |
           echo "::warning::macOS notarization failed twice; fallback build skipped notarization and produced a signed-only artifact."
 
       - name: Resolve macOS bundle dir
         id: resolve_macos_bundle_dir
-        if: matrix.platform == 'macos-latest' && (steps.build_macos_primary.outcome == 'success' || steps.build_macos_retry.outcome == 'success' || steps.build_macos_fallback.outcome == 'success')
+        if: startsWith(matrix.platform, 'macos') && (steps.build_macos_primary.outcome == 'success' || steps.build_macos_retry.outcome == 'success' || steps.build_macos_fallback.outcome == 'success')
         shell: bash
         run: |
           set -euo pipefail
@@ -494,7 +496,7 @@ jobs:
           echo "bundle_dir=$bundle_dir" >> "$GITHUB_OUTPUT"
 
       - name: Inspect final macOS outputs
-        if: matrix.platform == 'macos-latest' && always()
+        if: startsWith(matrix.platform, 'macos') && always()
         shell: bash
         run: |
           set -euo pipefail
@@ -511,7 +513,7 @@ jobs:
           fi
 
       - name: Upload macOS release assets
-        if: matrix.platform == 'macos-latest' && (steps.build_macos_primary.outcome == 'success' || steps.build_macos_retry.outcome == 'success' || steps.build_macos_fallback.outcome == 'success')
+        if: startsWith(matrix.platform, 'macos') && (steps.build_macos_primary.outcome == 'success' || steps.build_macos_retry.outcome == 'success' || steps.build_macos_fallback.outcome == 'success')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -553,6 +555,6 @@ jobs:
 
       # 清理 keychain
       - name: Cleanup Keychain
-        if: matrix.platform == 'macos-latest' && always()
+        if: startsWith(matrix.platform, 'macos') && always()
         run: |
           security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
