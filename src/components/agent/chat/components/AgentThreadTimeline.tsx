@@ -2070,7 +2070,24 @@ export const AgentThreadTimeline: React.FC<AgentThreadTimelineProps> = ({
             </div>
 
             <div className="space-y-3" data-testid="agent-thread-flow">
-              {displayModel.orderedBlocks.map((block, index) => (
+              {/* 新的时间线设计：将工具调用内联展示 */}
+              {items
+                .filter(
+                  (item) =>
+                    item.type === "tool_call" ||
+                    item.type === "command_execution" ||
+                    item.type === "web_search"
+                )
+                .map((item, index, filteredItems) => (
+                  <TimelineInlineItem
+                    key={item.id}
+                    item={item}
+                    isLast={index === filteredItems.length - 1}
+                  />
+                ))}
+
+              {/* 保留原有的步骤列表作为备用 */}
+              {false && displayModel.orderedBlocks.map((block, index) => (
                 <TimelineBlockCard
                   key={block.id}
                   block={block}
