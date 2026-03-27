@@ -58,6 +58,7 @@ import {
   resolveTimelineArtifactNavigation,
   type ArtifactTimelineOpenTarget,
 } from "../utils/artifactTimelineNavigation";
+import { TimelineInlineItem } from "./TimelineInlineItem";
 
 interface AgentThreadTimelineProps {
   turn: AgentThreadTurn;
