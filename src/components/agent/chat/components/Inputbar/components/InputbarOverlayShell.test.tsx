@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InputbarOverlayShell } from "./InputbarOverlayShell";
+import type { A2UIResponse } from "@/components/content-creator/a2ui/types";
 
 vi.mock("../../TaskFiles", () => ({
   TaskFileList: () => <div data-testid="task-file-list" />,
@@ -66,6 +67,34 @@ function renderShell(
   return container;
 }
 
+function createPendingA2UIForm(): A2UIResponse {
+  return {
+    id: "a2ui-floating-form",
+    version: "1.0",
+    root: "root",
+    data: {},
+    components: [
+      {
+        id: "title",
+        component: "Text",
+        text: "请确认开始方式",
+        variant: "body",
+      },
+      {
+        id: "root",
+        component: "Column",
+        children: ["title"],
+        gap: 12,
+        align: "stretch",
+      },
+    ],
+    submitAction: {
+      label: "继续处理",
+      action: { name: "submit" },
+    },
+  } as A2UIResponse;
+}
+
 describe("InputbarOverlayShell", () => {
   it("应把任务文件与额外浮层控件放进同一条透明 overlay row", () => {
     const container = renderShell({
@@ -101,5 +130,24 @@ describe("InputbarOverlayShell", () => {
     expect(
       container.querySelector('[data-testid="inputbar-secondary-controls"]'),
     ).toBeNull();
+  });
+
+  it("A2UI 表单进入粘性保留期时应显示同步提示并禁用提交", () => {
+    const container = renderShell({
+      taskFiles: [],
+      pendingA2UIForm: createPendingA2UIForm(),
+      pendingA2UIFormStale: true,
+      onA2UISubmit: vi.fn(),
+    });
+
+    const submitButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("继续处理"),
+    ) as HTMLButtonElement | undefined;
+
+    expect(container.textContent).toContain("同步中");
+    expect(container.textContent).toContain(
+      "正在同步最新上下文，表单暂时不可提交。",
+    );
+    expect(submitButton?.disabled).toBe(true);
   });
 });

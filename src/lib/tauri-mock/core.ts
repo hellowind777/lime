@@ -604,6 +604,30 @@ type MockClawSolutionSummary = {
   reasonCode?: string;
 };
 
+type MockReviewDecisionRequest = {
+  session_id?: string;
+  sessionId?: string;
+  decision_status?: string;
+  decisionStatus?: string;
+  decision_summary?: string;
+  decisionSummary?: string;
+  chosen_fix_strategy?: string;
+  chosenFixStrategy?: string;
+  risk_level?: string;
+  riskLevel?: string;
+  risk_tags?: string[];
+  riskTags?: string[];
+  human_reviewer?: string;
+  humanReviewer?: string;
+  reviewed_at?: string | null;
+  reviewedAt?: string | null;
+  followup_actions?: string[];
+  followupActions?: string[];
+  regression_requirements?: string[];
+  regressionRequirements?: string[];
+  notes?: string;
+};
+
 const mockClawSolutionCatalog: MockClawSolutionSummary[] = [
   {
     id: "web-research-brief",
@@ -2066,7 +2090,11 @@ const defaultMocks: Record<string, any> = {
       },
     ],
   }),
-  agent_runtime_save_review_decision: ({ request }) => ({
+  agent_runtime_save_review_decision: ({
+    request,
+  }: {
+    request?: MockReviewDecisionRequest;
+  }) => ({
     session_id: request?.session_id || request?.sessionId || "mock-session",
     thread_id: "mock-thread",
     workspace_root: "/mock/workspace",

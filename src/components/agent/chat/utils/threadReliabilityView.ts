@@ -83,6 +83,8 @@ const NON_BLOCKING_RUNTIME_WARNING_CODES = new Set([
   "artifact_document_repaired",
 ]);
 
+type RuntimeIssueThreadItem = Extract<AgentThreadItem, { type: "error" | "warning" }>;
+
 function normalizeText(value?: string | null): string | null {
   if (typeof value !== "string") {
     return null;
@@ -535,7 +537,7 @@ function deriveFallbackIncidents(
 
   const issueItem = [...threadItems]
     .reverse()
-    .find((item) => {
+    .find((item): item is RuntimeIssueThreadItem => {
       if (item.type === "error") {
         return true;
       }

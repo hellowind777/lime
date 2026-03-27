@@ -39,7 +39,7 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             name: macOS-arm64
-          - platform: macos-13
+          - platform: macos-15-intel
             target: x86_64-apple-darwin
             name: macOS-x64
           - platform: windows-2022
@@ -182,7 +182,7 @@ jobs:
             --notes-file "$NOTES_FILE" || gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
 
       - name: Install frontend dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --no-optional
 
       - name: Normalize updater signing key
         if: steps.updater_mode.outputs.enabled == 'true'

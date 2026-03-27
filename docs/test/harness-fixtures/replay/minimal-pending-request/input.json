@@ -86,6 +86,90 @@
     },
     "incidents": []
   },
+  "observability": {
+    "schemaVersion": "v1",
+    "correlation": {
+      "correlationKeys": [
+        "session_id",
+        "thread_id",
+        "turn_id",
+        "pending_request_id",
+        "queued_turn_id",
+        "subagent_session_id"
+      ],
+      "sessionId": "fixture-session-minimal-pending-request",
+      "threadId": "fixture-thread-minimal-pending-request",
+      "activeTurnId": "turn-fixture-001",
+      "pendingRequestIds": ["approval-fixture-001"],
+      "queuedTurnIds": [],
+      "subagentSessionIds": []
+    },
+    "counts": {
+      "turnCount": 1,
+      "itemCount": 2,
+      "pendingRequestCount": 1,
+      "queuedTurnCount": 0,
+      "warningCount": 0,
+      "failedToolCallCount": 0,
+      "failedCommandCount": 0,
+      "subagentCount": 0,
+      "recentArtifactCount": 2
+    },
+    "latest": {
+      "warning": null,
+      "failedTool": null,
+      "failedCommand": null
+    },
+    "signalCoverage": [
+      {
+        "signal": "correlation",
+        "status": "exported",
+        "source": "runtime thread identity",
+        "detail": "当前证据包已导出 session/thread/turn/pending request/subagent 关联键。"
+      },
+      {
+        "signal": "timeline",
+        "status": "exported",
+        "source": "timeline.json",
+        "detail": "当前证据包已导出最近 turn 与 item 时间线。"
+      },
+      {
+        "signal": "warnings",
+        "status": "exported",
+        "source": "thread.diagnostics",
+        "detail": "当前线程没有 diagnostics，但 warning 通道已保留在导出结构中。"
+      },
+      {
+        "signal": "requestTelemetry",
+        "status": "unlinked",
+        "source": "lime_infra.telemetry",
+        "detail": "Lime 已有 workspace 级 request telemetry，但当前 RequestLog 还未携带 session/thread/turn 元数据。"
+      },
+      {
+        "signal": "artifactValidator",
+        "status": "known_gap",
+        "source": "artifact_document_validator",
+        "detail": "Artifact validator outcome 尚未回挂到当前 evidence pack。"
+      },
+      {
+        "signal": "browserVerification",
+        "status": "known_gap",
+        "source": "browser runtime",
+        "detail": "浏览器截图、DOM 快照和交互验证结果尚未接入 evidence pack。"
+      },
+      {
+        "signal": "guiSmoke",
+        "status": "known_gap",
+        "source": "verify:gui-smoke",
+        "detail": "GUI smoke 结果尚未作为结构化证据回挂当前会话。"
+      }
+    ],
+    "knownGaps": [
+      "当前 Lime 虽然已有全局 RequestLog / token / retry / duration 遥测，但 RequestLog 尚未携带 session/thread/turn 关联键，Evidence Pack 只能导出 request telemetry coverage gap，不能给出精确的会话级摘要。",
+      "当前 Evidence Pack 尚未纳入 ArtifactDocument validator outcome 与修复问题摘要。",
+      "当前 Evidence Pack 尚未纳入 GUI smoke / browser 验证结果。"
+    ]
+  },
   "linkedArtifacts": {
     "handoffBundle": {
       "relativeRoot": ".lime/harness/sessions/fixture-session-minimal-pending-request/handoff",
@@ -95,7 +179,9 @@
       "relativeRoot": ".lime/harness/sessions/fixture-session-minimal-pending-request/evidence",
       "artifactCount": 4,
       "knownGaps": [
-        "当前 fixture 不包含真实浏览器快照，只验证 replay 样本结构与 grader 约定。"
+        "当前 Lime 虽然已有全局 RequestLog / token / retry / duration 遥测，但 RequestLog 尚未携带 session/thread/turn 关联键，Evidence Pack 只能导出 request telemetry coverage gap，不能给出精确的会话级摘要。",
+        "当前 Evidence Pack 尚未纳入 ArtifactDocument validator outcome 与修复问题摘要。",
+        "当前 Evidence Pack 尚未纳入 GUI smoke / browser 验证结果。"
       ]
     }
   }

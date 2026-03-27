@@ -89,21 +89,25 @@ describe("useStickyA2UIForm", () => {
 
     await render();
     expect(getValue().visibleForm).toEqual(form);
+    expect(getValue().isStale).toBe(false);
 
     await render({
       form: null,
     });
     expect(getValue().visibleForm).toEqual(form);
+    expect(getValue().isStale).toBe(true);
 
     await act(async () => {
       vi.advanceTimersByTime(1199);
     });
     expect(getValue().visibleForm).toEqual(form);
+    expect(getValue().isStale).toBe(true);
 
     await act(async () => {
       vi.advanceTimersByTime(1);
     });
     expect(getValue().visibleForm).toBeNull();
+    expect(getValue().isStale).toBe(false);
   });
 
   it("进入已提交提示后应立即清空旧表单，避免叠层残留", async () => {
@@ -121,5 +125,6 @@ describe("useStickyA2UIForm", () => {
       clearImmediately: true,
     });
     expect(getValue().visibleForm).toBeNull();
+    expect(getValue().isStale).toBe(false);
   });
 });

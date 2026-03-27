@@ -88,6 +88,7 @@ Lime 当前不直接把“真实模型重放平台”一次做完，而是先固
 2. 解析固定 fixture 与工作区自动发现 case
 3. 校验 replay case 最小四件套与关键 JSON 字段
 4. 输出统一 JSON / Markdown 摘要，并聚合 `suite tag / failure mode / review decision status / risk level` 分布
+5. 继续聚合 `observabilitySignals`，把 `requestTelemetry / artifactValidator / browser/gui smoke` 的证据缺口也纳入 trend 与 cleanup
 
 当前它**不直接执行真实模型重放**，而是先把“样本是否可评估、摘要是否可归档”工程化。
 
@@ -172,6 +173,13 @@ node scripts/harness-replay-promote.mjs \
 
 从 `2026-03-27` 起，这个历史窗口不再依赖 workflow 里的 `cp / ls / xargs` 拼接，而是直接由 `scripts/harness-eval-runner.mjs --record-history-dir` 负责写入和裁剪，保证本地与 nightly 走同一条跨平台主链。
 
+同一天新增的 `scripts/harness-eval-history-record.mjs` 又把这条主链向前推了一步：
+
+- 本地可以一次命令完成 `summary -> history -> trend -> cleanup`
+- 本地默认把 history window 写到 `./.lime/harness/history`，并把 trend / cleanup 报表写到 `./.lime/harness/reports`
+- `cleanup report` 在未显式传入 `--trend-input / --trend-history-dir` 时，会优先自动发现 `./.lime/harness/history`，再回退到 `./artifacts/history`
+- 修复后的趋势积累不再只属于 nightly，开发者本地也能拿到同口径的历史窗口
+
 ## 常用命令
 
 ```bash
@@ -195,14 +203,17 @@ node scripts/harness-eval-runner.mjs \
   --output-json "./tmp/harness-eval-summary.json" \
   --output-markdown "./tmp/harness-eval-summary.md"
 
-# 记录本地 history window，供 trend / cleanup 复用
+# 推荐的本地一体化入口：记录 history，并同时刷新 trend / cleanup
+npm run harness:eval:history:record
+
+# 如需显式指定本地 history window
 node scripts/harness-eval-runner.mjs \
-  --record-history-dir "./artifacts/history" \
+  --record-history-dir "./.lime/harness/history" \
   --history-retain 30
 
 # 从历史 summary 目录生成趋势报告
 node scripts/harness-eval-trend-report.mjs \
-  --history-dir "./artifacts/history" \
+  --history-dir "./.lime/harness/history" \
   --output-json "./tmp/harness-eval-trend.json" \
   --output-markdown "./tmp/harness-eval-trend.md"
 ```
@@ -218,6 +229,7 @@ Runner 摘要至少回答下面这些问题：
 - 哪些 case 属于什么 suite tag / failure mode
 - 哪些 case 默认需要人工复核
 - 哪些 case 已经记录人工审核状态与风险等级
+- 哪些 case 还缺 `observabilitySummary` 或仍处于 `requestTelemetry:unlinked`、`artifactValidator:known_gap` 等证据缺口
 - 工作区 replay 是否已经开始形成增量样本
 
 如果摘要回答不了这些问题，就说明 runner 还不算进入 current 主链。
@@ -228,6 +240,7 @@ Trend 报告至少还要回答：
 - 哪些 suite 在 latest 里变差了
 - 哪些 failure mode / suite tag 在 latest 里增长或退化了
 - 哪些人工审核状态 / 风险等级在 latest 里新增、减少或发生迁移
+- 哪些 observability signal gap 在 latest 里增加、减少或仍然停留在 current 样本中
 - 当前只有 trend seed，还是已经开始形成真正的历史窗口
 
 ## 与其他事实源的关系
@@ -250,9 +263,9 @@ Trend 报告至少还要回答：
 
 `P3-6` 做完之后，下一刀优先级建议固定为：
 
-1. 把 cleanup report 接入更稳定的历史窗口，避免长期停留在 trend seed
-2. 继续补 observability 证据字段，让 grader 和 cleanup report 都能消费更多 request / timeline / artifact 关联
-3. 逐步提高 repo current 样本质量，而不是只增加数量
+1. 继续补 observability 证据字段，让 grader、analysis handoff 和 cleanup report 都能消费更多 `request / timeline / artifact` 关联
+2. 逐步提高 repo current 样本质量，而不是只增加数量
+3. 让 review-decision / 风险等级 / replay promotion 继续回挂到同一条趋势主线
 4. 再考虑是否引入真实模型执行或 transcript grading
 
 ## 非目标

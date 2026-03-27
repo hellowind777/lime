@@ -49,6 +49,8 @@ docs/tech/
 
 # Issues tracking (internal use only)
 .issues/
+.lime/harness/
+.lime/artifacts/
 
 # 开发环境
 **/.local/

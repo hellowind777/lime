@@ -37,6 +37,7 @@ import {
   type TeamWorkbenchSurfaceProps,
   type UseTeamWorkbenchPresentationParams,
 } from "./teamWorkbenchPresentation";
+import { hasRenderableGeneralCanvasPreview } from "./generalCanvasPreviewState";
 
 type ArtifactPreviewBaseProps = Omit<
   ComponentProps<typeof ArtifactWorkbenchPreview>,
@@ -451,7 +452,7 @@ export function useWorkspaceCanvasPreviewPresentation({
       return Boolean(
         (artifactPreview.currentCanvasArtifact &&
           artifactPreview.displayedCanvasArtifact) ||
-        defaultPreview.generalCanvasState.isOpen,
+        hasRenderableGeneralCanvasPreview(defaultPreview.generalCanvasState),
       );
     }
 
@@ -463,7 +464,7 @@ export function useWorkspaceCanvasPreviewPresentation({
     artifactPreview.currentCanvasArtifact,
     artifactPreview.displayedCanvasArtifact,
     defaultPreview.canvasRenderTheme,
-    defaultPreview.generalCanvasState.isOpen,
+    defaultPreview.generalCanvasState,
     defaultPreview.resolvedCanvasState,
     imageWorkbench.active,
     loading.shouldShowCanvasLoadingState,

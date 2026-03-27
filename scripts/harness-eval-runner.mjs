@@ -388,6 +388,79 @@ function loadReviewDecisionForCase(caseDir, inlineReviewDecision) {
   };
 }
 
+function normalizeObservabilityCoverage(inputPayload, evidencePayload) {
+  const inlineSummary =
+    inputPayload?.observability &&
+    typeof inputPayload.observability === "object" &&
+    !Array.isArray(inputPayload.observability)
+      ? inputPayload.observability
+      : evidencePayload?.observabilitySummary &&
+          typeof evidencePayload.observabilitySummary === "object" &&
+          !Array.isArray(evidencePayload.observabilitySummary)
+        ? evidencePayload.observabilitySummary
+        : null;
+
+  if (!inlineSummary) {
+    return [
+      {
+        signal: "observabilitySummary",
+        status: "missing",
+      },
+    ];
+  }
+
+  const signalCoverage = Array.isArray(inlineSummary.signalCoverage)
+    ? inlineSummary.signalCoverage
+    : [];
+
+  if (signalCoverage.length === 0) {
+    return [
+      {
+        signal: "observabilitySummary",
+        status: "missing_signal_coverage",
+      },
+    ];
+  }
+
+  const seen = new Set();
+  const coverage = [];
+
+  for (const entry of signalCoverage) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const signal = normalizeOptionalString(entry.signal ?? entry.name);
+    const status = normalizeOptionalString(entry.status);
+    if (!signal || !status) {
+      continue;
+    }
+
+    const fingerprint = `${signal}:${status}`;
+    if (seen.has(fingerprint)) {
+      continue;
+    }
+    seen.add(fingerprint);
+    coverage.push({
+      signal,
+      status,
+      source: normalizeOptionalString(entry.source),
+      detail: normalizeOptionalString(entry.detail),
+    });
+  }
+
+  if (coverage.length === 0) {
+    return [
+      {
+        signal: "observabilitySummary",
+        status: "missing_signal_coverage",
+      },
+    ];
+  }
+
+  return coverage;
+}
+
 function validateCaseDirectory(caseDir, caseConfig, defaults, context) {
   const requiredArtifacts = normalizeStringList(
     caseConfig.requiredArtifacts ?? defaults.requiredArtifacts,
@@ -468,6 +541,16 @@ function validateCaseDirectory(caseDir, caseConfig, defaults, context) {
   );
   reviewDecision = reviewDecisionResult.reviewDecision;
   issues.push(...reviewDecisionResult.issues);
+  const observabilityCoverage = normalizeObservabilityCoverage(
+    inputPayload,
+    evidencePayload,
+  );
+  const observabilitySignals = observabilityCoverage.map(
+    (entry) => `${entry.signal}:${entry.status}`,
+  );
+  const observabilityGapCount = observabilityCoverage.filter(
+    (entry) => entry.status !== "exported",
+  ).length;
 
   const pendingRequestCount = Array.isArray(
     inputPayload?.runtimeContext?.pendingRequests,
@@ -520,6 +603,9 @@ function validateCaseDirectory(caseDir, caseConfig, defaults, context) {
     reviewRiskLevel: reviewDecision?.riskLevel ?? "",
     reviewHumanReviewer: reviewDecision?.humanReviewer ?? "",
     reviewReviewedAt: reviewDecision?.reviewedAt ?? "",
+    observabilityCoverage,
+    observabilitySignals,
+    observabilityGapCount,
     preferredMode,
     status: issues.length === 0 ? "ready" : "invalid",
     issues,
@@ -584,6 +670,11 @@ function expandSuiteCases(suiteConfig, defaults, repoRoot, workspaceRoot) {
           reviewRiskLevel: "",
           reviewHumanReviewer: "",
           reviewReviewedAt: "",
+          observabilityCoverage: [
+            { signal: "observabilitySummary", status: "missing" },
+          ],
+          observabilitySignals: ["observabilitySummary:missing"],
+          observabilityGapCount: 1,
           preferredMode: "",
           status: "invalid",
           issues: [
@@ -633,6 +724,9 @@ function expandSuiteCases(suiteConfig, defaults, repoRoot, workspaceRoot) {
       reviewRiskLevel: "",
       reviewHumanReviewer: "",
       reviewReviewedAt: "",
+      observabilityCoverage: [{ signal: "observabilitySummary", status: "missing" }],
+      observabilitySignals: ["observabilitySummary:missing"],
+      observabilityGapCount: 1,
       preferredMode: "",
       status: "invalid",
       issues: [`不支持的 case source: ${source || "(empty)"}`],
@@ -676,6 +770,9 @@ function buildSummary(manifest, suites, options) {
   const recordedReviewDecisionCases = allCases.filter(
     (entry) => entry.reviewDecisionRecorded,
   );
+  const observabilityGapCases = allCases.filter(
+    (entry) => entry.observabilityGapCount > 0,
+  );
 
   return {
     manifestVersion: String(manifest.manifestVersion ?? "unknown"),
@@ -692,6 +789,7 @@ function buildSummary(manifest, suites, options) {
       needsHumanReviewCount: reviewCases.length,
       pendingRequestCaseCount: pendingCases.length,
       reviewDecisionRecordedCount: recordedReviewDecisionCases.length,
+      observabilityGapCaseCount: observabilityGapCases.length,
     },
     breakdowns: {
       suiteTags: aggregateCaseBreakdown(allCases, (entry) => entry.tags),
@@ -704,6 +802,10 @@ function buildSummary(manifest, suites, options) {
       ),
       reviewRiskLevels: aggregateCaseBreakdown(allCases, (entry) =>
         entry.reviewRiskLevel ? [entry.reviewRiskLevel] : [],
+      ),
+      observabilitySignals: aggregateCaseBreakdown(
+        allCases,
+        (entry) => entry.observabilitySignals,
       ),
     },
     suites,
@@ -721,6 +823,7 @@ function renderText(summary) {
     `[harness-eval] pending-request cases: ${summary.totals.pendingRequestCaseCount}`,
     `[harness-eval] needs-review cases : ${summary.totals.needsHumanReviewCount}`,
     `[harness-eval] recorded review decisions: ${summary.totals.reviewDecisionRecordedCount}`,
+    `[harness-eval] observability-gap cases: ${summary.totals.observabilityGapCaseCount}`,
   ];
 
   const topFailureModes = summary.breakdowns.failureModes.slice(0, 5);
@@ -753,6 +856,19 @@ function renderText(summary) {
     }
   }
 
+  const topObservabilitySignals = summary.breakdowns.observabilitySignals.slice(
+    0,
+    5,
+  );
+  if (topObservabilitySignals.length > 0) {
+    lines.push("[harness-eval] observability signals:");
+    for (const entry of topObservabilitySignals) {
+      lines.push(
+        `  - ${entry.name}: case=${entry.caseCount}, ready=${entry.readyCount}, invalid=${entry.invalidCount}`,
+      );
+    }
+  }
+
   for (const suite of summary.suites) {
     lines.push(
       `[harness-eval] suite ${suite.id}: ready ${suite.stats.readyCount} / ${suite.stats.caseCount}`,
@@ -770,6 +886,11 @@ function renderText(summary) {
       if (entry.reviewDecisionStatus) {
         lines.push(
           `    review: ${entry.reviewDecisionStatus} / risk=${entry.reviewRiskLevel || "unknown"}`,
+        );
+      }
+      if (entry.observabilitySignals.length > 0) {
+        lines.push(
+          `    observability: ${entry.observabilitySignals.join(", ")}`,
         );
       }
       for (const issue of entry.issues) {
@@ -795,6 +916,7 @@ function renderMarkdown(summary) {
     `- pending request case：${summary.totals.pendingRequestCaseCount}`,
     `- needs review case：${summary.totals.needsHumanReviewCount}`,
     `- 已记录人工审核：${summary.totals.reviewDecisionRecordedCount}`,
+    `- observability gap case：${summary.totals.observabilityGapCaseCount}`,
     "",
   ];
 
@@ -852,6 +974,19 @@ function renderMarkdown(summary) {
     lines.push("");
   }
 
+  if (summary.breakdowns.observabilitySignals.length > 0) {
+    lines.push("## Observability Coverage 分布");
+    lines.push("");
+    lines.push("| Signal | case | ready | invalid |");
+    lines.push("| --- | --- | --- | --- |");
+    for (const entry of summary.breakdowns.observabilitySignals) {
+      lines.push(
+        `| ${entry.name} | ${entry.caseCount} | ${entry.readyCount} | ${entry.invalidCount} |`,
+      );
+    }
+    lines.push("");
+  }
+
   for (const suite of summary.suites) {
     lines.push(`## ${suite.title}`);
     lines.push("");
@@ -884,6 +1019,11 @@ function renderMarkdown(summary) {
       }
       if (entry.primaryBlockingKind) {
         classificationText.push(`blocking: ${entry.primaryBlockingKind}`);
+      }
+      if (entry.observabilitySignals.length > 0) {
+        classificationText.push(
+          `observability: ${entry.observabilitySignals.join(", ")}`,
+        );
       }
       const reviewText = entry.reviewDecisionStatus
         ? [

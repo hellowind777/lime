@@ -30,6 +30,12 @@ function renderHook(props?: Partial<HookProps>) {
     normalizedEntryTheme: "general",
     shouldBootstrapCanvasOnEntry: false,
     canvasState: null,
+    generalCanvasState: {
+      isOpen: false,
+      contentType: "empty",
+      content: "",
+      isEditing: false,
+    },
     showTeamWorkspaceBoard: false,
     hasCurrentCanvasArtifact: false,
     currentCanvasArtifactType: null,
@@ -127,5 +133,25 @@ describe("useWorkspaceCanvasLayoutRuntime", () => {
       ...previousState,
       isOpen: false,
     });
+  });
+
+  it("general 空白画布没有真实预览目标时应回退到聊天态", async () => {
+    const setLayoutMode = vi.fn();
+    const { render } = renderHook({
+      layoutMode: "chat-canvas",
+      generalCanvasState: {
+        isOpen: true,
+        contentType: "markdown",
+        content: "   ",
+        isEditing: false,
+      },
+      setLayoutMode,
+    });
+
+    await render();
+
+    expect(
+      setLayoutMode.mock.calls.some((call) => call[0] === "chat"),
+    ).toBe(true);
   });
 });

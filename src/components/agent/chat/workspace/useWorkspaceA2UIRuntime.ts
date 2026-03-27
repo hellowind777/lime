@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { parseAIResponse } from "@/components/content-creator/a2ui/parser";
 import type { A2UIResponse } from "@/components/content-creator/a2ui/types";
 import {
@@ -13,6 +13,22 @@ interface A2UISubmissionNotice {
   title: string;
   summary: string;
 }
+
+type PendingA2UIResolution =
+  | {
+      form: A2UIResponse;
+      source: {
+        kind: "assistant_message" | "legacy_message";
+        messageId: string;
+      };
+    }
+  | {
+      form: A2UIResponse;
+      source: {
+        kind: "action_request";
+        requestId: string;
+      };
+    };
 
 interface UseWorkspaceA2UIRuntimeParams {
   messages: Message[];
@@ -45,7 +61,7 @@ export function useWorkspaceA2UIRuntime({
     );
   }, [messages]);
 
-  const pendingMessageA2UIForm = useMemo<A2UIResponse | null>(() => {
+  const pendingMessageA2UI = useMemo<PendingA2UIResolution | null>(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
       const message = messages[i];
 
@@ -66,7 +82,13 @@ export function useWorkspaceA2UIRuntime({
         for (let j = parsed.parts.length - 1; j >= 0; j -= 1) {
           const part = parsed.parts[j];
           if (part.type === "a2ui" && typeof part.content !== "string") {
-            return part.content;
+            return {
+              form: part.content,
+              source: {
+                kind: "assistant_message",
+                messageId: message.id,
+              },
+            };
           }
         }
       } catch {
@@ -76,6 +98,7 @@ export function useWorkspaceA2UIRuntime({
 
     return null;
   }, [messages]);
+  const pendingMessageA2UIForm = pendingMessageA2UI?.form ?? null;
 
   const pendingPromotedA2UIActionRequest = useMemo<ActionRequired | null>(() => {
     if (pendingMessageA2UIForm) {
@@ -100,7 +123,7 @@ export function useWorkspaceA2UIRuntime({
     return null;
   }, [messages, pendingMessageA2UIForm]);
 
-  const pendingLegacyQuestionnaireA2UIForm = useMemo<A2UIResponse | null>(() => {
+  const pendingLegacyQuestionnaireA2UI = useMemo<PendingA2UIResolution | null>(() => {
     if (pendingMessageA2UIForm || pendingActionRequest) {
       return null;
     }
@@ -120,30 +143,49 @@ export function useWorkspaceA2UIRuntime({
         return null;
       }
 
-      return buildLegacyQuestionnaireA2UI(message.content || "");
+      const form = buildLegacyQuestionnaireA2UI(message.content || "");
+      if (!form) {
+        return null;
+      }
+
+      return {
+        form,
+        source: {
+          kind: "legacy_message",
+          messageId: message.id,
+        },
+      };
     }
 
     return null;
   }, [messages, pendingActionRequest, pendingMessageA2UIForm]);
+  const pendingLegacyQuestionnaireA2UIForm =
+    pendingLegacyQuestionnaireA2UI?.form ?? null;
 
-  const pendingA2UIForm = useMemo<A2UIResponse | null>(() => {
-    if (pendingMessageA2UIForm) {
-      return pendingMessageA2UIForm;
+  const resolvedPendingA2UI = useMemo<PendingA2UIResolution | null>(() => {
+    if (pendingMessageA2UI) {
+      return pendingMessageA2UI;
     }
 
     if (pendingPromotedA2UIActionRequest) {
-      return buildActionRequestA2UI(pendingPromotedA2UIActionRequest);
+      return {
+        form: buildActionRequestA2UI(pendingPromotedA2UIActionRequest),
+        source: {
+          kind: "action_request",
+          requestId: pendingPromotedA2UIActionRequest.requestId,
+        },
+      };
     }
 
-    return pendingLegacyQuestionnaireA2UIForm;
+    return pendingLegacyQuestionnaireA2UI;
   }, [
-    pendingLegacyQuestionnaireA2UIForm,
-    pendingMessageA2UIForm,
+    pendingLegacyQuestionnaireA2UI,
+    pendingMessageA2UI,
     pendingPromotedA2UIActionRequest,
   ]);
 
   const a2uiSubmissionNotice = useMemo<A2UISubmissionNotice | null>(() => {
-    if (pendingA2UIForm) {
+    if (resolvedPendingA2UI) {
       return null;
     }
 
@@ -194,12 +236,50 @@ export function useWorkspaceA2UIRuntime({
     }
 
     return null;
-  }, [messages, pendingA2UIForm]);
+  }, [messages, resolvedPendingA2UI]);
+
+  const [retainedPendingA2UI, setRetainedPendingA2UI] =
+    useState<PendingA2UIResolution | null>(resolvedPendingA2UI);
+
+  useEffect(() => {
+    if (resolvedPendingA2UI) {
+      setRetainedPendingA2UI(resolvedPendingA2UI);
+      return;
+    }
+
+    if (a2uiSubmissionNotice) {
+      setRetainedPendingA2UI(null);
+      return;
+    }
+
+    setRetainedPendingA2UI((previous) => {
+      if (!previous) {
+        return null;
+      }
+
+      if (previous.source.kind === "action_request") {
+        const requestStillExists = messages.some((message) =>
+          (message.actionRequests || []).some(
+            (request) => request.requestId === previous.source.requestId,
+          ),
+        );
+        return requestStillExists ? previous : null;
+      }
+
+      const sourceMessageStillExists = messages.some(
+        (message) => message.id === previous.source.messageId,
+      );
+      return sourceMessageStillExists ? previous : null;
+    });
+  }, [a2uiSubmissionNotice, messages, resolvedPendingA2UI]);
+
+  const pendingA2UIForm =
+    resolvedPendingA2UI?.form ?? retainedPendingA2UI?.form ?? null;
 
   useEffect(() => {
     if (
       !pendingActionRequest ||
-      pendingA2UIForm ||
+      resolvedPendingA2UI ||
       !isActionRequestA2UICompatible(pendingActionRequest)
     ) {
       return;
@@ -211,7 +291,7 @@ export function useWorkspaceA2UIRuntime({
       prompt: pendingActionRequest.prompt,
       scope: pendingActionRequest.scope,
     });
-  }, [pendingA2UIForm, pendingActionRequest]);
+  }, [pendingActionRequest, resolvedPendingA2UI]);
 
   return {
     a2uiSubmissionNotice,

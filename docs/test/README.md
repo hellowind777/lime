@@ -131,7 +131,7 @@ npm run harness:eval:trend
 ### 记录 Harness eval 历史窗口
 
 ```bash
-node scripts/harness-eval-runner.mjs --record-history-dir "./artifacts/history" --history-retain 30
+npm run harness:eval:history:record
 ```
 
 ### 运行 Harness cleanup / slop 报告

@@ -6,6 +6,7 @@ import { Inputbar } from "./index";
 import type { Character } from "@/lib/api/memory";
 import type { Skill } from "@/lib/api/skills";
 import type { ServiceSkillHomeItem } from "@/components/agent/chat/service-skills/types";
+import type { A2UIResponse } from "@/components/content-creator/a2ui/types";
 
 const mockCharacterMention =
   vi.fn<
@@ -202,6 +203,7 @@ afterEach(() => {
     });
     mounted.container.remove();
   }
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -221,17 +223,54 @@ function renderInputbar(
     skills: [],
   };
 
-  act(() => {
-    root.render(<Inputbar {...defaultProps} {...props} />);
-  });
+  const render = (
+    nextProps?: Partial<React.ComponentProps<typeof Inputbar>>,
+  ) => {
+    act(() => {
+      root.render(<Inputbar {...defaultProps} {...props} {...nextProps} />);
+    });
+  };
+
+  render();
 
   mountedRoots.push({ root, container });
-  return container;
+  return {
+    container,
+    rerender: render,
+  };
+}
+
+function createPendingA2UIForm(): A2UIResponse {
+  return {
+    id: "a2ui-pending",
+    version: "1.0",
+    root: "root",
+    data: {},
+    components: [
+      {
+        id: "title",
+        component: "Text",
+        text: "请确认开始方式",
+        variant: "body",
+      },
+      {
+        id: "root",
+        component: "Column",
+        children: ["title"],
+        gap: 12,
+        align: "stretch",
+      },
+    ],
+    submitAction: {
+      label: "继续处理",
+      action: { name: "submit" },
+    },
+  } as A2UIResponse;
 }
 
 describe("Inputbar", () => {
   it("即使角色和技能为空，也应挂载 CharacterMention", async () => {
-    const container = renderInputbar();
+    const { container } = renderInputbar();
     await act(async () => {
       await Promise.resolve();
     });
@@ -278,7 +317,7 @@ describe("Inputbar", () => {
   });
 
   it("存在 executionRuntime 时应展示最近执行模型与结构化输出提示", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       providerType: "openai",
       setProviderType: vi.fn(),
       model: "gpt-5.4-mini",
@@ -353,7 +392,7 @@ describe("Inputbar", () => {
 
   it("通用聊天态复杂任务应显示 Team 建议并支持开启多代理", async () => {
     const onToolStatesChange = vi.fn();
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       input: "请拆分这个多代理调试任务，分别分析、实现、验证，再由主线程汇总结论。",
       activeTheme: "general",
       toolStates: {
@@ -390,7 +429,7 @@ describe("Inputbar", () => {
   });
 
   it("仅在 Team mode 开启时显示 TeamSelector", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       activeTheme: "general",
       toolStates: {
         webSearch: false,
@@ -408,7 +447,7 @@ describe("Inputbar", () => {
       container.querySelector('[data-testid="team-selector-stub"]'),
     ).toBeNull();
 
-    const enabledContainer = renderInputbar({
+    const { container: enabledContainer } = renderInputbar({
       activeTheme: "general",
       toolStates: {
         webSearch: false,
@@ -429,7 +468,7 @@ describe("Inputbar", () => {
 
   it("未开启 Team mode 时应只保留图标开关，并可直接启用", async () => {
     const onToolStatesChange = vi.fn();
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       activeTheme: "general",
       toolStates: {
         webSearch: false,
@@ -467,7 +506,7 @@ describe("Inputbar", () => {
   });
 
   it("点击多代理图标后应自动透传 Team 配置面板打开令牌", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       activeTheme: "general",
     });
 
@@ -500,7 +539,7 @@ describe("Inputbar", () => {
   });
 
   it("复杂任务但未开启 Team 时，保留推荐提示但不再渲染重复入口", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       activeTheme: "general",
       input: "请把这个跨模块问题拆分成分析、实现、验证三个并行子任务再汇总",
       toolStates: {
@@ -531,7 +570,7 @@ describe("Inputbar", () => {
 
   it("社媒主题默认应自动注入 social_post_with_cover skill", async () => {
     const onSend = vi.fn();
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       activeTheme: "social-media",
       input: "写一篇春季上新种草文案",
       onSend,
@@ -562,7 +601,7 @@ describe("Inputbar", () => {
 
   it("社媒主题输入 slash 命令时不应重复注入默认 skill", async () => {
     const onSend = vi.fn();
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       activeTheme: "social-media",
       input: "/custom_skill 写一篇品牌故事",
       onSend,
@@ -618,7 +657,7 @@ describe("Inputbar", () => {
   });
 
   it("主题工作台在待启动状态下不应显示闸门条", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       variant: "theme_workbench",
       themeWorkbenchGate: {
         key: "draft_start",
@@ -639,7 +678,7 @@ describe("Inputbar", () => {
 
   it("主题工作台闸门快捷操作应能快速填充输入", async () => {
     const setInput = vi.fn();
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       variant: "theme_workbench",
       setInput,
       themeWorkbenchGate: {
@@ -677,7 +716,7 @@ describe("Inputbar", () => {
 
   it("主题工作台生成中应展示任务面板并支持停止", async () => {
     const onStop = vi.fn();
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       variant: "theme_workbench",
       isLoading: true,
       onStop,
@@ -707,7 +746,7 @@ describe("Inputbar", () => {
   });
 
   it("主题工作台生成中应支持折叠与展开待办列表", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       variant: "theme_workbench",
       isLoading: true,
       workflowSteps: [
@@ -747,7 +786,7 @@ describe("Inputbar", () => {
   });
 
   it("主题工作台在 auto_running 状态下应展示生成面板（不依赖 isLoading）", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       variant: "theme_workbench",
       isLoading: false,
       themeWorkbenchRunState: "auto_running",
@@ -768,7 +807,7 @@ describe("Inputbar", () => {
   });
 
   it("主题工作台在 await_user_decision 状态下应显示输入框", async () => {
-    const container = renderInputbar({
+    const { container } = renderInputbar({
       variant: "theme_workbench",
       isLoading: true,
       themeWorkbenchRunState: "await_user_decision",
@@ -786,5 +825,50 @@ describe("Inputbar", () => {
       container.querySelector('[data-testid="inputbar-core"]'),
     ).toBeTruthy();
     expect(container.textContent).not.toContain("正在生成中");
+  });
+
+  it("pending A2UI 表单短暂消失时应保留可见，但进入不可提交的同步态", async () => {
+    vi.useFakeTimers();
+    const pendingForm = createPendingA2UIForm();
+    const { container, rerender } = renderInputbar({
+      pendingA2UIForm: pendingForm,
+      onA2UISubmit: vi.fn(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    let submitButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("继续处理"),
+    ) as HTMLButtonElement | undefined;
+
+    expect(submitButton?.disabled).toBe(false);
+
+    rerender({
+      pendingA2UIForm: null,
+      onA2UISubmit: vi.fn(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    submitButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("继续处理"),
+    ) as HTMLButtonElement | undefined;
+
+    expect(container.textContent).toContain("同步中");
+    expect(container.textContent).toContain(
+      "正在同步最新上下文，表单暂时不可提交。",
+    );
+    expect(submitButton?.disabled).toBe(true);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+    });
+
+    expect(container.textContent).not.toContain("继续处理");
+    vi.useRealTimers();
   });
 });

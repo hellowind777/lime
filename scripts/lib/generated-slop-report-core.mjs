@@ -394,9 +394,117 @@ function buildTrendSummary(trendReport) {
       0,
       latestNeedsReviewCount - latestReviewDecisionRecordedCount,
     ),
+    observabilityGapCaseDelta: normalizeNumber(delta.observabilityGapCaseCount),
+    latestObservabilityGapCaseCount: normalizeNumber(
+      latestTotals.observabilityGapCaseCount,
+    ),
     readyRateDelta: normalizeNumber(delta.readyRate),
     signals: Array.isArray(trendReport?.signals) ? trendReport.signals : [],
   };
+}
+
+function splitObservabilitySignalName(name) {
+  const normalized = normalizeString(name);
+  if (!normalized.includes(":")) {
+    return {
+      signal: normalized,
+      status: "",
+    };
+  }
+
+  const separatorIndex = normalized.indexOf(":");
+  return {
+    signal: normalized.slice(0, separatorIndex),
+    status: normalized.slice(separatorIndex + 1),
+  };
+}
+
+function getObservabilityStatusWeight(status) {
+  switch (status) {
+    case "missing":
+      return 120;
+    case "missing_signal_coverage":
+      return 110;
+    case "unlinked":
+      return 95;
+    case "known_gap":
+      return 85;
+    case "partial":
+      return 70;
+    default:
+      return 50;
+  }
+}
+
+function buildObservabilityFocusEntries(entries, sampleCount) {
+  const normalizedEntries = Array.isArray(entries) ? entries : [];
+
+  return normalizedEntries
+    .map((entry) => {
+      const latest = isObject(entry?.latest) ? entry.latest : {};
+      const delta = isObject(entry?.delta) ? entry.delta : {};
+      const baseline = isObject(entry?.baseline) ? entry.baseline : {};
+      const parsed = splitObservabilitySignalName(entry?.name);
+      const positiveDeltaCase = Math.max(0, normalizeNumber(delta.caseCount));
+      const latestCase = normalizeNumber(latest.caseCount);
+      const score =
+        positiveDeltaCase * 120 +
+        latestCase * getObservabilityStatusWeight(parsed.status);
+
+      let state = "stable";
+      if (sampleCount < 2 && latestCase > 0) {
+        state = "seed-risk";
+      } else if (positiveDeltaCase > 0) {
+        state = "regressing";
+      } else if (latestCase > 0) {
+        state = "present";
+      }
+
+      return {
+        name: normalizeString(entry?.name, "(unknown)"),
+        signal: parsed.signal || "(unknown)",
+        status: parsed.status || "unknown",
+        baseline: {
+          caseCount: normalizeNumber(baseline.caseCount),
+          readyCount: normalizeNumber(baseline.readyCount),
+          invalidCount: normalizeNumber(baseline.invalidCount),
+          pendingRequestCaseCount: normalizeNumber(
+            baseline.pendingRequestCaseCount,
+          ),
+          needsHumanReviewCount: normalizeNumber(
+            baseline.needsHumanReviewCount,
+          ),
+        },
+        latest: {
+          caseCount: latestCase,
+          readyCount: normalizeNumber(latest.readyCount),
+          invalidCount: normalizeNumber(latest.invalidCount),
+          pendingRequestCaseCount: normalizeNumber(
+            latest.pendingRequestCaseCount,
+          ),
+          needsHumanReviewCount: normalizeNumber(
+            latest.needsHumanReviewCount,
+          ),
+        },
+        delta: {
+          caseCount: normalizeNumber(delta.caseCount),
+          readyCount: normalizeNumber(delta.readyCount),
+          invalidCount: normalizeNumber(delta.invalidCount),
+          pendingRequestCaseCount: normalizeNumber(delta.pendingRequestCaseCount),
+          needsHumanReviewCount: normalizeNumber(delta.needsHumanReviewCount),
+        },
+        state,
+        score,
+      };
+    })
+    .filter((entry) => entry.status && entry.status !== "exported")
+    .filter((entry) => entry.score > 0 || entry.latest.caseCount > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return left.name.localeCompare(right.name);
+    });
 }
 
 function buildDocFreshnessSummary(docFreshnessReport) {
@@ -469,6 +577,7 @@ function buildRecommendations({
   focusSuiteTags,
   focusReviewDecisionStatuses,
   focusReviewRiskLevels,
+  focusObservabilitySignals,
   docFreshnessSummary,
   docFreshnessFocus,
   governanceSummary,
@@ -485,6 +594,9 @@ function buildRecommendations({
   const topReviewRiskLevels = focusReviewRiskLevels
     .slice(0, 3)
     .map((entry) => entry.name);
+  const topObservabilitySignals = focusObservabilitySignals
+    .slice(0, 3)
+    .map((entry) => `${entry.signal} (${entry.status})`);
   const topGovernanceSurfaceIds = governanceSurfaces
     .filter((entry) => entry.active && entry.classification !== "current")
     .slice(0, 3)
@@ -606,6 +718,47 @@ function buildRecommendations({
     });
   }
 
+  const hasObservabilityPressure =
+    trendSummary.latestObservabilityGapCaseCount > 0 ||
+    trendSummary.observabilityGapCaseDelta > 0 ||
+    focusObservabilitySignals.some(
+      (entry) => entry.latest.caseCount > 0 || entry.delta.caseCount > 0,
+    );
+
+  if (hasObservabilityPressure) {
+    maybePushRecommendation(recommendations, {
+      id: "observability-evidence-follow-up",
+      priority:
+        topObservabilitySignals.some(
+          (entry) =>
+            entry.includes("observabilitySummary (missing)") ||
+            entry.includes("requestTelemetry (unlinked)"),
+        ) || trendSummary.observabilityGapCaseDelta > 0
+          ? "P1"
+          : "P2",
+      title: "先补 observability 证据覆盖，再扩大外部分析与回归",
+      rationale: [
+        trendSummary.latestObservabilityGapCaseCount > 0
+          ? `当前仍有 ${trendSummary.latestObservabilityGapCaseCount} 个 case 带着 observability 证据缺口进入 replay/eval。`
+          : "当前 trend 已检测到 observability coverage 漂移，需先修证据而不是空谈根因分析。",
+        `当前缺口焦点：${topObservabilitySignals.join("、") || "暂无"}。这些缺口会直接降低 analysis handoff、人工审核和 cleanup report 的判断质量。`,
+      ],
+      commands: [
+        "npm run harness:eval",
+        "npm run harness:eval:trend",
+        "npm run harness:cleanup-report",
+      ],
+      backlogTools: [
+        "优先补 request telemetry 关联键、artifact validator outcome、browser/gui smoke 结果到 evidence pack / analysis handoff / replay。",
+      ],
+      focusFailureModes: topFailureModes,
+      focusSuiteTags: topSuiteTags,
+      focusReviewDecisionStatuses: topReviewDecisionStatuses,
+      focusReviewRiskLevels: topReviewRiskLevels,
+      focusSurfaceIds: [],
+    });
+  }
+
   const hasGovernancePressure =
     governanceSummary.activeByClassification.compat > 0 ||
     governanceSummary.activeByClassification.deprecated > 0 ||
@@ -707,6 +860,10 @@ export function buildGeneratedSlopReport({
     trendReport?.classificationDeltas?.reviewRiskLevels,
     trendSummary.sampleCount,
   );
+  const focusObservabilitySignals = buildObservabilityFocusEntries(
+    trendReport?.classificationDeltas?.observabilitySignals,
+    trendSummary.sampleCount,
+  );
   const governanceSurfaces = buildGovernanceSurfaceEntries(governanceReport);
   const governanceSummary = buildGovernanceSummary(
     governanceReport,
@@ -718,6 +875,7 @@ export function buildGeneratedSlopReport({
     focusSuiteTags,
     focusReviewDecisionStatuses,
     focusReviewRiskLevels,
+    focusObservabilitySignals,
     docFreshnessSummary,
     docFreshnessFocus,
     governanceSummary,
@@ -764,12 +922,16 @@ export function buildGeneratedSlopReport({
       trendSummary.reviewDecisionBacklogCount > 0
         ? `仍有 ${trendSummary.reviewDecisionBacklogCount} 个需要人工审核的 case 尚未记录最终 decision。`
         : "当前没有待补录的人工审核 backlog。",
+      trendSummary.latestObservabilityGapCaseCount > 0
+        ? `当前仍有 ${trendSummary.latestObservabilityGapCaseCount} 个 case 缺 observability 证据。`
+        : "当前没有额外的 observability 证据缺口。",
     ],
     focus: {
       failureModes: focusFailureModes.slice(0, 5),
       suiteTags: focusSuiteTags.slice(0, 5),
       reviewDecisionStatuses: focusReviewDecisionStatuses.slice(0, 5),
       reviewRiskLevels: focusReviewRiskLevels.slice(0, 5),
+      observabilitySignals: focusObservabilitySignals.slice(0, 5),
       docFreshness: docFreshnessFocus,
       governanceSurfaces: governanceSurfaces
         .filter((entry) => entry.active && entry.classification !== "current")
@@ -791,6 +953,7 @@ export function renderGeneratedSlopText(report) {
     `[harness-cleanup] delta pending_request: ${report.summary.trend.pendingDelta}`,
     `[harness-cleanup] delta review_decision_recorded: ${report.summary.trend.reviewDecisionRecordedDelta}`,
     `[harness-cleanup] review backlog: ${report.summary.trend.reviewDecisionBacklogCount}`,
+    `[harness-cleanup] observability gap cases: ${report.summary.trend.latestObservabilityGapCaseCount}`,
     `[harness-cleanup] doc freshness issues: ${report.summary.docFreshness.issueCount}`,
     `[harness-cleanup] active compat/deprecated/dead-candidate: ${report.summary.governance.activeByClassification.compat}/${report.summary.governance.activeByClassification.deprecated}/${report.summary.governance.activeByClassification["dead-candidate"]}`,
     `[harness-cleanup] governance violations: ${report.summary.governance.violationCount}`,
@@ -836,6 +999,15 @@ export function renderGeneratedSlopText(report) {
     }
   }
 
+  if (report.focus.observabilitySignals.length > 0) {
+    lines.push("[harness-cleanup] top observability gaps:");
+    for (const entry of report.focus.observabilitySignals) {
+      lines.push(
+        `  - ${entry.signal} (${entry.status}): state=${entry.state}, latest_case=${entry.latest.caseCount}, delta_case=${entry.delta.caseCount}, score=${entry.score}`,
+      );
+    }
+  }
+
   if (report.focus.docFreshness.issueKinds.length > 0) {
     lines.push("[harness-cleanup] doc freshness issues:");
     for (const entry of report.focus.docFreshness.issueKinds) {
@@ -870,6 +1042,7 @@ export function renderGeneratedSlopMarkdown(report) {
     `- pending request delta：${report.summary.trend.pendingDelta}`,
     `- 已记录人工审核 delta：${report.summary.trend.reviewDecisionRecordedDelta}`,
     `- 待补录人工审核 backlog：${report.summary.trend.reviewDecisionBacklogCount}`,
+    `- observability gap case：${report.summary.trend.latestObservabilityGapCaseCount}`,
     `- doc freshness 问题数：${report.summary.docFreshness.issueCount}`,
     `- governance 违规数：${report.summary.governance.violationCount}`,
     `- compat 活跃 surface：${report.summary.governance.activeByClassification.compat}`,
@@ -951,6 +1124,21 @@ export function renderGeneratedSlopMarkdown(report) {
     for (const entry of report.focus.reviewRiskLevels) {
       lines.push(
         `| ${entry.name} | ${entry.state} | ${entry.latest.caseCount} | ${entry.latest.invalidCount} | ${entry.delta.caseCount} | ${entry.score} |`,
+      );
+    }
+  }
+
+  if (report.focus.observabilitySignals.length > 0) {
+    lines.push("");
+    lines.push("## Observability 证据缺口");
+    lines.push("");
+    lines.push(
+      "| Signal | 状态 | latest case | delta case | score |",
+    );
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const entry of report.focus.observabilitySignals) {
+      lines.push(
+        `| ${entry.signal} | ${entry.status} | ${entry.latest.caseCount} | ${entry.delta.caseCount} | ${entry.score} |`,
       );
     }
   }

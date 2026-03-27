@@ -2075,6 +2075,7 @@ export function AgentChatWorkspace({
     normalizedEntryTheme,
     shouldBootstrapCanvasOnEntry,
     canvasState,
+    generalCanvasState,
     showTeamWorkspaceBoard: teamSessionRuntime.showTeamWorkspaceBoard,
     hasCurrentCanvasArtifact: Boolean(currentCanvasArtifact),
     currentCanvasArtifactType: currentCanvasArtifact?.type,

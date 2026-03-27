@@ -9,7 +9,12 @@ import { A2UITaskCard } from "../../A2UITaskCard";
 interface A2UIFloatingFormProps {
   response: A2UIResponse;
   onSubmit: (formData: A2UIFormData) => void;
+  submitDisabled?: boolean;
+  isStale?: boolean;
 }
+
+const STALE_STATUS_LABEL = "同步中";
+const STALE_FOOTER_TEXT = "正在同步最新上下文，表单暂时不可提交。";
 
 const Card = styled.div`
   position: relative;
@@ -34,14 +39,19 @@ const Card = styled.div`
 export function A2UIFloatingForm({
   response,
   onSubmit,
+  submitDisabled = false,
+  isStale = false,
 }: A2UIFloatingFormProps) {
   return (
     <Card>
       <A2UITaskCard
         response={response}
         onSubmit={onSubmit}
+        submitDisabled={submitDisabled}
         compact={true}
         preset={CHAT_FLOATING_A2UI_TASK_CARD_PRESET}
+        statusLabel={isStale ? STALE_STATUS_LABEL : undefined}
+        footerText={isStale ? STALE_FOOTER_TEXT : undefined}
         className="m-0"
       />
     </Card>

@@ -13,6 +13,7 @@ describe("generated-slop-report-core", () => {
           pendingRequestCaseCount: 0,
           needsHumanReviewCount: 0,
           reviewDecisionRecordedCount: 0,
+          observabilityGapCaseCount: 1,
           readyRate: 0,
         },
         signals: ["样本数不足 2，当前仅形成 trend seed，还不能判断长期退化。"],
@@ -20,12 +21,14 @@ describe("generated-slop-report-core", () => {
           totals: {
             needsHumanReviewCount: 0,
             reviewDecisionRecordedCount: 0,
+            observabilityGapCaseCount: 0,
           },
         },
         latest: {
           totals: {
             needsHumanReviewCount: 1,
             reviewDecisionRecordedCount: 0,
+            observabilityGapCaseCount: 1,
           },
         },
         classificationDeltas: {
@@ -133,6 +136,56 @@ describe("generated-slop-report-core", () => {
               },
             },
           ],
+          observabilitySignals: [
+            {
+              name: "requestTelemetry:unlinked",
+              baseline: {
+                caseCount: 0,
+                readyCount: 0,
+                invalidCount: 0,
+                pendingRequestCaseCount: 0,
+                needsHumanReviewCount: 0,
+              },
+              latest: {
+                caseCount: 1,
+                readyCount: 1,
+                invalidCount: 0,
+                pendingRequestCaseCount: 0,
+                needsHumanReviewCount: 0,
+              },
+              delta: {
+                caseCount: 1,
+                readyCount: 1,
+                invalidCount: 0,
+                pendingRequestCaseCount: 0,
+                needsHumanReviewCount: 0,
+              },
+            },
+            {
+              name: "artifactValidator:known_gap",
+              baseline: {
+                caseCount: 0,
+                readyCount: 0,
+                invalidCount: 0,
+                pendingRequestCaseCount: 0,
+                needsHumanReviewCount: 0,
+              },
+              latest: {
+                caseCount: 1,
+                readyCount: 1,
+                invalidCount: 0,
+                pendingRequestCaseCount: 0,
+                needsHumanReviewCount: 0,
+              },
+              delta: {
+                caseCount: 1,
+                readyCount: 1,
+                invalidCount: 0,
+                pendingRequestCaseCount: 0,
+                needsHumanReviewCount: 0,
+              },
+            },
+          ],
         },
       },
       governanceReport: {
@@ -190,10 +243,15 @@ describe("generated-slop-report-core", () => {
 
     expect(report.summary.trend.isSeed).toBe(true);
     expect(report.summary.trend.reviewDecisionBacklogCount).toBe(1);
+    expect(report.summary.trend.latestObservabilityGapCaseCount).toBe(1);
     expect(report.summary.docFreshness.issueCount).toBe(0);
     expect(report.focus.failureModes[0].name).toBe("pending_request");
     expect(report.focus.reviewDecisionStatuses[0].name).toBe("pending_review");
     expect(report.focus.reviewRiskLevels[0].name).toBe("high");
+    expect(report.focus.observabilitySignals[0]).toMatchObject({
+      signal: "requestTelemetry",
+      status: "unlinked",
+    });
     expect(report.focus.governanceSurfaces[0].id).toBe(
       "migration-setting-key-leak",
     );
@@ -202,6 +260,7 @@ describe("generated-slop-report-core", () => {
         "promote-high-value-replay",
         "replay-and-smoke-follow-up",
         "review-decision-follow-up",
+        "observability-evidence-follow-up",
         "governance-cleanup-priority",
         "doc-freshness-review",
       ]),
@@ -215,6 +274,11 @@ describe("generated-slop-report-core", () => {
       report.recommendations.find((entry) => entry.id === "doc-freshness-review")
         ?.commands,
     ).toContain("npm run harness:doc-freshness");
+    expect(
+      report.recommendations.find(
+        (entry) => entry.id === "observability-evidence-follow-up",
+      )?.priority,
+    ).toBe("P1");
   });
 
   it("应把 governance 违规提升为 P0 守卫动作", () => {
@@ -227,6 +291,7 @@ describe("generated-slop-report-core", () => {
           pendingRequestCaseCount: 0,
           needsHumanReviewCount: 0,
           reviewDecisionRecordedCount: 0,
+          observabilityGapCaseCount: 0,
           readyRate: -0.5,
         },
         signals: ["invalid case 增加 1，存在回归候选。"],
@@ -234,12 +299,14 @@ describe("generated-slop-report-core", () => {
           totals: {
             needsHumanReviewCount: 0,
             reviewDecisionRecordedCount: 0,
+            observabilityGapCaseCount: 0,
           },
         },
         latest: {
           totals: {
             needsHumanReviewCount: 0,
             reviewDecisionRecordedCount: 0,
+            observabilityGapCaseCount: 0,
           },
         },
         classificationDeltas: {
@@ -247,6 +314,7 @@ describe("generated-slop-report-core", () => {
           suiteTags: [],
           reviewDecisionStatuses: [],
           reviewRiskLevels: [],
+          observabilitySignals: [],
         },
       },
       governanceReport: {

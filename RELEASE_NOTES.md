@@ -4,8 +4,10 @@
 
 - **Harness 导出链路补齐四类制品**：处理工作台与统一运行时接通 `handoff bundle`、`evidence pack`、`replay case`、`analysis handoff` 导出，支持 pending request 重放、外部诊断交接和问题复盘闭环
 - **Replay Eval / Nightly 骨架进入 current 主线**：仓库新增 `docs/test/harness-evals.*`、固定 replay fixture、`harness-eval-runner`、`harness-eval-trend-report`、`harness-replay-promote` 与 nightly workflow，把 replay 样本、grader 合同和趋势摘要收口到统一入口
+- **Inputbar A2UI 浮层与工作台预览继续收口**：输入栏补齐 legacy 问卷折叠、结构化表单浮层、通用画布预览和 workbench stacked/split 行为，避免 A2UI 表单与画布入口互相抢占
 - **Service Skill 到 Automation 的落地链路更完整**：Home Shell、Workspace 与自动化设置页现在可以直接从服务技能创建本地 automation job，保留技能与任务关联，并回填 workspace/content 上下文
 - **Browser Runtime 站点采集继续收口**：站点采集工作台补齐推荐适配器、资料自动选择、目录状态展示和结果回写当前内容/项目的主链，优先复用已连接 Chrome 的真实登录态
+- **Release 流程补齐当前平台约束**：macOS x64 release runner 切换到当前 Intel 标签，并在依赖安装阶段跳过 `canvas` 这类可选原生包，降低最近 release 在 macOS/Windows 上的噪音失败与长时间等待
 - **Agent Chat 提交流程与处理面板继续瘦身**：slash skill、selected team、session/runtime steady-state 与 Harness 状态面板的交互拆分重组，关键回归测试同步补齐
 
 ### ⚠️ 兼容性说明
@@ -24,13 +26,12 @@
 ### 🧪 测试
 
 - 发布前执行：`npm run verify:app-version`
-- 发布前执行：`npm run lint`
-- 发布前执行：`npm run test:contracts`
-- 发布前执行：`cargo fmt --manifest-path src-tauri/Cargo.toml --all`
-- 发布前执行：`CARGO_TARGET_DIR=/tmp/lime-target-v0.97.0 cargo test --manifest-path src-tauri/Cargo.toml`
-- 发布前执行：`CARGO_TARGET_DIR=/tmp/lime-target-v0.97.0 cargo clippy --manifest-path src-tauri/Cargo.toml`
-- 发布前执行：`CARGO_TARGET_DIR=/tmp/lime-target-v0.97.0 npm run verify:gui-smoke -- --timeout-ms 480000`
-- 格式状态：已执行 `cargo fmt --manifest-path src-tauri/Cargo.toml --all`
+- 发布前执行：`cargo fmt --manifest-path src-tauri/Cargo.toml`
+- 发布前执行：`npm run build`
+- 发布前执行：`npm run verify:local`
+- 发布前执行：`cargo clippy --manifest-path src-tauri/Cargo.toml`
+- 验证结果：`verify:local` 已覆盖 `npm run lint`、`npm run typecheck`、`npm test`、`npm run test:contracts`、`cargo test --manifest-path src-tauri/Cargo.toml` 与 `npm run verify:gui-smoke`
+- 备注：`cargo clippy` 当前通过，但仍保留 3 条既有 warning，未在本次同版发布中额外扩范围消除
 
 ### 📝 文档
 

@@ -7,7 +7,8 @@
 use crate::agent::SessionDetail;
 use crate::commands::aster_agent_cmd::AgentRuntimeThreadReadModel;
 use crate::services::runtime_evidence_pack_service::{
-    export_runtime_evidence_pack, RuntimeEvidencePackExportResult,
+    build_runtime_observability_summary_json, export_runtime_evidence_pack,
+    RuntimeEvidencePackExportResult,
 };
 use crate::services::runtime_handoff_artifact_service::{
     export_runtime_handoff_bundle, RuntimeHandoffBundleExportResult,
@@ -144,6 +145,12 @@ pub fn export_runtime_replay_case(
     let recent_artifacts = collect_recent_artifact_paths(detail);
     let pending_requests = collect_pending_request_inputs(detail, thread_read);
     let recent_timeline = collect_recent_timeline_items(detail);
+    let observability_summary = build_runtime_observability_summary_json(
+        detail,
+        thread_read,
+        &recent_artifacts,
+        &evidence_pack.known_gaps,
+    );
     let success_criteria = build_success_criteria(
         detail,
         thread_read,
@@ -172,6 +179,7 @@ pub fn export_runtime_replay_case(
                 &recent_artifacts,
                 &recent_timeline,
                 &pending_requests,
+                &observability_summary,
                 workspace_root.as_path(),
                 exported_at.as_str(),
             )?,
@@ -218,6 +226,7 @@ pub fn export_runtime_replay_case(
                 &handoff_bundle,
                 &evidence_pack,
                 &recent_artifacts,
+                &observability_summary,
                 exported_at.as_str(),
             )?,
         )?,
@@ -286,6 +295,7 @@ fn build_input_json(
     recent_artifacts: &[String],
     recent_timeline: &[ReplayTimelineItem],
     pending_requests: &[ReplayPendingRequestInput],
+    observability_summary: &Value,
     workspace_root: &Path,
     exported_at: &str,
 ) -> Result<String, String> {
@@ -359,6 +369,7 @@ fn build_input_json(
             "lastOutcome": &thread_read.last_outcome,
             "incidents": &thread_read.incidents,
         },
+        "observability": observability_summary,
         "linkedArtifacts": {
             "handoffBundle": {
                 "relativeRoot": handoff_bundle.bundle_relative_root.as_str(),
@@ -487,6 +498,7 @@ fn build_evidence_links_json(
     handoff_bundle: &RuntimeHandoffBundleExportResult,
     evidence_pack: &RuntimeEvidencePackExportResult,
     recent_artifacts: &[String],
+    observability_summary: &Value,
     exported_at: &str,
 ) -> Result<String, String> {
     let payload = json!({
@@ -503,6 +515,7 @@ fn build_evidence_links_json(
             "knownGaps": &evidence_pack.known_gaps,
             "artifacts": &evidence_pack.artifacts,
         },
+        "observabilitySummary": observability_summary,
         "recentArtifacts": recent_artifacts,
     });
 
@@ -1245,6 +1258,8 @@ mod tests {
         assert!(input.contains("\"suiteTags\""));
         assert!(input.contains("\"failureModes\""));
         assert!(input.contains("\"pending_request\""));
+        assert!(input.contains("\"observability\""));
+        assert!(input.contains("\"requestTelemetry\""));
 
         let expected = fs::read_to_string(expected_path).expect("expected");
         assert!(expected.contains("不要要求与原始会话完全相同的工具调用顺序"));
@@ -1257,5 +1272,7 @@ mod tests {
         let links = fs::read_to_string(links_path).expect("links");
         assert!(links.contains("\"handoffBundle\""));
         assert!(links.contains("\"evidencePack\""));
+        assert!(links.contains("\"observabilitySummary\""));
+        assert!(links.contains("\"artifactValidator\""));
     }
 }

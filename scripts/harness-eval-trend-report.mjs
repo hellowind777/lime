@@ -324,6 +324,9 @@ function buildStatusSignals(baseline, latest, sampleCount) {
   const pendingDelta =
     normalizeNumber(latest?.totals?.pendingRequestCaseCount) -
     normalizeNumber(baseline?.totals?.pendingRequestCaseCount);
+  const observabilityGapDelta =
+    normalizeNumber(latest?.totals?.observabilityGapCaseCount) -
+    normalizeNumber(baseline?.totals?.observabilityGapCaseCount);
 
   if (invalidDelta > 0) {
     signals.push(`invalid case 增加 ${invalidDelta}，存在回归候选。`);
@@ -338,6 +341,12 @@ function buildStatusSignals(baseline, latest, sampleCount) {
   if (pendingDelta > 0) {
     signals.push(
       `pending request case 增加 ${pendingDelta}，需确认是否属于真实阻塞还是样本结构变化。`,
+    );
+  }
+
+  if (observabilityGapDelta > 0) {
+    signals.push(
+      `observability gap case 增加 ${observabilityGapDelta}，需先补 evidence / analysis / replay 的证据覆盖。`,
     );
   }
 
@@ -419,6 +428,9 @@ function buildTrendReport(samples, repoRoot) {
       reviewDecisionRecordedCount:
         normalizeNumber(latest?.totals?.reviewDecisionRecordedCount) -
         normalizeNumber(baseline?.totals?.reviewDecisionRecordedCount),
+      observabilityGapCaseCount:
+        normalizeNumber(latest?.totals?.observabilityGapCaseCount) -
+        normalizeNumber(baseline?.totals?.observabilityGapCaseCount),
       readyRate: readyRateDelta,
     },
     signals: buildStatusSignals(baseline, latest, sortedSamples.length),
@@ -441,6 +453,11 @@ function buildTrendReport(samples, repoRoot) {
         latest,
         "reviewRiskLevels",
       ),
+      observabilitySignals: buildBreakdownDeltas(
+        baseline,
+        latest,
+        "observabilitySignals",
+      ),
     },
   };
 }
@@ -455,6 +472,7 @@ function renderText(report) {
     `[harness-eval-trend] delta invalidCount: ${report.delta.invalidCount}`,
     `[harness-eval-trend] delta pendingRequestCaseCount: ${report.delta.pendingRequestCaseCount}`,
     `[harness-eval-trend] delta reviewDecisionRecordedCount: ${report.delta.reviewDecisionRecordedCount}`,
+    `[harness-eval-trend] delta observabilityGapCaseCount: ${report.delta.observabilityGapCaseCount}`,
     `[harness-eval-trend] delta readyRate: ${(report.delta.readyRate * 100).toFixed(1)}%`,
   ];
 
@@ -486,6 +504,17 @@ function renderText(report) {
     }
   }
 
+  const topObservabilityDeltas =
+    report.classificationDeltas.observabilitySignals.slice(0, 5);
+  if (topObservabilityDeltas.length > 0) {
+    lines.push("[harness-eval-trend] observability signal deltas:");
+    for (const entry of topObservabilityDeltas) {
+      lines.push(
+        `  - ${entry.name}: delta_case=${entry.delta.caseCount}, latest_case=${entry.latest.caseCount}, latest_invalid=${entry.latest.invalidCount}`,
+      );
+    }
+  }
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -507,6 +536,7 @@ function renderMarkdown(report) {
     `- pending request case 变化：${report.delta.pendingRequestCaseCount}`,
     `- needs review case 变化：${report.delta.needsHumanReviewCount}`,
     `- 已记录人工审核变化：${report.delta.reviewDecisionRecordedCount}`,
+    `- observability gap case 变化：${report.delta.observabilityGapCaseCount}`,
     `- ready rate 变化：${(report.delta.readyRate * 100).toFixed(1)}%`,
     "",
     "## 信号",
@@ -567,6 +597,19 @@ function renderMarkdown(report) {
     lines.push("| 风险等级 | baseline case | latest case | delta case | delta invalid |");
     lines.push("| --- | --- | --- | --- | --- |");
     for (const entry of report.classificationDeltas.reviewRiskLevels) {
+      lines.push(
+        `| ${entry.name} | ${entry.baseline.caseCount} | ${entry.latest.caseCount} | ${entry.delta.caseCount} | ${entry.delta.invalidCount} |`,
+      );
+    }
+  }
+
+  if (report.classificationDeltas.observabilitySignals.length > 0) {
+    lines.push("");
+    lines.push("## Observability Coverage 变化");
+    lines.push("");
+    lines.push("| Signal | baseline case | latest case | delta case | delta invalid |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    for (const entry of report.classificationDeltas.observabilitySignals) {
       lines.push(
         `| ${entry.name} | ${entry.baseline.caseCount} | ${entry.latest.caseCount} | ${entry.delta.caseCount} | ${entry.delta.invalidCount} |`,
       );

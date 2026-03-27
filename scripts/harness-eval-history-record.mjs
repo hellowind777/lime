@@ -16,7 +16,7 @@ function parseArgs(argv) {
     cleanupMarkdown: "",
     format: "text",
     help: false,
-    historyDir: "./artifacts/history",
+    historyDir: "./.lime/harness/history",
     outputJson: "",
     retain: 30,
     skipCleanup: false,
@@ -108,10 +108,10 @@ Lime Harness Eval History Record
 用法:
   node scripts/harness-eval-history-record.mjs
   node scripts/harness-eval-history-record.mjs --workspace-root "/path/to/workspace"
-  node scripts/harness-eval-history-record.mjs --history-dir "./artifacts/history" --output-json "./tmp/harness-history-record.json"
+  node scripts/harness-eval-history-record.mjs --history-dir "./.lime/harness/history" --output-json "./tmp/harness-history-record.json"
 
 选项:
-  --history-dir PATH        summary 历史目录，默认 ./artifacts/history
+  --history-dir PATH        summary 历史目录，默认 ./.lime/harness/history
   --workspace-root PATH     生成当前 summary 时使用的工作区根目录
   --retain N               历史窗口保留数量，默认 30
   --trend-json PATH        trend JSON 输出路径
@@ -173,6 +173,29 @@ function writeJsonFile(filePath, payload) {
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 }
 
+function writeUniqueHistorySummary(historyDir, payload) {
+  ensureParentDirectory(historyDir);
+  const json = `${JSON.stringify(payload, null, 2)}\n`;
+  const baseName = `${timestampForFilename()}-harness-eval-summary`;
+
+  for (let index = 0; index < 1000; index += 1) {
+    const suffix = index === 0 ? "" : `-${index}`;
+    const filePath = path.join(historyDir, `${baseName}${suffix}.json`);
+
+    try {
+      fs.writeFileSync(filePath, json, { encoding: "utf8", flag: "wx" });
+      return filePath;
+    } catch (error) {
+      if (error?.code === "EEXIST") {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  throw new Error(`无法在历史目录中创建唯一 summary 文件: ${historyDir}`);
+}
+
 function trimHistoryFiles(historyDir, retain) {
   const files = collectHistoryFiles(historyDir).sort((left, right) =>
     right.localeCompare(left),
@@ -185,7 +208,11 @@ function trimHistoryFiles(historyDir, retain) {
 }
 
 function buildDefaultArtifactPaths(historyDir) {
-  const artifactsRoot = path.dirname(historyDir);
+  const historyParent = path.dirname(historyDir);
+  const artifactsRoot =
+    path.basename(historyDir) === "history"
+      ? path.join(historyParent, "reports")
+      : historyParent;
   return {
     trendJson: path.join(artifactsRoot, "harness-eval-trend.json"),
     trendMarkdown: path.join(artifactsRoot, "harness-eval-trend.md"),
@@ -238,11 +265,7 @@ function runHistoryRecordCli() {
   fs.mkdirSync(historyDir, { recursive: true });
 
   const summary = buildCurrentSummary(repoRoot, options.workspaceRoot);
-  const summaryFilePath = path.join(
-    historyDir,
-    `${timestampForFilename()}-harness-eval-summary.json`,
-  );
-  writeJsonFile(summaryFilePath, summary);
+  const summaryFilePath = writeUniqueHistorySummary(historyDir, summary);
   const trimmedPaths = trimHistoryFiles(historyDir, options.retain);
   const historyCount = collectHistoryFiles(historyDir).length;
   const defaults = buildDefaultArtifactPaths(historyDir);

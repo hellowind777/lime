@@ -1,7 +1,10 @@
 import React, { type ChangeEvent, type RefObject } from "react";
 import styled from "styled-components";
 import type { TaskFile } from "../../TaskFiles";
-import type { A2UIResponse, A2UIFormData } from "@/components/content-creator/a2ui/types";
+import type {
+  A2UIFormData,
+  A2UIResponse,
+} from "@/components/content-creator/a2ui/types";
 import {
   A2UISubmissionNotice,
   type A2UISubmissionNoticeData,
@@ -25,6 +28,7 @@ interface InputbarOverlayShellProps {
   submissionNotice?: A2UISubmissionNoticeData | null;
   isSubmissionNoticeVisible: boolean;
   pendingA2UIForm?: A2UIResponse | null;
+  pendingA2UIFormStale?: boolean;
   onA2UISubmit?: (formData: A2UIFormData) => void;
   fileInputRef: RefObject<HTMLInputElement>;
   onFileSelect: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -63,6 +67,7 @@ export const InputbarOverlayShell: React.FC<InputbarOverlayShellProps> = ({
   submissionNotice,
   isSubmissionNoticeVisible,
   pendingA2UIForm,
+  pendingA2UIFormStale = false,
   onA2UISubmit,
   fileInputRef,
   onFileSelect,
@@ -94,7 +99,12 @@ export const InputbarOverlayShell: React.FC<InputbarOverlayShellProps> = ({
       />
     ) : null}
     {pendingA2UIForm && onA2UISubmit ? (
-      <A2UIFloatingForm response={pendingA2UIForm} onSubmit={onA2UISubmit} />
+      <A2UIFloatingForm
+        response={pendingA2UIForm}
+        onSubmit={onA2UISubmit}
+        submitDisabled={pendingA2UIFormStale}
+        isStale={pendingA2UIFormStale}
+      />
     ) : null}
     <input
       ref={fileInputRef}

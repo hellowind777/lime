@@ -188,6 +188,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
     themeWorkbenchQueueItems,
     renderThemeWorkbenchGeneratingPanel,
     visiblePendingA2UIForm,
+    isPendingA2UIFormStale,
     visibleA2UISubmissionNotice,
     isA2UISubmissionNoticeVisible,
     activeSkill,
@@ -242,6 +243,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
         submissionNotice={visibleA2UISubmissionNotice}
         isSubmissionNoticeVisible={isA2UISubmissionNoticeVisible}
         pendingA2UIForm={visiblePendingA2UIForm}
+        pendingA2UIFormStale={isPendingA2UIFormStale}
         onA2UISubmit={onA2UISubmit}
         fileInputRef={fileInputRef}
         onFileSelect={handleFileSelect}

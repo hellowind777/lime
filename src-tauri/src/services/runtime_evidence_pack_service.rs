@@ -8,7 +8,7 @@ use crate::commands::aster_agent_cmd::AgentRuntimeThreadReadModel;
 use chrono::Utc;
 use lime_core::database::dao::agent_timeline::AgentThreadItemPayload;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
@@ -95,6 +95,12 @@ pub fn export_runtime_evidence_pack(
     let recent_artifacts = collect_recent_artifact_paths(detail);
     let latest_turn_summary = collect_latest_turn_summary(detail);
     let known_gaps = build_known_gaps(&recent_artifacts);
+    let observability_summary = build_runtime_observability_summary_json(
+        detail,
+        thread_read,
+        &recent_artifacts,
+        &known_gaps,
+    );
 
     let artifacts = vec![
         write_evidence_file(
@@ -108,6 +114,7 @@ pub fn export_runtime_evidence_pack(
                 thread_read,
                 &recent_artifacts,
                 latest_turn_summary.as_deref(),
+                &observability_summary,
                 &known_gaps,
                 exported_at.as_str(),
             ),
@@ -123,6 +130,7 @@ pub fn export_runtime_evidence_pack(
                 thread_read,
                 workspace_root.as_path(),
                 &recent_artifacts,
+                &observability_summary,
                 &known_gaps,
                 exported_at.as_str(),
             )?,
@@ -145,6 +153,7 @@ pub fn export_runtime_evidence_pack(
                 detail,
                 thread_read,
                 &recent_artifacts,
+                &observability_summary,
                 &known_gaps,
                 exported_at.as_str(),
             )?,
@@ -206,6 +215,7 @@ fn build_summary_markdown(
     thread_read: &AgentRuntimeThreadReadModel,
     recent_artifacts: &[String],
     latest_turn_summary: Option<&str>,
+    observability_summary: &Value,
     known_gaps: &[String],
     exported_at: &str,
 ) -> String {
@@ -250,6 +260,36 @@ fn build_summary_markdown(
         let _ = writeln!(markdown, "- 当前主要阻塞：{blocking_summary}");
     }
     let _ = writeln!(markdown);
+    let _ = writeln!(markdown, "## 证据关联与可观测覆盖");
+    let _ = writeln!(markdown);
+    let _ = writeln!(
+        markdown,
+        "- 关联键：{}",
+        observability_summary
+            .pointer("/correlation/correlationKeys")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|value| format!("`{value}`"))
+                    .collect::<Vec<_>>()
+                    .join("、")
+            })
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "当前未导出关联键".to_string())
+    );
+    let _ = writeln!(
+        markdown,
+        "- 当前导出信号：{}",
+        format_observability_signal_list(observability_summary, "exported")
+    );
+    let _ = writeln!(
+        markdown,
+        "- 当前证据缺口：{}",
+        format_observability_gap_list(observability_summary)
+    );
+    let _ = writeln!(markdown);
     let _ = writeln!(markdown, "## 建议读取顺序");
     let _ = writeln!(markdown);
     let _ = writeln!(markdown, "1. 先读 `summary.md`，确认会话状态和当前阻塞。");
@@ -280,6 +320,7 @@ fn build_runtime_json(
     thread_read: &AgentRuntimeThreadReadModel,
     workspace_root: &Path,
     recent_artifacts: &[String],
+    observability_summary: &Value,
     known_gaps: &[String],
     exported_at: &str,
 ) -> Result<String, String> {
@@ -361,6 +402,7 @@ fn build_runtime_json(
                 "updatedAt": session.updated_at
             })
         }).collect::<Vec<_>>(),
+        "observabilitySummary": observability_summary,
         "recentArtifacts": recent_artifacts,
         "knownGaps": known_gaps
     });
@@ -405,6 +447,7 @@ fn build_artifacts_json(
     detail: &SessionDetail,
     thread_read: &AgentRuntimeThreadReadModel,
     recent_artifacts: &[String],
+    observability_summary: &Value,
     known_gaps: &[String],
     exported_at: &str,
 ) -> Result<String, String> {
@@ -413,6 +456,7 @@ fn build_artifacts_json(
         "exportedAt": exported_at,
         "recentArtifacts": recent_artifacts,
         "artifactCount": recent_artifacts.len(),
+        "observabilitySummary": observability_summary,
         "verification": {
             "artifactValidatorIssues": [],
             "browserEvidence": [],
@@ -442,7 +486,8 @@ fn build_artifacts_json(
 
 fn build_known_gaps(recent_artifacts: &[String]) -> Vec<String> {
     let mut gaps = vec![
-        "当前 Evidence Pack 尚未纳入 provider 请求级 token / retry / duration 摘要。".to_string(),
+        "当前 Lime 虽然已有全局 RequestLog / token / retry / duration 遥测，但 RequestLog 尚未携带 session/thread/turn 关联键，Evidence Pack 只能导出 request telemetry coverage gap，不能给出精确的会话级摘要。".to_string(),
+        "当前 Evidence Pack 尚未纳入 ArtifactDocument validator outcome 与修复问题摘要。".to_string(),
         "当前 Evidence Pack 尚未纳入 GUI smoke / browser 验证结果。".to_string(),
     ];
 
@@ -518,6 +563,194 @@ fn truncate_text(value: &str) -> String {
         .take(MAX_PREVIEW_CHARS)
         .collect::<String>()
         + "..."
+}
+
+pub(crate) fn build_runtime_observability_summary_json(
+    detail: &SessionDetail,
+    thread_read: &AgentRuntimeThreadReadModel,
+    recent_artifacts: &[String],
+    known_gaps: &[String],
+) -> Value {
+    let diagnostics = thread_read.diagnostics.as_ref();
+    json!({
+        "schemaVersion": "v1",
+        "correlation": {
+            "correlationKeys": [
+                "session_id",
+                "thread_id",
+                "turn_id",
+                "pending_request_id",
+                "queued_turn_id",
+                "subagent_session_id"
+            ],
+            "sessionId": detail.id,
+            "threadId": detail.thread_id,
+            "activeTurnId": thread_read.active_turn_id,
+            "pendingRequestIds": thread_read.pending_requests.iter().map(|item| item.id.clone()).collect::<Vec<_>>(),
+            "queuedTurnIds": thread_read.queued_turns.iter().map(|item| item.queued_turn_id.clone()).collect::<Vec<_>>(),
+            "subagentSessionIds": detail.child_subagent_sessions.iter().map(|item| item.id.clone()).collect::<Vec<_>>()
+        },
+        "counts": {
+            "turnCount": detail.turns.len(),
+            "itemCount": detail.items.len(),
+            "pendingRequestCount": thread_read.pending_requests.len(),
+            "queuedTurnCount": thread_read.queued_turns.len(),
+            "warningCount": diagnostics.map(|value| value.warning_count).unwrap_or(0),
+            "failedToolCallCount": diagnostics.map(|value| value.failed_tool_call_count).unwrap_or(0),
+            "failedCommandCount": diagnostics.map(|value| value.failed_command_count).unwrap_or(0),
+            "subagentCount": detail.child_subagent_sessions.len(),
+            "recentArtifactCount": recent_artifacts.len()
+        },
+        "latest": {
+            "warning": latest_warning_json(diagnostics),
+            "failedTool": latest_failed_tool_json(diagnostics),
+            "failedCommand": latest_failed_command_json(diagnostics)
+        },
+        "signalCoverage": [
+            json!({
+                "signal": "correlation",
+                "status": "exported",
+                "source": "runtime thread identity",
+                "detail": "当前证据包已导出 session/thread/turn/pending request/subagent 关联键。"
+            }),
+            json!({
+                "signal": "timeline",
+                "status": "exported",
+                "source": "timeline.json",
+                "detail": "当前证据包已导出最近 turn 与 item 时间线。"
+            }),
+            json!({
+                "signal": "warnings",
+                "status": "exported",
+                "source": "thread.diagnostics",
+                "detail": if diagnostics.is_some() {
+                    "当前证据包已导出 warning / failed tool / failed command 摘要。"
+                } else {
+                    "当前线程没有 diagnostics，但 warning 通道已保留在导出结构中。"
+                }
+            }),
+            json!({
+                "signal": "requestTelemetry",
+                "status": "unlinked",
+                "source": "lime_infra.telemetry",
+                "detail": "Lime 已有 workspace 级 request telemetry，但当前 RequestLog 还未携带 session/thread/turn 元数据。"
+            }),
+            json!({
+                "signal": "artifactValidator",
+                "status": "known_gap",
+                "source": "artifact_document_validator",
+                "detail": "Artifact validator outcome 尚未回挂到当前 evidence pack。"
+            }),
+            json!({
+                "signal": "browserVerification",
+                "status": "known_gap",
+                "source": "browser runtime",
+                "detail": "浏览器截图、DOM 快照和交互验证结果尚未接入 evidence pack。"
+            }),
+            json!({
+                "signal": "guiSmoke",
+                "status": "known_gap",
+                "source": "verify:gui-smoke",
+                "detail": "GUI smoke 结果尚未作为结构化证据回挂当前会话。"
+            })
+        ],
+        "knownGaps": known_gaps
+    })
+}
+
+fn latest_warning_json(
+    diagnostics: Option<&crate::commands::aster_agent_cmd::AgentRuntimeThreadDiagnostics>,
+) -> Option<Value> {
+    diagnostics.and_then(|value| {
+        value.latest_warning.as_ref().map(|warning| {
+            json!({
+                "code": warning.code,
+                "message": warning.message,
+                "updatedAt": warning.updated_at
+            })
+        })
+    })
+}
+
+fn latest_failed_tool_json(
+    diagnostics: Option<&crate::commands::aster_agent_cmd::AgentRuntimeThreadDiagnostics>,
+) -> Option<Value> {
+    diagnostics.and_then(|value| {
+        value.latest_failed_tool.as_ref().map(|tool| {
+            json!({
+                "toolName": tool.tool_name,
+                "error": tool.error,
+                "updatedAt": tool.updated_at
+            })
+        })
+    })
+}
+
+fn latest_failed_command_json(
+    diagnostics: Option<&crate::commands::aster_agent_cmd::AgentRuntimeThreadDiagnostics>,
+) -> Option<Value> {
+    diagnostics.and_then(|value| {
+        value.latest_failed_command.as_ref().map(|command| {
+            json!({
+                "command": command.command,
+                "exitCode": command.exit_code,
+                "error": command.error,
+                "updatedAt": command.updated_at
+            })
+        })
+    })
+}
+
+fn format_observability_signal_list(observability_summary: &Value, status: &str) -> String {
+    let signals = observability_summary
+        .pointer("/signalCoverage")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter(|value| {
+                    value.get("status")
+                        .and_then(Value::as_str)
+                        .map(|value| value == status)
+                        .unwrap_or(false)
+                })
+                .filter_map(|value| value.get("signal").and_then(Value::as_str))
+                .map(|value| format!("`{value}`"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if signals.is_empty() {
+        "无".to_string()
+    } else {
+        signals.join("、")
+    }
+}
+
+fn format_observability_gap_list(observability_summary: &Value) -> String {
+    let signals = observability_summary
+        .pointer("/signalCoverage")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| {
+                    let signal = value.get("signal").and_then(Value::as_str)?;
+                    let status = value.get("status").and_then(Value::as_str)?;
+                    if status == "exported" {
+                        return None;
+                    }
+                    Some(format!("`{signal}` ({status})"))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if signals.is_empty() {
+        "无".to_string()
+    } else {
+        signals.join("、")
+    }
 }
 
 fn serialize_enum_as_string<T: Serialize>(value: &T, fallback: &str) -> String {
@@ -720,21 +953,34 @@ mod tests {
         let timeline_path = temp_dir
             .path()
             .join(".lime/harness/sessions/session-1/evidence/timeline.json");
+        let artifacts_path = temp_dir
+            .path()
+            .join(".lime/harness/sessions/session-1/evidence/artifacts.json");
 
         assert!(summary_path.exists());
         assert!(runtime_path.exists());
         assert!(timeline_path.exists());
+        assert!(artifacts_path.exists());
 
         let summary = fs::read_to_string(summary_path).expect("summary");
         assert!(summary.contains("问题证据包"));
         assert!(summary.contains("等待用户确认是否导出问题证据包"));
+        assert!(summary.contains("证据关联与可观测覆盖"));
+        assert!(summary.contains("requestTelemetry"));
 
         let runtime = fs::read_to_string(runtime_path).expect("runtime");
         assert!(runtime.contains("\"sessionId\": \"session-1\""));
         assert!(runtime.contains("\"pendingRequestCount\": 1"));
+        assert!(runtime.contains("\"observabilitySummary\""));
+        assert!(runtime.contains("\"requestTelemetry\""));
+        assert!(runtime.contains("\"artifactValidator\""));
 
         let timeline = fs::read_to_string(timeline_path).expect("timeline");
         assert!(timeline.contains("\"payloadKind\": \"plan\""));
         assert!(timeline.contains("\"status\": \"completed\""));
+
+        let artifacts = fs::read_to_string(artifacts_path).expect("artifacts");
+        assert!(artifacts.contains("\"observabilitySummary\""));
+        assert!(artifacts.contains("\"guiSmoke\""));
     }
 }

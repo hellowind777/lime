@@ -53,6 +53,7 @@ export function WorkspaceMainArea({
           canvasContent={canvasContent}
           chatPanelWidth={chatPanelWidth}
           chatPanelMinWidth={chatPanelMinWidth}
+          forceOpenChatPanel={hasPendingA2UIForm}
         />
       </ThemeWorkbenchLayoutShell>
       {generalWorkbenchDialog}

@@ -144,16 +144,26 @@ function readJsonFile(filePath) {
 }
 
 function detectDefaultTrendHistoryDir(repoRoot) {
-  const candidate = resolvePath(repoRoot, "./artifacts/history");
-  if (!fs.existsSync(candidate)) {
-    return "";
+  const candidates = [
+    resolvePath(repoRoot, "./.lime/harness/history"),
+    resolvePath(repoRoot, "./artifacts/history"),
+  ];
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) {
+      continue;
+    }
+
+    const hasJson = fs
+      .readdirSync(candidate, { withFileTypes: true })
+      .some((entry) => entry.isFile() && entry.name.endsWith(".json"));
+
+    if (hasJson) {
+      return candidate;
+    }
   }
 
-  const hasJson = fs
-    .readdirSync(candidate, { withFileTypes: true })
-    .some((entry) => entry.isFile() && entry.name.endsWith(".json"));
-
-  return hasJson ? candidate : "";
+  return "";
 }
 
 function buildTrendReport(repoRoot, options) {

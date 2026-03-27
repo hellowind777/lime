@@ -15,6 +15,7 @@ import type { CanvasWorkbenchDefaultPreview } from "../components/CanvasWorkbenc
 import { ImageWorkbenchCanvas } from "../components/ImageWorkbenchCanvas";
 import { TeamWorkspaceBoard } from "../components/TeamWorkspaceBoard";
 import { ArtifactWorkbenchShell } from "./ArtifactWorkbenchShell";
+import { hasRenderableGeneralCanvasPreview } from "./generalCanvasPreviewState";
 import { wrapPreviewWithWorkbenchTrigger } from "./workbenchPreviewHelpers";
 import { resolveArtifactProtocolDocumentPayload } from "@/lib/artifact-protocol";
 import type { ArtifactDocumentV1 } from "@/lib/artifact-document";
@@ -237,7 +238,10 @@ export function WorkspaceLiveCanvasPreview({
   }
 
   if (canvasRenderTheme === "general") {
-    if (generalCanvasPanelProps?.state.isOpen) {
+    if (
+      generalCanvasPanelProps &&
+      hasRenderableGeneralCanvasPreview(generalCanvasPanelProps.state)
+    ) {
       return (
         <GeneralCanvasPanel
           {...generalCanvasPanelProps}

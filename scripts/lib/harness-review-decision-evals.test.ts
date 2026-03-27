@@ -101,6 +101,29 @@ function createWorkspaceSessionArtifacts(tempRoot: string, sessionId: string) {
         },
       ],
     },
+    observability: {
+      correlation: {
+        correlationKeys: ["session_id", "thread_id", "turn_id"],
+      },
+      signalCoverage: [
+        {
+          signal: "correlation",
+          status: "exported",
+        },
+        {
+          signal: "timeline",
+          status: "exported",
+        },
+        {
+          signal: "requestTelemetry",
+          status: "unlinked",
+        },
+        {
+          signal: "artifactValidator",
+          status: "known_gap",
+        },
+      ],
+    },
     linkedArtifacts: {
       handoffBundle: {
         relativeRoot: `.lime/harness/sessions/${sessionId}/handoff`,
@@ -133,6 +156,7 @@ function createWorkspaceSessionArtifacts(tempRoot: string, sessionId: string) {
       relativeRoot: `.lime/harness/sessions/${sessionId}/evidence`,
       absoluteRoot: evidenceRoot,
     },
+    observabilitySummary: inputPayload.observability,
   };
   const reviewDecisionPayload = {
     schemaVersion: "v1",
@@ -300,6 +324,7 @@ describe("Harness review decision / eval integration", () => {
     ]);
 
     expect(summary.totals.reviewDecisionRecordedCount).toBe(1);
+    expect(summary.totals.observabilityGapCaseCount).toBe(1);
     expect(summary.breakdowns.reviewDecisionStatuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -316,10 +341,23 @@ describe("Harness review decision / eval integration", () => {
         }),
       ]),
     );
+    expect(summary.breakdowns.observabilitySignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "requestTelemetry:unlinked",
+          caseCount: 1,
+        }),
+        expect.objectContaining({
+          name: "artifactValidator:known_gap",
+          caseCount: 1,
+        }),
+      ]),
+    );
     expect(summary.suites[0].cases[0]).toMatchObject({
       reviewDecisionStatus: "accepted",
       reviewRiskLevel: "high",
       reviewHumanReviewer: "Lime Maintainer",
+      observabilityGapCount: 2,
     });
   });
 
@@ -337,6 +375,7 @@ describe("Harness review decision / eval integration", () => {
         invalidCount: 0,
         pendingRequestCaseCount: 0,
         needsHumanReviewCount: 1,
+        observabilityGapCaseCount: 1,
       },
       breakdowns: {
         suiteTags: [],
@@ -361,6 +400,16 @@ describe("Harness review decision / eval integration", () => {
             needsHumanReviewCount: 1,
           },
         ],
+        observabilitySignals: [
+          {
+            name: "requestTelemetry:unlinked",
+            caseCount: 1,
+            readyCount: 1,
+            invalidCount: 0,
+            pendingRequestCaseCount: 0,
+            needsHumanReviewCount: 1,
+          },
+        ],
       },
       suites: [],
     });
@@ -374,6 +423,7 @@ describe("Harness review decision / eval integration", () => {
         invalidCount: 0,
         pendingRequestCaseCount: 0,
         needsHumanReviewCount: 0,
+        observabilityGapCaseCount: 1,
       },
       breakdowns: {
         suiteTags: [],
@@ -391,6 +441,16 @@ describe("Harness review decision / eval integration", () => {
         reviewRiskLevels: [
           {
             name: "medium",
+            caseCount: 1,
+            readyCount: 1,
+            invalidCount: 0,
+            pendingRequestCaseCount: 0,
+            needsHumanReviewCount: 0,
+          },
+        ],
+        observabilitySignals: [
+          {
+            name: "artifactValidator:known_gap",
             caseCount: 1,
             readyCount: 1,
             invalidCount: 0,
@@ -437,6 +497,22 @@ describe("Harness review decision / eval integration", () => {
         }),
         expect.objectContaining({
           name: "medium",
+          delta: expect.objectContaining({
+            caseCount: 1,
+          }),
+        }),
+      ]),
+    );
+    expect(report.classificationDeltas.observabilitySignals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "requestTelemetry:unlinked",
+          delta: expect.objectContaining({
+            caseCount: -1,
+          }),
+        }),
+        expect.objectContaining({
+          name: "artifactValidator:known_gap",
           delta: expect.objectContaining({
             caseCount: 1,
           }),

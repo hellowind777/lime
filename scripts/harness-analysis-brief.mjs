@@ -374,6 +374,39 @@ function buildAnalysisContext({
   title,
   workspaceRoot,
 }) {
+  const rawObservabilitySummary =
+    inputPayload?.observability ?? evidenceJson?.observabilitySummary ?? null;
+  const observabilitySummary = sanitizeValue(
+    rawObservabilitySummary ?? {},
+    workspaceRoot,
+    options.sanitizedWorkspaceRoot,
+  );
+  const observabilityCorrelationKeys = Array.isArray(
+    observabilitySummary?.correlation?.correlationKeys,
+  )
+    ? observabilitySummary.correlation.correlationKeys
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter(Boolean)
+    : [];
+  const observabilityGapSignals = Array.isArray(
+    observabilitySummary?.signalCoverage,
+  )
+    ? observabilitySummary.signalCoverage
+        .map((entry) => {
+          if (!entry || typeof entry !== "object") {
+            return "";
+          }
+          const signal =
+            typeof entry.signal === "string" ? entry.signal.trim() : "";
+          const status =
+            typeof entry.status === "string" ? entry.status.trim() : "";
+          if (!signal || !status || status === "exported") {
+            return "";
+          }
+          return `${signal} (${status})`;
+        })
+        .filter(Boolean)
+    : [];
   const sanitizedInput = sanitizeValue(
     {
       session: inputPayload?.session ?? {},
@@ -505,6 +538,11 @@ function buildAnalysisContext({
         ),
       ),
     },
+    observability: {
+      summary: observabilitySummary,
+      correlationKeys: observabilityCorrelationKeys,
+      gapSignals: observabilityGapSignals,
+    },
     readingOrder: buildReadingOrder(handoffArtifacts, evidenceArtifacts),
     externalAnalysisContract: buildExternalAnalysisPromptContract(),
     humanReviewChecklist: buildHumanReviewChecklist(inputPayload, expectedPayload),
@@ -554,6 +592,19 @@ function buildAnalysisBrief(context) {
     }`,
     `- pending request：${context.summary.pendingRequestCount}`,
     `- queued turn：${context.summary.queuedTurnCount}`,
+    "",
+    "## 证据关联与可观测覆盖",
+    "",
+    `- 关联键：${
+      context.observability.correlationKeys.length > 0
+        ? context.observability.correlationKeys.join(", ")
+        : "无"
+    }`,
+    `- 当前缺口：${
+      context.observability.gapSignals.length > 0
+        ? context.observability.gapSignals.join(", ")
+        : "无"
+    }`,
     "",
     "## 推荐读取顺序",
     "",

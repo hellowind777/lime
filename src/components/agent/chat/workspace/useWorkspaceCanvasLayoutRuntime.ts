@@ -5,6 +5,7 @@ import type { CanvasState as GeneralCanvasState } from "@/components/general-cha
 import type { LayoutMode, ThemeType } from "@/components/content-creator/types";
 import { isContentCreationTheme } from "@/components/content-creator/utils/systemPrompt";
 import type { CanvasWorkbenchLayoutMode } from "../components/CanvasWorkbenchLayout";
+import { hasRenderableGeneralCanvasPreview } from "./generalCanvasPreviewState";
 
 const FALLBACK_CANVAS_CONTENT = "# 新文档\n\n在这里开始编写内容...";
 
@@ -22,6 +23,7 @@ interface UseWorkspaceCanvasLayoutRuntimeParams {
   normalizedEntryTheme: ThemeType;
   shouldBootstrapCanvasOnEntry: boolean;
   canvasState: CanvasStateUnion | null;
+  generalCanvasState: GeneralCanvasState;
   showTeamWorkspaceBoard: boolean;
   hasCurrentCanvasArtifact: boolean;
   currentCanvasArtifactType?: string | null;
@@ -55,6 +57,7 @@ export function useWorkspaceCanvasLayoutRuntime({
   normalizedEntryTheme,
   shouldBootstrapCanvasOnEntry,
   canvasState,
+  generalCanvasState,
   showTeamWorkspaceBoard,
   hasCurrentCanvasArtifact,
   currentCanvasArtifactType,
@@ -170,6 +173,36 @@ export function useWorkspaceCanvasLayoutRuntime({
     hasCurrentCanvasArtifact,
     isBrowserAssistCanvasVisible,
     setGeneralCanvasState,
+  ]);
+
+  useEffect(() => {
+    if (
+      activeTheme !== "general" ||
+      !showChatPanel ||
+      layoutMode === "chat" ||
+      showTeamWorkspaceBoard ||
+      hasCurrentCanvasArtifact ||
+      currentImageWorkbenchActive ||
+      isBrowserAssistCanvasVisible
+    ) {
+      return;
+    }
+
+    if (hasRenderableGeneralCanvasPreview(generalCanvasState)) {
+      return;
+    }
+
+    setLayoutMode("chat");
+  }, [
+    activeTheme,
+    currentImageWorkbenchActive,
+    generalCanvasState,
+    hasCurrentCanvasArtifact,
+    isBrowserAssistCanvasVisible,
+    layoutMode,
+    setLayoutMode,
+    showChatPanel,
+    showTeamWorkspaceBoard,
   ]);
 
   useEffect(() => {

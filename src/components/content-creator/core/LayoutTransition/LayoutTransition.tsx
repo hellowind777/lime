@@ -181,6 +181,8 @@ interface LayoutTransitionProps {
   chatPanelWidth?: string;
   /** chat-canvas 模式下聊天面板最小宽度 */
   chatPanelMinWidth?: string;
+  /** 紧凑抽屉态下强制展开聊天区 */
+  forceOpenChatPanel?: boolean;
 }
 
 /**
@@ -197,6 +199,7 @@ export const LayoutTransition: React.FC<LayoutTransitionProps> = memo(
     chatPanelChrome = "panel",
     chatPanelWidth,
     chatPanelMinWidth,
+    forceOpenChatPanel = false,
   }) => {
     const hasCanvasContent = React.Children.count(canvasContent) > 0;
     const effectiveMode: LayoutMode = hasCanvasContent ? mode : "chat";
@@ -244,6 +247,25 @@ export const LayoutTransition: React.FC<LayoutTransitionProps> = memo(
         setCompactChatPanelOpen(false);
       }
     }, [compactChatCanvasOverlay, effectiveMode]);
+
+    useEffect(() => {
+      if (
+        !forceOpenChatPanel ||
+        !compactChatCanvasOverlay ||
+        effectiveMode !== "chat-canvas" ||
+        compactChatPanelOpen
+      ) {
+        return;
+      }
+
+      setCompactChatPanelOpen(true);
+      emitCompactRightPanelOpen({ source: "chat" });
+    }, [
+      compactChatCanvasOverlay,
+      compactChatPanelOpen,
+      effectiveMode,
+      forceOpenChatPanel,
+    ]);
 
     useEffect(() => {
       if (!compactChatCanvasOverlay || effectiveMode !== "chat-canvas") {

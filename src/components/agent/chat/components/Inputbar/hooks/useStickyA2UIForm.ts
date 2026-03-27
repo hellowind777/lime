@@ -15,7 +15,11 @@ export function useStickyA2UIForm({
   const [visibleForm, setVisibleForm] = useState<A2UIResponse | null>(
     form || null,
   );
+  const [isStale, setIsStale] = useState(false);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibleFormRef = useRef<A2UIResponse | null>(visibleForm);
+
+  visibleFormRef.current = visibleForm;
 
   useEffect(() => {
     return () => {
@@ -33,16 +37,26 @@ export function useStickyA2UIForm({
 
     if (form) {
       setVisibleForm(form);
+      setIsStale(false);
       return;
     }
 
     if (clearImmediately) {
       setVisibleForm(null);
+      setIsStale(false);
       return;
     }
 
+    if (!visibleFormRef.current) {
+      setVisibleForm(null);
+      setIsStale(false);
+      return;
+    }
+
+    setIsStale(true);
     hideTimerRef.current = setTimeout(() => {
       setVisibleForm(null);
+      setIsStale(false);
       hideTimerRef.current = null;
     }, holdMs);
 
@@ -56,5 +70,6 @@ export function useStickyA2UIForm({
 
   return {
     visibleForm,
+    isStale,
   };
 }

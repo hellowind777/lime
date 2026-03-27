@@ -278,6 +278,7 @@ interface LayoutTransitionRenderGateProps {
   canvasContent: ReactNode;
   chatPanelWidth?: string;
   chatPanelMinWidth?: string;
+  forceOpenChatPanel?: boolean;
 }
 
 export const LayoutTransitionRenderGate = memo(
@@ -287,6 +288,7 @@ export const LayoutTransitionRenderGate = memo(
     canvasContent,
     chatPanelWidth,
     chatPanelMinWidth,
+    forceOpenChatPanel = false,
   }: LayoutTransitionRenderGateProps) => (
     <ThemeWorkbenchCanvasHost>
       <LayoutTransition
@@ -296,6 +298,7 @@ export const LayoutTransitionRenderGate = memo(
         chatPanelChrome="plain"
         chatPanelWidth={chatPanelWidth}
         chatPanelMinWidth={chatPanelMinWidth}
+        forceOpenChatPanel={forceOpenChatPanel}
       />
     </ThemeWorkbenchCanvasHost>
   ),
@@ -304,7 +307,8 @@ export const LayoutTransitionRenderGate = memo(
     previous.chatContent === next.chatContent &&
     previous.canvasContent === next.canvasContent &&
     previous.chatPanelWidth === next.chatPanelWidth &&
-    previous.chatPanelMinWidth === next.chatPanelMinWidth,
+    previous.chatPanelMinWidth === next.chatPanelMinWidth &&
+    previous.forceOpenChatPanel === next.forceOpenChatPanel,
 );
 
 LayoutTransitionRenderGate.displayName = "LayoutTransitionRenderGate";

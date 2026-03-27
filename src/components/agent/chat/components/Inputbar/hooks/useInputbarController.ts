@@ -181,7 +181,10 @@ export function useInputbarController({
     a2uiSubmissionNotice,
   });
 
-  const { visibleForm: visiblePendingA2UIForm } = useStickyA2UIForm({
+  const {
+    visibleForm: visiblePendingA2UIForm,
+    isStale: isPendingA2UIFormStale,
+  } = useStickyA2UIForm({
     form: pendingA2UIForm,
     clearImmediately: Boolean(a2uiSubmissionNotice),
   });
@@ -272,6 +275,7 @@ export function useInputbarController({
     themeWorkbenchQueueItems,
     renderThemeWorkbenchGeneratingPanel,
     visiblePendingA2UIForm,
+    isPendingA2UIFormStale,
     visibleA2UISubmissionNotice,
     isA2UISubmissionNoticeVisible,
     activeSkill,

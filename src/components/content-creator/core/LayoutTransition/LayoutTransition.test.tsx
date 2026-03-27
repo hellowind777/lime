@@ -18,13 +18,20 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function LayoutHarness({ mode }: { mode: LayoutMode }) {
+function LayoutHarness({
+  mode,
+  forceOpenChatPanel = false,
+}: {
+  mode: LayoutMode;
+  forceOpenChatPanel?: boolean;
+}) {
   return (
     <div style={{ width: "1200px", height: "720px" }}>
       <LayoutTransition
         mode={mode}
         chatContent={<div data-testid="layout-chat-content">chat</div>}
         canvasContent={<div data-testid="layout-canvas-content">canvas</div>}
+        forceOpenChatPanel={forceOpenChatPanel}
       />
     </div>
   );
@@ -210,6 +217,37 @@ describe("LayoutTransition", () => {
       container.querySelector<HTMLElement>('[data-testid="layout-chat-panel"]')
         ?.getAttribute("data-overlay-state"),
     ).toBe("closed");
+  });
+
+  it("紧凑抽屉态存在待处理 A2UI 时应自动展开聊天区", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      writable: true,
+      value: 1080,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      writable: true,
+      value: 720,
+    });
+
+    const { container } = mountHarness(
+      LayoutHarness,
+      { mode: "chat-canvas", forceOpenChatPanel: true },
+      mountedRoots,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector<HTMLElement>('[data-testid="layout-chat-panel"]')
+        ?.getAttribute("data-overlay-state"),
+    ).toBe("open");
+    expect(
+      container.querySelector('[data-testid="layout-chat-content"]'),
+    ).not.toBeNull();
   });
 
   it("画布内容为空时应退回聊天布局，避免保留空白画布列", () => {

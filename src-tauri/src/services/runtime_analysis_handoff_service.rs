@@ -81,6 +81,7 @@ struct AnalysisContextDocument {
     replay: AnalysisReplaySection,
     handoff: AnalysisHandoffSection,
     evidence: AnalysisEvidenceSection,
+    observability: AnalysisObservabilitySection,
     reading_order: Vec<String>,
     external_analysis_contract: AnalysisExternalContract,
     human_review_checklist: Vec<String>,
@@ -144,6 +145,14 @@ struct AnalysisEvidenceSection {
     artifacts: Vec<AnalysisArtifactReference>,
     runtime: Value,
     summary_excerpt: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisObservabilitySection {
+    summary: Value,
+    correlation_keys: Vec<String>,
+    gap_signals: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -216,6 +225,13 @@ pub fn export_runtime_analysis_handoff(
         &read_optional_text_file(&evidence_root.join("summary.md"))?,
         MAX_EXCERPT_CHARS,
     );
+    let observability_summary = runtime_payload
+        .pointer("/observabilitySummary")
+        .cloned()
+        .unwrap_or(Value::Null);
+    let observability_correlation_keys =
+        collect_observability_correlation_keys(&observability_summary);
+    let observability_gap_signals = collect_observability_gap_signals(&observability_summary);
 
     let title = derive_title(&input_payload, session_id);
     let failure_modes = value_string_list(
@@ -386,6 +402,11 @@ pub fn export_runtime_analysis_handoff(
             runtime: sanitize_value(runtime_payload, workspace_root.as_path()),
             summary_excerpt: sanitize_text(evidence_summary_excerpt, workspace_root.as_path()),
         },
+        observability: AnalysisObservabilitySection {
+            summary: sanitize_value(observability_summary, workspace_root.as_path()),
+            correlation_keys: observability_correlation_keys.clone(),
+            gap_signals: observability_gap_signals.clone(),
+        },
         reading_order: reading_order.clone(),
         external_analysis_contract: external_contract.clone(),
         human_review_checklist: review_checklist.clone(),
@@ -403,6 +424,8 @@ pub fn export_runtime_analysis_handoff(
         &analysis_context.replay.grader_excerpt,
         &analysis_context.handoff.handoff_excerpt,
         &analysis_context.evidence.summary_excerpt,
+        &analysis_context.observability.correlation_keys,
+        &analysis_context.observability.gap_signals,
     );
 
     let artifacts = vec![
@@ -474,6 +497,8 @@ fn build_analysis_brief(
     grader_excerpt: &str,
     handoff_excerpt: &str,
     evidence_excerpt: &str,
+    observability_correlation_keys: &[String],
+    observability_gap_signals: &[String],
 ) -> String {
     let mut lines = vec![
         "# 外部分析交接简报".to_string(),
@@ -521,6 +546,17 @@ fn build_analysis_brief(
         ),
         format!("- pending request：{}", summary.pending_request_count),
         format!("- queued turn：{}", summary.queued_turn_count),
+        String::new(),
+        "## 证据关联与可观测覆盖".to_string(),
+        String::new(),
+        format!(
+            "- 关联键：{}",
+            join_or_fallback(observability_correlation_keys, "无")
+        ),
+        format!(
+            "- 当前缺口：{}",
+            join_or_fallback(observability_gap_signals, "无")
+        ),
         String::new(),
         "## 推荐读取顺序".to_string(),
         String::new(),
@@ -917,6 +953,27 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+fn collect_observability_correlation_keys(summary: &Value) -> Vec<String> {
+    summary
+        .pointer("/correlation/correlationKeys")
+        .map(value_string_list)
+        .unwrap_or_default()
+}
+
+fn collect_observability_gap_signals(summary: &Value) -> Vec<String> {
+    value_array(summary.pointer("/signalCoverage").unwrap_or(&Value::Null))
+        .into_iter()
+        .filter_map(|entry| {
+            let signal = value_string(entry.get("signal").unwrap_or(&Value::Null))?;
+            let status = value_string(entry.get("status").unwrap_or(&Value::Null))?;
+            if status == "exported" {
+                return None;
+            }
+            Some(format!("{signal} ({status})"))
+        })
+        .collect()
+}
+
 fn join_or_fallback(values: &[String], fallback: &str) -> String {
     if values.is_empty() {
         fallback.to_string()
@@ -1130,12 +1187,17 @@ mod tests {
         let brief = fs::read_to_string(brief_path).expect("brief");
         assert!(brief.contains("外部分析交接简报"));
         assert!(brief.contains("pending request：1"));
+        assert!(brief.contains("证据关联与可观测覆盖"));
+        assert!(brief.contains("requestTelemetry (unlinked)"));
         assert!(brief.contains("/workspace/lime"));
 
         let context = fs::read_to_string(context_path).expect("context");
         assert!(context.contains("\"schemaVersion\": \"v1\""));
         assert!(context.contains("\"contractShape\": \"lime_external_analysis_handoff\""));
         assert!(context.contains("\"pendingRequestCount\": 1"));
+        assert!(context.contains("\"observability\""));
+        assert!(context.contains("\"correlationKeys\""));
+        assert!(context.contains("\"gapSignals\""));
         assert!(context.contains("/workspace/lime"));
         assert!(!context.contains(temp_dir.path().to_string_lossy().as_ref()));
     }
