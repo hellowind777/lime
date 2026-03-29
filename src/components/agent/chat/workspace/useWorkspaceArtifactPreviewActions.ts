@@ -21,6 +21,7 @@ import {
   buildArtifactFromWrite,
   resolveDefaultArtifactViewMode,
 } from "../utils/messageArtifacts";
+import type { ApplyArtifactViewMode } from "./useWorkspaceArtifactViewModeControl";
 import {
   isRenderableTaskFile,
   looksLikeSocialPublishPayload,
@@ -78,9 +79,10 @@ interface UseWorkspaceArtifactPreviewActionsParams {
   taskFiles: TaskFile[];
   sessionFiles: SessionFile[];
   readSessionFile: (fileName: string) => Promise<string | null>;
+  suppressBrowserAssistCanvasAutoOpen: () => void;
   upsertGeneralArtifact: (artifact: Artifact) => void;
   setSelectedArtifactId: (artifactId: string | null) => void;
-  setArtifactViewMode: Dispatch<SetStateAction<"source" | "preview">>;
+  setArtifactViewMode: ApplyArtifactViewMode;
   setLayoutMode: Dispatch<SetStateAction<LayoutMode>>;
   setTaskFiles: Dispatch<SetStateAction<TaskFile[]>>;
   setSelectedFileId: (fileId: string) => void;
@@ -114,6 +116,7 @@ export function useWorkspaceArtifactPreviewActions({
   taskFiles,
   sessionFiles,
   readSessionFile,
+  suppressBrowserAssistCanvasAutoOpen,
   upsertGeneralArtifact,
   setSelectedArtifactId,
   setArtifactViewMode,
@@ -198,6 +201,10 @@ export function useWorkspaceArtifactPreviewActions({
 
   const openArtifactInWorkbench = useCallback(
     async (artifact: Artifact) => {
+      if (activeTheme === "general" && artifact.type !== "browser_assist") {
+        suppressBrowserAssistCanvasAutoOpen();
+      }
+
       let nextArtifact = artifact;
       const artifactPath = resolveArtifactProtocolFilePath(artifact);
       const shouldLoadPreview = artifact.content.length === 0 && artifactPath;
@@ -226,14 +233,21 @@ export function useWorkspaceArtifactPreviewActions({
       }
 
       setSelectedArtifactId(nextArtifact.id);
-      setArtifactViewMode(resolveDefaultArtifactViewMode(nextArtifact));
+      setArtifactViewMode(
+        resolveDefaultArtifactViewMode(nextArtifact, {
+          preferSourceWhenStreaming: true,
+        }),
+        { artifactId: nextArtifact.id },
+      );
       setLayoutMode("chat-canvas");
     },
     [
+      activeTheme,
       handleHarnessLoadFilePreview,
       setArtifactViewMode,
       setLayoutMode,
       setSelectedArtifactId,
+      suppressBrowserAssistCanvasAutoOpen,
       upsertGeneralArtifact,
     ],
   );
@@ -281,8 +295,6 @@ export function useWorkspaceArtifactPreviewActions({
 
   const handleFileClick = useCallback(
     (fileName: string, content: string) => {
-      console.log("[AgentChatPage] 文件点击:", fileName, "主题:", activeTheme);
-
       if (activeTheme === "general") {
         const matchingArtifact = artifacts.find((artifact) => {
           const artifactPath = resolveArtifactProtocolFilePath(artifact);
@@ -300,6 +312,9 @@ export function useWorkspaceArtifactPreviewActions({
             context: {
               source: "message_content",
               status: content.length > 0 ? "complete" : "pending",
+              metadata: {
+                persistOutsideMessages: true,
+              },
             },
           });
 

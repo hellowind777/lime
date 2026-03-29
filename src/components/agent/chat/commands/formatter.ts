@@ -28,7 +28,7 @@ export function buildCodexSlashHelpMessage(): string {
     .join("、");
 
   return [
-    "可用 Codex 命令：",
+    "可用 Lime 命令：",
     ...supported,
     "",
     `暂未支持：${unsupported}`,

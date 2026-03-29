@@ -17,8 +17,6 @@ use self::schedule::{
     describe_schedule, next_run_for_schedule, preview_next_run, validate_schedule,
 };
 use crate::database::dao::agent_run::AgentRunStatus;
-use crate::services::browser_environment_service::get_browser_environment_preset;
-use crate::services::browser_profile_service::get_browser_profile;
 use crate::services::execution_tracker_service::{ExecutionTracker, RunHandle, RunSource};
 use chrono::Utc;
 use lime_browser_runtime::{BrowserStreamMode, CdpSessionState};
@@ -38,7 +36,6 @@ use std::time::Duration;
 use tauri::Emitter;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 use uuid::Uuid;
 
 pub type AutomationJobRecord = AutomationJob;
@@ -149,6 +146,11 @@ pub struct AutomationService {
     app_handle: Option<tauri::AppHandle>,
 }
 
+pub(super) const BROWSER_AUTOMATION_RETIRED_MESSAGE: &str =
+    "浏览器自动化任务已下线，不再允许创建或执行";
+pub(super) const BROWSER_AUTOMATION_RETIRED_LAST_ERROR: &str =
+    "浏览器自动化任务已下线，请删除该任务";
+
 impl AutomationService {
     pub fn new(config: AutomationSettings) -> Self {
         Self {
@@ -201,6 +203,17 @@ impl AutomationService {
         self.cancel_token = Some(cancel_token.clone());
         self.status.running = true;
         self.update_next_poll();
+
+        let retired_job_count = {
+            let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+            retire_legacy_browser_automation_jobs(&conn)?
+        };
+        if retired_job_count > 0 {
+            tracing::info!(
+                "[Automation] 已停用 {} 条遗留浏览器自动化任务，后续不会再后台启动 Chrome",
+                retired_job_count
+            );
+        }
 
         let interval_secs = self.config.poll_interval_secs.max(5);
         let app_handle = self.app_handle.clone();
@@ -377,6 +390,17 @@ impl AutomationService {
                 .ok_or_else(|| format!("自动化任务不存在: {id}"))?
         };
 
+        if is_browser_session_payload(&job.payload) {
+            let mut legacy_job = job.clone();
+            let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+            retire_browser_automation_job(
+                &conn,
+                &mut legacy_job,
+                BROWSER_AUTOMATION_RETIRED_LAST_ERROR,
+            )?;
+            return Err(BROWSER_AUTOMATION_RETIRED_MESSAGE.to_string());
+        }
+
         let result = Self::execute_job_once(&job, db, &self.app_handle, &self.config).await?;
         Ok(AutomationCycleResult {
             job_count: 1,
@@ -466,6 +490,16 @@ impl AutomationService {
         let started_at = Utc::now();
         let started_at_str = started_at.to_rfc3339();
         let is_browser_session = is_browser_session_payload(&working_job.payload);
+
+        if is_browser_session {
+            let conn = db.lock().map_err(|e| format!("数据库锁定失败: {e}"))?;
+            retire_browser_automation_job(
+                &conn,
+                &mut working_job,
+                BROWSER_AUTOMATION_RETIRED_LAST_ERROR,
+            )?;
+            return Ok("error".to_string());
+        }
 
         set_active_job_state(
             &mut working_job,
@@ -713,17 +747,6 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
         .filter(|item| !item.is_empty())
 }
 
-fn validate_optional_http_url(value: Option<&str>, field_name: &str) -> Result<(), String> {
-    let Some(raw) = value.map(str::trim).filter(|item| !item.is_empty()) else {
-        return Ok(());
-    };
-    let parsed = Url::parse(raw).map_err(|error| format!("{field_name}无效: {error}"))?;
-    match parsed.scheme() {
-        "http" | "https" => Ok(()),
-        _ => Err(format!("{field_name}仅支持 http/https")),
-    }
-}
-
 fn validate_draft(draft: &AutomationJobDraft) -> Result<(), String> {
     validate_schedule(&draft.schedule, Utc::now())?;
     validate_payload(&draft.payload)?;
@@ -773,61 +796,63 @@ fn validate_payload(payload: &AutomationPayload) -> Result<(), String> {
                 }
             }
         }
-        AutomationPayload::BrowserSession { profile_id, .. } => {
-            if profile_id.trim().is_empty() {
-                return Err("浏览器任务必须绑定浏览器资料".to_string());
-            }
+        AutomationPayload::BrowserSession { .. } => {
+            return Err(BROWSER_AUTOMATION_RETIRED_MESSAGE.to_string());
         }
     }
     Ok(())
 }
 
 fn validate_payload_with_conn(
-    conn: &Connection,
+    _conn: &Connection,
     payload: &AutomationPayload,
 ) -> Result<(), String> {
     match payload {
         AutomationPayload::AgentTurn { .. } => Ok(()),
-        AutomationPayload::BrowserSession {
-            profile_id,
-            profile_key,
-            url,
-            environment_preset_id,
-            ..
-        } => {
-            let profile_id = profile_id.trim();
-            let profile = get_browser_profile(conn, profile_id)?
-                .filter(|record| record.archived_at.is_none())
-                .ok_or_else(|| format!("未找到可用的浏览器资料: {profile_id}"))?;
-
-            if let Some(expected_profile_key) = profile_key
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                if profile.profile_key != expected_profile_key {
-                    return Err(format!(
-                        "浏览器资料 {profile_id} 的 profile_key 与任务配置不一致: {} != {expected_profile_key}",
-                        profile.profile_key
-                    ));
-                }
-            }
-
-            if let Some(environment_preset_id) = environment_preset_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                get_browser_environment_preset(conn, environment_preset_id)?
-                    .filter(|record| record.archived_at.is_none())
-                    .ok_or_else(|| {
-                        format!("未找到可用的浏览器环境预设: {environment_preset_id}")
-                    })?;
-            }
-
-            validate_optional_http_url(url.as_deref(), "浏览器启动地址")
+        AutomationPayload::BrowserSession { .. } => {
+            Err(BROWSER_AUTOMATION_RETIRED_MESSAGE.to_string())
         }
     }
+}
+
+fn retire_legacy_browser_automation_jobs(conn: &Connection) -> Result<usize, String> {
+    let jobs = AutomationJobDao::list(conn).map_err(|e| format!("查询自动化任务失败: {e}"))?;
+    let mut retired_job_count = 0usize;
+
+    for mut job in jobs {
+        if !is_browser_session_payload(&job.payload) {
+            continue;
+        }
+        retire_browser_automation_job(conn, &mut job, BROWSER_AUTOMATION_RETIRED_LAST_ERROR)?;
+        retired_job_count = retired_job_count.saturating_add(1);
+    }
+
+    Ok(retired_job_count)
+}
+
+fn retire_browser_automation_job(
+    conn: &Connection,
+    job: &mut AutomationJobRecord,
+    reason: &str,
+) -> Result<(), String> {
+    let retired_at = Utc::now().to_rfc3339();
+    let previous_running_started_at = job.running_started_at.clone();
+
+    job.enabled = false;
+    job.next_run_at = None;
+    job.last_status = Some("error".to_string());
+    job.last_error = Some(reason.to_string());
+    if job.last_run_at.is_none() {
+        job.last_run_at = previous_running_started_at.clone();
+    }
+    if previous_running_started_at.is_some() {
+        job.last_finished_at = Some(retired_at.clone());
+    }
+    job.running_started_at = None;
+    job.auto_disabled_until = None;
+    job.updated_at = retired_at;
+
+    AutomationJobDao::update(conn, job).map_err(|e| format!("更新自动化任务失败: {e}"))
 }
 
 fn build_tracker_start_metadata(job: &AutomationJobRecord) -> Value {
@@ -1165,11 +1190,6 @@ pub(super) fn append_payload_tracking_metadata(metadata: &mut Map<String, Value>
 mod tests {
     use super::*;
     use crate::database::schema::create_tables;
-    use crate::services::browser_environment_service::{
-        save_browser_environment_preset, SaveBrowserEnvironmentPresetInput,
-    };
-    use crate::services::browser_profile_service::{save_browser_profile, SaveBrowserProfileInput};
-    use lime_core::database::dao::browser_profile::BrowserProfileTransportKind;
     use rusqlite::Connection;
 
     fn setup_db() -> Connection {
@@ -1179,72 +1199,22 @@ mod tests {
     }
 
     #[test]
-    fn validate_payload_with_conn_should_accept_browser_session_payload() {
+    fn validate_payload_with_conn_should_reject_browser_session_payload() {
         let conn = setup_db();
-        let profile = save_browser_profile(
-            &conn,
-            SaveBrowserProfileInput {
-                id: None,
-                profile_key: "shop_us".to_string(),
-                name: "美区店铺".to_string(),
-                description: None,
-                site_scope: None,
-                launch_url: Some("https://seller.example.com".to_string()),
-                transport_kind: BrowserProfileTransportKind::ManagedCdp,
-            },
-        )
-        .expect("保存浏览器资料失败");
-        let preset = save_browser_environment_preset(
-            &conn,
-            SaveBrowserEnvironmentPresetInput {
-                id: None,
-                name: "美区桌面".to_string(),
-                description: None,
-                proxy_server: None,
-                timezone_id: Some("America/Los_Angeles".to_string()),
-                locale: Some("en-US".to_string()),
-                accept_language: Some("en-US,en;q=0.9".to_string()),
-                geolocation_lat: None,
-                geolocation_lng: None,
-                geolocation_accuracy_m: None,
-                user_agent: None,
-                platform: None,
-                viewport_width: Some(1440),
-                viewport_height: Some(900),
-                device_scale_factor: Some(2.0),
-            },
-        )
-        .expect("保存浏览器环境预设失败");
-
         let payload = AutomationPayload::BrowserSession {
-            profile_id: profile.id,
+            profile_id: "profile-1".to_string(),
             profile_key: Some("shop_us".to_string()),
             url: Some("https://seller.example.com/dashboard".to_string()),
-            environment_preset_id: Some(preset.id),
+            environment_preset_id: Some("preset-1".to_string()),
             target_id: None,
             open_window: false,
             stream_mode: BrowserStreamMode::Events,
         };
 
-        validate_payload_with_conn(&conn, &payload).expect("浏览器任务负载校验失败");
-    }
-
-    #[test]
-    fn validate_payload_with_conn_should_reject_missing_browser_profile() {
-        let conn = setup_db();
-        let payload = AutomationPayload::BrowserSession {
-            profile_id: "missing-profile".to_string(),
-            profile_key: Some("shop_us".to_string()),
-            url: Some("https://seller.example.com/dashboard".to_string()),
-            environment_preset_id: None,
-            target_id: None,
-            open_window: false,
-            stream_mode: BrowserStreamMode::Events,
-        };
-
-        let error =
-            validate_payload_with_conn(&conn, &payload).expect_err("缺失浏览器资料时应返回错误");
-        assert!(error.contains("未找到可用的浏览器资料"));
+        assert_eq!(
+            validate_payload_with_conn(&conn, &payload),
+            Err(BROWSER_AUTOMATION_RETIRED_MESSAGE.to_string())
+        );
     }
 
     #[test]
@@ -1304,6 +1274,103 @@ mod tests {
             Some(&json!("preset-1"))
         );
         assert_eq!(metadata.get("session_id"), Some(&json!("session-1")));
+    }
+
+    #[test]
+    fn retire_legacy_browser_automation_jobs_should_disable_browser_session_jobs() {
+        let conn = setup_db();
+        let browser_job = AutomationJob {
+            id: "job-browser-1".to_string(),
+            name: "浏览器巡检".to_string(),
+            description: Some("旧浏览器自动化".to_string()),
+            enabled: true,
+            workspace_id: "workspace-1".to_string(),
+            execution_mode: AutomationExecutionMode::Intelligent,
+            schedule: TaskSchedule::Every { every_secs: 300 },
+            payload: json!({
+                "kind": "browser_session",
+                "profile_id": "profile-1",
+                "profile_key": "shop_us",
+                "url": "https://seller.example.com/dashboard",
+                "open_window": false,
+                "stream_mode": "events"
+            }),
+            delivery: DeliveryConfig::default(),
+            timeout_secs: None,
+            max_retries: 3,
+            next_run_at: Some("2026-03-16T00:05:00Z".to_string()),
+            last_status: Some("running".to_string()),
+            last_error: None,
+            last_run_at: Some("2026-03-16T00:00:00Z".to_string()),
+            last_finished_at: None,
+            running_started_at: Some("2026-03-16T00:00:00Z".to_string()),
+            consecutive_failures: 0,
+            last_retry_count: 0,
+            auto_disabled_until: None,
+            last_delivery: None,
+            created_at: "2026-03-16T00:00:00Z".to_string(),
+            updated_at: "2026-03-16T00:00:00Z".to_string(),
+        };
+        let agent_job = AutomationJob {
+            id: "job-agent-1".to_string(),
+            name: "日报摘要".to_string(),
+            description: None,
+            enabled: true,
+            workspace_id: "workspace-1".to_string(),
+            execution_mode: AutomationExecutionMode::Skill,
+            schedule: TaskSchedule::Cron {
+                expr: "0 9 * * *".to_string(),
+                tz: Some("Asia/Shanghai".to_string()),
+            },
+            payload: json!({
+                "kind": "agent_turn",
+                "prompt": "请输出日报摘要",
+                "web_search": false
+            }),
+            delivery: DeliveryConfig::default(),
+            timeout_secs: None,
+            max_retries: 3,
+            next_run_at: Some("2026-03-16T09:00:00Z".to_string()),
+            last_status: Some("success".to_string()),
+            last_error: None,
+            last_run_at: Some("2026-03-16T08:59:00Z".to_string()),
+            last_finished_at: Some("2026-03-16T09:00:05Z".to_string()),
+            running_started_at: None,
+            consecutive_failures: 0,
+            last_retry_count: 0,
+            auto_disabled_until: None,
+            last_delivery: None,
+            created_at: "2026-03-16T00:00:00Z".to_string(),
+            updated_at: "2026-03-16T00:00:00Z".to_string(),
+        };
+
+        AutomationJobDao::create(&conn, &browser_job).expect("创建浏览器任务失败");
+        AutomationJobDao::create(&conn, &agent_job).expect("创建 agent 任务失败");
+
+        let retired_job_count =
+            retire_legacy_browser_automation_jobs(&conn).expect("停用遗留浏览器任务失败");
+        assert_eq!(retired_job_count, 1);
+
+        let updated_browser = AutomationJobDao::get(&conn, "job-browser-1")
+            .expect("读取浏览器任务失败")
+            .expect("浏览器任务不存在");
+        assert!(!updated_browser.enabled);
+        assert_eq!(updated_browser.next_run_at, None);
+        assert_eq!(updated_browser.running_started_at, None);
+        assert_eq!(updated_browser.last_status.as_deref(), Some("error"));
+        assert_eq!(
+            updated_browser.last_error.as_deref(),
+            Some(BROWSER_AUTOMATION_RETIRED_LAST_ERROR)
+        );
+
+        let updated_agent = AutomationJobDao::get(&conn, "job-agent-1")
+            .expect("读取 agent 任务失败")
+            .expect("agent 任务不存在");
+        assert!(updated_agent.enabled);
+        assert_eq!(
+            updated_agent.next_run_at.as_deref(),
+            Some("2026-03-16T09:00:00Z")
+        );
     }
 
     #[test]
@@ -1542,6 +1609,24 @@ mod tests {
         assert_eq!(
             validate_payload(&payload),
             Err("自动化任务 request_metadata 必须为对象".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_payload_should_reject_browser_session_payload() {
+        let payload = AutomationPayload::BrowserSession {
+            profile_id: "profile-1".to_string(),
+            profile_key: Some("shop_us".to_string()),
+            url: Some("https://seller.example.com/dashboard".to_string()),
+            environment_preset_id: None,
+            target_id: None,
+            open_window: false,
+            stream_mode: BrowserStreamMode::Events,
+        };
+
+        assert_eq!(
+            validate_payload(&payload),
+            Err(BROWSER_AUTOMATION_RETIRED_MESSAGE.to_string())
         );
     }
 }

@@ -162,6 +162,42 @@ describe("resolveArtifactDisplayState", () => {
     expect(state.displayArtifact?.id).toBe("artifact-live");
     expect(state.overlay).toBeNull();
   });
+
+  it("浏览器协助 artifact 即使 content 为空也应优先展示自身，而不是回退到上一份文档", () => {
+    const previousArtifact = createArtifact({
+      id: "artifact-prev",
+      title: "report.md",
+      content: "# 上一版报告",
+      status: "complete",
+      meta: {
+        filePath: "workspace/report.md",
+      },
+    });
+    const liveArtifact = createArtifact({
+      id: "browser-assist:general",
+      type: "browser_assist",
+      title: "Google",
+      content: "",
+      status: "complete",
+      meta: {
+        filePath: "browser-assist:general",
+        sessionId: "browser-session-1",
+        profileKey: "general_browser_assist",
+        url: "https://www.google.com",
+      },
+    });
+
+    const state = resolveArtifactDisplayState({
+      liveArtifact,
+      artifacts: [previousArtifact, liveArtifact],
+      previousRenderableArtifact: previousArtifact,
+    });
+
+    expect(state.mode).toBe("content");
+    expect(state.displayArtifact?.id).toBe("browser-assist:general");
+    expect(state.overlay).toBeNull();
+    expect(state.showPreviousVersionBadge).toBe(false);
+  });
 });
 
 describe("settleLiveArtifactAfterStreamStops", () => {

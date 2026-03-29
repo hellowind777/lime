@@ -7,6 +7,10 @@
 
 import { useState, useEffect, useRef } from "react";
 
+interface UseDebouncedValueOptions {
+  maxWait?: number;
+}
+
 /**
  * 防抖值 Hook
  *
@@ -29,28 +33,70 @@ import { useState, useEffect, useRef } from "react";
  *
  * @requirements 11.2
  */
-export function useDebouncedValue<T>(value: T, delay: number = 100): T {
+export function useDebouncedValue<T>(
+  value: T,
+  delay: number = 100,
+  options: UseDebouncedValueOptions = {},
+): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const burstStartedAtRef = useRef<number | null>(null);
+  const latestValueRef = useRef(value);
 
   useEffect(() => {
-    // 清除之前的定时器
+    latestValueRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    if (delay <= 0) {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      burstStartedAtRef.current = null;
+      setDebouncedValue(value);
+      return;
+    }
+
     if (timerRef.current) {
       clearTimeout(timerRef.current);
     }
 
-    // 设置新的定时器
-    timerRef.current = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
+    const now = Date.now();
+    if (burstStartedAtRef.current === null) {
+      burstStartedAtRef.current = now;
+    }
 
-    // 清理函数
+    const normalizedMaxWait =
+      typeof options.maxWait === "number" && options.maxWait > 0
+        ? options.maxWait
+        : null;
+    const elapsedMs = now - burstStartedAtRef.current;
+    const remainingMaxWaitMs =
+      normalizedMaxWait === null
+        ? delay
+        : Math.max(normalizedMaxWait - elapsedMs, 0);
+    const waitMs = Math.min(delay, remainingMaxWaitMs);
+
+    if (waitMs === 0) {
+      timerRef.current = null;
+      burstStartedAtRef.current = now;
+      setDebouncedValue(value);
+      return;
+    }
+
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      burstStartedAtRef.current = null;
+      setDebouncedValue(latestValueRef.current);
+    }, waitMs);
+
     return () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
       }
     };
-  }, [value, delay]);
+  }, [value, delay, options.maxWait]);
 
   return debouncedValue;
 }

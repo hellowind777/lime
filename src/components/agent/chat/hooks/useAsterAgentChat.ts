@@ -8,26 +8,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { AsterExecutionStrategy } from "@/lib/api/agentRuntime";
-import { parseAgentEvent } from "@/lib/api/agentProtocol";
-import { logAgentDebug } from "@/lib/agentDebug";
-import {
-  executeCodexSlashCommand,
-  parseCodexSlashCommand,
-} from "../commands";
 import {
   defaultAgentRuntimeAdapter,
   type AgentRuntimeAdapter,
 } from "./agentRuntimeAdapter";
+import { createAgentChatSendMessage } from "./agentChatSendMessage";
+import { useAgentChatStateSnapshotDebug } from "./useAgentChatStateSnapshotDebug";
 import { useAgentContext } from "./useAgentContext";
+import { useAgentRuntimeSyncEffects } from "./useAgentRuntimeSyncEffects";
 import { useAgentSession } from "./useAgentSession";
 import { useAgentTools } from "./useAgentTools";
 import { useAgentStream } from "./useAgentStream";
 import {
-  buildLiveTaskSnapshot,
   type SendMessageFn,
   type UseAsterAgentChatOptions,
 } from "./agentChatShared";
 import type { AsterSessionExecutionRuntime } from "@/lib/api/agentRuntime";
+import { useAgentTopicSnapshot } from "./useAgentTopicSnapshot";
 
 export type { Topic } from "./agentChatShared";
 
@@ -53,8 +50,6 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
   const currentAssistantMsgIdRef = useRef<string | null>(null);
   const currentStreamingSessionIdRef = useRef<string | null>(null);
   const currentStreamingEventNameRef = useRef<string | null>(null);
-  const lastTopicSnapshotKeyRef = useRef<string | null>(null);
-  const lastIsSendingRef = useRef(false);
   const sendMessageRef = useRef<SendMessageFn | null>(null);
   const resetPendingActionsRef = useRef<(() => void) | null>(null);
   const topicsUpdaterRef = useRef<
@@ -80,6 +75,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     disableSessionRestore,
     preserveRestoredMessages,
     executionStrategy: context.executionStrategy,
+    accessMode: context.accessMode,
     providerTypeRef: context.providerTypeRef,
     modelRef: context.modelRef,
     sessionIdRef,
@@ -92,8 +88,11 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     markSessionModelPreferenceSynced: context.markSessionModelPreferenceSynced,
     markSessionExecutionStrategySynced:
       context.markSessionExecutionStrategySynced,
+    persistSessionAccessMode: context.persistSessionAccessMode,
+    loadSessionAccessMode: context.loadSessionAccessMode,
     filterSessionsByWorkspace: context.filterSessionsByWorkspace,
     setExecutionStrategyState: context.setExecutionStrategyState,
+    setAccessModeState: context.setAccessModeState,
   });
 
   const tools = useAgentTools({
@@ -116,6 +115,7 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     ensureSession: session.ensureSession,
     sessionIdRef,
     executionStrategy: context.executionStrategy,
+    accessMode: context.accessMode,
     providerTypeRef: context.providerTypeRef,
     modelRef: context.modelRef,
     getSyncedSessionModelPreference: context.getSyncedSessionModelPreference,
@@ -164,74 +164,26 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     [setChatMessages],
   );
 
-  const sendMessage = useCallback<SendMessageFn>(
-    async (
-      content,
-      images,
-      webSearch,
-      thinking,
-      skipUserMessage,
-      executionStrategyOverride,
-      modelOverride,
-      autoContinue,
-      sendOptions,
-    ) => {
-      if (!skipUserMessage) {
-        const parsedCodexCommand = parseCodexSlashCommand(content);
-        if (parsedCodexCommand) {
-          const effectiveModel =
-            modelOverride?.trim() || context.modelRef.current;
-          const effectiveExecutionStrategy =
-            executionStrategyOverride || context.executionStrategy;
-          const handled = await executeCodexSlashCommand({
-            command: parsedCodexCommand,
-            statusSnapshot: {
-              sessionId: activeSessionId,
-              currentTurnId,
-              providerType: context.providerTypeRef.current,
-              model: effectiveModel,
-              executionStrategy: effectiveExecutionStrategy,
-              queuedTurnsCount,
-              isSending: isStreamSending,
-            },
-            sendPrompt: async (prompt) => {
-              await rawSendMessage(
-                prompt,
-                images,
-                webSearch,
-                thinking,
-                skipUserMessage,
-                executionStrategyOverride,
-                modelOverride,
-                autoContinue,
-                sendOptions,
-              );
-            },
-            compactSession: compactCurrentSession,
-            clearMessages: clearChatMessages,
-            createFreshSession,
-            appendAssistantMessage: appendLocalAssistantMessage,
-            notifyInfo: (message) => toast.info(message),
-            notifySuccess: (message) => toast.success(message),
-          });
-          if (handled) {
-            return;
-          }
-        }
-      }
-
-      await rawSendMessage(
-        content,
-        images,
-        webSearch,
-        thinking,
-        skipUserMessage,
-        executionStrategyOverride,
-        modelOverride,
-        autoContinue,
-        sendOptions,
-      );
-    },
+  const sendMessage = useMemo<SendMessageFn>(
+    () =>
+      createAgentChatSendMessage({
+        baseStatusSnapshot: {
+          sessionId: activeSessionId,
+          currentTurnId,
+          providerType: context.providerTypeRef.current,
+          model: context.modelRef.current,
+          executionStrategy: context.executionStrategy,
+          queuedTurnsCount,
+          isSending: isStreamSending,
+        },
+        rawSendMessage,
+        compactSession: compactCurrentSession,
+        clearMessages: clearChatMessages,
+        createFreshSession,
+        appendAssistantMessage: appendLocalAssistantMessage,
+        notifyInfo: (message) => toast.info(message),
+        notifySuccess: (message) => toast.success(message),
+      }),
     [
       appendLocalAssistantMessage,
       activeSessionId,
@@ -263,243 +215,47 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
       stream.isSending || threadStatus === "running" || threadStatus === "queued";
     return shouldPreferRuntime ? session.executionRuntime : null;
   }, [session.executionRuntime, session.threadRead?.status, stream.isSending]);
-  const currentSessionId = session.sessionId;
-  const refreshActiveSessionDetail = session.refreshSessionDetail;
 
-  useEffect(() => {
-    logAgentDebug(
-      "useAsterAgentChat",
-      "stateSnapshot",
-      {
-        hasActiveTopic,
-        isSending: stream.isSending,
-        messagesCount: session.messages.length,
-        pendingActionsCount: tools.pendingActions.length,
-        queuedTurnsCount: session.queuedTurns.length,
-        sessionId: session.sessionId ?? null,
-        threadTurnsCount: session.threadTurns.length,
-        topicsCount: session.topics.length,
-        workspaceId,
-        workspacePathMissing: context.workspacePathMissing,
-      },
-      {
-        dedupeKey: JSON.stringify({
-          hasActiveTopic,
-          isSending: stream.isSending,
-          messagesCount: session.messages.length,
-          pendingActionsCount: tools.pendingActions.length,
-          queuedTurnsCount: session.queuedTurns.length,
-          sessionId: session.sessionId ?? null,
-          threadTurnsCount: session.threadTurns.length,
-          topicsCount: session.topics.length,
-          workspaceId,
-          workspacePathMissing: context.workspacePathMissing,
-        }),
-        throttleMs: 800,
-      },
-    );
-  }, [
-    context.workspacePathMissing,
+  useAgentRuntimeSyncEffects({
+    runtime,
+    sessionIdRef,
+    sessionId: session.sessionId,
+    parentSessionId: session.subagentParentContext?.parent_session_id,
+    isSending: stream.isSending,
+    queuedTurnCount: session.queuedTurns.length,
+    threadTurns: session.threadTurns,
+    refreshSessionDetail: session.refreshSessionDetail,
+  });
+
+  useAgentTopicSnapshot({
+    sessionId: session.sessionId,
     hasActiveTopic,
-    session.messages.length,
-    session.queuedTurns.length,
-    session.sessionId,
-    session.threadTurns.length,
-    session.topics.length,
-    stream.isSending,
-    tools.pendingActions.length,
+    messages: session.messages,
+    isSending: stream.isSending,
+    pendingActionCount: tools.pendingActions.length,
+    queuedTurnCount: session.queuedTurns.length,
     workspaceId,
-  ]);
+    workspacePathMissing: Boolean(context.workspacePathMissing),
+    topicsCount: session.topics.length,
+    updateTopicSnapshot: session.updateTopicSnapshot,
+  });
+
+  useAgentChatStateSnapshotDebug({
+    hasActiveTopic,
+    isSending: stream.isSending,
+    messagesCount: session.messages.length,
+    pendingActionsCount: tools.pendingActions.length,
+    queuedTurnsCount: session.queuedTurns.length,
+    sessionId: session.sessionId ?? null,
+    threadTurnsCount: session.threadTurns.length,
+    topicsCount: session.topics.length,
+    workspaceId,
+    workspacePathMissing: context.workspacePathMissing,
+  });
 
   useEffect(() => {
     tools.warnedKeysRef.current.clear();
   }, [tools.warnedKeysRef, workspaceId]);
-
-  useEffect(() => {
-    const wasSending = lastIsSendingRef.current;
-    lastIsSendingRef.current = stream.isSending;
-
-    if (!wasSending || stream.isSending) {
-      return;
-    }
-
-    const activeSessionId = currentSessionId;
-    if (!activeSessionId) {
-      return;
-    }
-
-    void refreshActiveSessionDetail(activeSessionId);
-  }, [currentSessionId, refreshActiveSessionDetail, stream.isSending]);
-
-  useEffect(() => {
-    const refreshSessionDetail = session.refreshSessionDetail;
-    const activeSessionId = session.sessionId;
-    const queuedTurnCount = session.queuedTurns.length;
-    const threadTurns = session.threadTurns;
-
-    if (!activeSessionId || stream.isSending) {
-      return;
-    }
-
-    const hasRecoveredQueueWork =
-      queuedTurnCount > 0 ||
-      threadTurns.some((turn) => turn.status === "running");
-    if (!hasRecoveredQueueWork) {
-      return;
-    }
-
-    const timer = window.setInterval(() => {
-      void refreshSessionDetail(activeSessionId);
-    }, 1500);
-
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [
-    session.queuedTurns.length,
-    session.refreshSessionDetail,
-    session.sessionId,
-    session.threadTurns,
-    stream.isSending,
-  ]);
-
-  useEffect(() => {
-    const activeSessionId = session.sessionId;
-    const refreshSessionDetail = session.refreshSessionDetail;
-    const parentSessionId =
-      session.subagentParentContext?.parent_session_id?.trim() || null;
-
-    if (!activeSessionId) {
-      return;
-    }
-
-    const eventNames = [
-      `agent_subagent_status:${activeSessionId}`,
-      parentSessionId ? `agent_subagent_status:${parentSessionId}` : null,
-    ].filter((value, index, values): value is string => {
-      return Boolean(value) && values.indexOf(value) === index;
-    });
-
-    let disposed = false;
-    const unlisteners: Array<() => void> = [];
-
-    const subscribe = async () => {
-      for (const eventName of eventNames) {
-        const unlisten = await runtime.listenToTeamEvents(
-          eventName,
-          (event) => {
-            const data = parseAgentEvent(event.payload);
-            if (disposed || data?.type !== "subagent_status_changed") {
-              return;
-            }
-            if (sessionIdRef.current !== activeSessionId) {
-              return;
-            }
-            void refreshSessionDetail(activeSessionId);
-          },
-        );
-        if (disposed) {
-          unlisten();
-          return;
-        }
-        unlisteners.push(unlisten);
-      }
-    };
-
-    void subscribe();
-
-    return () => {
-      disposed = true;
-      for (const unlisten of unlisteners) {
-        unlisten();
-      }
-    };
-  }, [
-    runtime,
-    session.sessionId,
-    session.refreshSessionDetail,
-    session.subagentParentContext?.parent_session_id,
-    sessionIdRef,
-  ]);
-
-  useEffect(() => {
-    const activeSessionId = session.sessionId;
-    const messages = session.messages;
-    const queuedTurnCount = session.queuedTurns.length;
-    const updateTopicSnapshot = session.updateTopicSnapshot;
-    const pendingActionCount = tools.pendingActions.length;
-    const workspacePathMissing = context.workspacePathMissing;
-
-    if (!activeSessionId || !hasActiveTopic) {
-      if (activeSessionId && !hasActiveTopic) {
-        logAgentDebug(
-          "useAsterAgentChat",
-          "topicSnapshot.skipWithoutActiveTopic",
-          {
-            activeSessionId,
-            topicsCount: session.topics.length,
-            workspaceId,
-          },
-          { level: "warn", throttleMs: 1000 },
-        );
-      }
-      lastTopicSnapshotKeyRef.current = null;
-      return;
-    }
-
-    const snapshot = buildLiveTaskSnapshot({
-      messages,
-      isSending: stream.isSending,
-      pendingActionCount,
-      queuedTurnCount,
-      workspaceError: Boolean(workspacePathMissing),
-    });
-
-    const snapshotKey = JSON.stringify({
-      sessionId: activeSessionId,
-      updatedAt: snapshot.updatedAt?.getTime() ?? null,
-      messagesCount: snapshot.messagesCount,
-      status: snapshot.status,
-      statusReason: snapshot.statusReason ?? null,
-      lastPreview: snapshot.lastPreview,
-      hasUnread: snapshot.hasUnread,
-    });
-
-    if (lastTopicSnapshotKeyRef.current === snapshotKey) {
-      logAgentDebug(
-        "useAsterAgentChat",
-        "topicSnapshot.skipDuplicate",
-        {
-          activeSessionId,
-          snapshotKey,
-        },
-        { throttleMs: 1200 },
-      );
-      return;
-    }
-
-    lastTopicSnapshotKeyRef.current = snapshotKey;
-    logAgentDebug("useAsterAgentChat", "topicSnapshot.apply", {
-      activeSessionId,
-      hasUnread: snapshot.hasUnread,
-      messagesCount: snapshot.messagesCount,
-      status: snapshot.status,
-      statusReason: snapshot.statusReason ?? null,
-      updatedAt: snapshot.updatedAt?.toISOString() ?? null,
-    });
-    updateTopicSnapshot(activeSessionId, snapshot);
-  }, [
-    hasActiveTopic,
-    session.sessionId,
-    session.messages,
-    session.queuedTurns.length,
-    session.topics.length,
-    session.updateTopicSnapshot,
-    stream.isSending,
-    tools.pendingActions.length,
-    context.workspacePathMissing,
-    workspaceId,
-  ]);
 
   const handleStartProcess = async () => {
     try {
@@ -527,6 +283,8 @@ export function useAsterAgentChat(options: UseAsterAgentChatRuntimeOptions) {
     setModel: context.setModel,
     executionStrategy: context.executionStrategy,
     setExecutionStrategy: context.setExecutionStrategy,
+    accessMode: context.accessMode,
+    setAccessMode: context.setAccessMode,
     providerConfig: {},
     isConfigLoading: false,
 

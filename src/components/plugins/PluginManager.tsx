@@ -5,7 +5,6 @@ import {
   downloadUpdate,
   type VersionInfo,
 } from "@/lib/api/appUpdate";
-import { safeListen } from "@/lib/dev-bridge";
 import { notifyPluginUIChanged } from "@/lib/api/pluginUI";
 import {
   cancelPluginTask,
@@ -15,6 +14,7 @@ import {
   getPluginStatus,
   getPlugins,
   getPluginTask,
+  listenPluginTaskEvent,
   listInstalledPlugins,
   listPluginTasks,
   reloadPlugins,
@@ -38,7 +38,6 @@ import {
   Download,
   ExternalLink,
 } from "lucide-react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import { PluginUninstallDialog } from "./PluginUninstallDialog";
 import { PluginItemContextMenu } from "./PluginItemContextMenu";
@@ -751,12 +750,12 @@ export function PluginManager({ onNavigate }: PluginManagerProps = {}) {
   }, [fetchRuntimeData]);
 
   useEffect(() => {
-    let unlisten: UnlistenFn | null = null;
+    let unlisten: (() => void) | null = null;
     let delayedRefreshTimer: number | null = null;
 
     const setupTaskEventListener = async () => {
       try {
-        unlisten = await safeListen("plugin-task-event", () => {
+        unlisten = await listenPluginTaskEvent(() => {
           if (delayedRefreshTimer !== null) {
             window.clearTimeout(delayedRefreshTimer);
           }

@@ -245,9 +245,11 @@ afterEach(() => {
 });
 
 describe("ImageGenPage", () => {
-  it("点击左上角返回按钮应回到新建任务页", () => {
+  it("点击左上角返回按钮应回到新建任务页", async () => {
     const onNavigate = vi.fn();
     const container = renderPage(onNavigate);
+
+    await flushEffects();
 
     const backButton = container.querySelector<HTMLButtonElement>(
       'button[title="返回新建任务"]',
@@ -271,6 +273,8 @@ describe("ImageGenPage", () => {
 
   it("应仅显示当前选中图片的提示词历史", async () => {
     const container = renderPage();
+
+    await flushEffects();
 
     const chipBefore = getPromptChip(container);
     expect(chipBefore.textContent).toContain("第一张提示词");
@@ -309,13 +313,15 @@ describe("ImageGenPage", () => {
     expect(mockToast.success).toHaveBeenCalled();
   });
 
-  it("AI 生图布局应锁定父级高度避免小屏裁切输入区", () => {
+  it("AI 生图布局应锁定父级高度避免小屏裁切输入区", async () => {
     const mounted = renderIntoDom(
       <div style={{ height: "640px", width: "960px" }}>
         <ImageGenPage />
       </div>,
       mountedRoots,
     );
+
+    await flushEffects();
 
     const layout = mounted.container.querySelector<HTMLElement>(
       '[data-testid="ai-image-gen-layout"]',

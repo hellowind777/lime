@@ -4,12 +4,13 @@
 
 ## 功能
 
-- Observer 通道自动连接：`/lime-chrome-observer/Lime_Key=...`
+- Observer 通道自动连接：`/lime-chrome-observer/<bridge_key>?profileKey=...`
 - 页面信息上报：标题、URL、Markdown
 - 远程指令执行：`open_url` / `click` / `type` / `scroll` / `switch_tab` / `list_tabs` / `go_back` 等
 - 弹窗入口：直接打开 Lime 的“连接器”页，并保留高级手动配置
 - 自动配置文件：导出后自动写入 `auto_config.json`
 - 弹窗配置：`serverUrl`、`bridgeKey`、`profileKey`、监控开关、手动抓取
+- 桌面端主动断开：当 Lime 设置页点击“断开已连接扩展”时，扩展会关闭 observer 连接并停止自动重连，直到用户手动重连
 
 ## 安装
 
@@ -67,12 +68,25 @@
 npm run bridge:e2e -- --server ws://127.0.0.1:8787 --key proxy_cast --profile default
 ```
 
+默认还会通过 `http://127.0.0.1:3030/invoke` 调用 `disconnect_browser_connector_session`，继续验证桌面端主动断开链路：
+
+- observer/control 均收到 `force_disconnect`
+- `disconnect_browser_connector_session` 返回断开计数
+- 在干净环境下，`get_chrome_bridge_status` 最终归零
+
+如果你当前只想验证纯 WebSocket 握手和命令回路，而不依赖 DevBridge invoke，可显式跳过该阶段：
+
+```bash
+npm run bridge:e2e -- --server ws://127.0.0.1:8787 --key proxy_cast --profile default --skip-force-disconnect
+```
+
 脚本会验证：
 
 - observer/control 握手
 - 双向心跳 ack
 - `wait_for_page_info=true` 命令链路（`command_result` + `page_info_update`）
 - 普通命令链路（`command_result`）
+- 桌面端主动断开链路（默认开启）
 
 ## 兼容说明
 

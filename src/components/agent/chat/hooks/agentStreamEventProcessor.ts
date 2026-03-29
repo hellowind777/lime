@@ -32,6 +32,7 @@ import {
   isToolResultSuccessful,
   normalizeIncomingToolResult,
 } from "./agentChatToolResult";
+import { governActionRequest } from "../utils/actionRequestGovernance";
 import {
   buildArtifactFromWrite,
   findMessageArtifact,
@@ -782,7 +783,7 @@ export function handleActionRequiredEvent({
   runtime: AgentRuntimeAdapter;
   setPendingActions: Dispatch<SetStateAction<ActionRequired[]>>;
 }) {
-  const actionData: ActionRequired = {
+  const actionData = governActionRequest({
     requestId: data.request_id,
     actionType: data.action_type,
     toolName: data.tool_name,
@@ -798,7 +799,7 @@ export function handleActionRequiredEvent({
         }
       : undefined,
     isFallback: false,
-  };
+  });
   const actionKey =
     actionData.requestId ||
     `${actionData.actionType}:${actionData.prompt || actionData.toolName || ""}`;

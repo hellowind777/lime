@@ -43,6 +43,16 @@ export function useLimeSkills(options: UseLimeSkillsOptions = {}) {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [skillsLoading, setSkillsLoading] = useState(false);
   const latestRequestIdRef = useRef(0);
+  const logScopeRef = useRef(logScope);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    logScopeRef.current = logScope;
+  }, [logScope]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   const refreshSkills = useCallback(
     async (includeRemote = false): Promise<Skill[]> => {
@@ -50,7 +60,7 @@ export function useLimeSkills(options: UseLimeSkillsOptions = {}) {
       latestRequestIdRef.current = requestId;
 
       const startedAt = Date.now();
-      logAgentDebug(logScope, "loadSkills.start", {
+      logAgentDebug(logScopeRef.current, "loadSkills.start", {
         includeRemote,
       });
       setSkillsLoading(true);
@@ -65,7 +75,7 @@ export function useLimeSkills(options: UseLimeSkillsOptions = {}) {
         }
 
         setSkills(loadedSkills);
-        logAgentDebug(logScope, "loadSkills.success", {
+        logAgentDebug(logScopeRef.current, "loadSkills.success", {
           durationMs: Date.now() - startedAt,
           includeRemote,
           skillsCount: loadedSkills.length,
@@ -77,9 +87,9 @@ export function useLimeSkills(options: UseLimeSkillsOptions = {}) {
         }
 
         setSkills([]);
-        onError?.(error);
+        onErrorRef.current?.(error);
         logAgentDebug(
-          logScope,
+          logScopeRef.current,
           "loadSkills.error",
           {
             durationMs: Date.now() - startedAt,
@@ -95,7 +105,7 @@ export function useLimeSkills(options: UseLimeSkillsOptions = {}) {
         }
       }
     },
-    [logScope, onError],
+    [],
   );
 
   useEffect(() => {

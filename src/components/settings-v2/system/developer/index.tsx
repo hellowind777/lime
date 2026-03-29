@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useComponentDebug } from "@/contexts/ComponentDebugContext";
-import { getConfig } from "@/lib/api/appConfig";
+import { getConfig, saveConfig, type Config } from "@/lib/api/appConfig";
 import { getLogs, getPersistedLogsTail } from "@/lib/api/logs";
 import {
   getLogStorageDiagnostics,
@@ -59,11 +59,16 @@ import {
 } from "@/lib/siteAdapterCatalogBootstrap";
 import {
   siteGetAdapterCatalogStatus,
+  siteImportAdapterYamlBundle,
   siteListAdapters,
   type SiteAdapterCatalogStatus,
   type SiteAdapterDefinition,
 } from "@/lib/webview-api";
 import { cn } from "@/lib/utils";
+import {
+  isWorkspaceHarnessEnabled,
+  normalizeDeveloperConfig,
+} from "@/lib/developerFeatures";
 import { Textarea } from "@/components/ui/textarea";
 import { ClipboardPermissionGuideCard } from "../shared/ClipboardPermissionGuideCard";
 import { WorkspaceRepairHistoryCard } from "../shared/WorkspaceRepairHistoryCard";
@@ -124,6 +129,43 @@ const DEFAULT_SITE_ADAPTER_CATALOG_EDITOR_VALUE = JSON.stringify(
   null,
   2,
 );
+
+const DEFAULT_SITE_ADAPTER_IMPORT_EDITOR_VALUE = `site: reddit
+name: hot
+description: Reddit 热门帖子
+domain: www.reddit.com
+args:
+  subreddit:
+    type: str
+    default: ""
+    description: Subreddit 名称
+  limit:
+    type: int
+    default: 20
+    description: 返回条目数量
+pipeline:
+  - navigate: https://www.reddit.com
+  - evaluate: |
+      (async () => {
+        const sub = \${{ args.subreddit | json }};
+        const path = sub ? '/r/' + sub + '/hot.json' : '/hot.json';
+        const limit = \${{ args.limit }};
+        const response = await fetch(path + '?limit=' + limit, { credentials: 'include' });
+        const data = await response.json();
+        return (data?.data?.children || []).map((item) => ({
+          title: item.data.title,
+          subreddit: item.data.subreddit_name_prefixed,
+          score: item.data.score,
+        }));
+      })()
+  - map:
+      rank: \${{ index + 1 }}
+      title: \${{ item.title }}
+      subreddit: \${{ item.subreddit }}
+      score: \${{ item.score }}
+  - limit: \${{ args.limit }}
+columns: [rank, title, subreddit, score]
+`;
 
 function SurfacePanel({
   icon: Icon,
@@ -191,11 +233,14 @@ function StatusPill({
 
 export function DeveloperSettings() {
   const { enabled, setEnabled } = useComponentDebug();
+  const [appConfig, setAppConfig] = useState<Config | null>(null);
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
+  const [workspaceHarnessSaving, setWorkspaceHarnessSaving] = useState(false);
   const [serviceCatalogBusy, setServiceCatalogBusy] = useState(false);
   const [siteCatalogBusy, setSiteCatalogBusy] = useState(false);
   const [catalogEditorValue, setCatalogEditorValue] = useState("");
   const [siteCatalogEditorValue, setSiteCatalogEditorValue] = useState("");
+  const [siteImportEditorValue, setSiteImportEditorValue] = useState("");
   const [serviceCatalog, setServiceCatalog] =
     useState<ServiceSkillCatalog | null>(null);
   const [siteCatalogStatus, setSiteCatalogStatus] =
@@ -213,6 +258,18 @@ export function DeveloperSettings() {
     return catalog;
   }, []);
 
+  const loadAppConfig = useCallback(async () => {
+    try {
+      const config = await getConfig();
+      setAppConfig(config);
+      return config;
+    } catch (error) {
+      console.error("加载开发者配置失败:", error);
+      setAppConfig(null);
+      return null;
+    }
+  }, []);
+
   const loadSiteAdapterCatalog = useCallback(async () => {
     const [status, adapters] = await Promise.all([
       siteGetAdapterCatalogStatus(),
@@ -222,6 +279,10 @@ export function DeveloperSettings() {
     setSiteAdapters(adapters);
     return { status, adapters };
   }, []);
+
+  useEffect(() => {
+    void loadAppConfig();
+  }, [loadAppConfig]);
 
   useEffect(() => {
     void loadServiceSkillCatalog();
@@ -417,6 +478,41 @@ export function DeveloperSettings() {
     }
   }, []);
 
+  const handleWorkspaceHarnessEnabledChange = useCallback(
+    async (nextEnabled: boolean) => {
+      setWorkspaceHarnessSaving(true);
+      setMessage(null);
+      try {
+        const latestConfig = appConfig ?? (await getConfig());
+        const nextConfig: Config = {
+          ...latestConfig,
+          developer: {
+            ...normalizeDeveloperConfig(latestConfig.developer),
+            workspace_harness_enabled: nextEnabled,
+          },
+        };
+        await saveConfig(nextConfig);
+        setAppConfig(nextConfig);
+        setMessage({
+          type: "success",
+          text: nextEnabled
+            ? "已开启处理工作台，通用对话中的工作台入口和信息收集链路已恢复"
+            : "已关闭处理工作台，入口与信息收集链路已全部停用",
+        });
+        setTimeout(() => setMessage(null), 2500);
+      } catch (error) {
+        console.error("保存处理工作台开关失败:", error);
+        setMessage({
+          type: "error",
+          text: error instanceof Error ? error.message : "保存处理工作台开关失败",
+        });
+      } finally {
+        setWorkspaceHarnessSaving(false);
+      }
+    },
+    [appConfig],
+  );
+
   const handleHydrateCatalogEditor = useCallback(async () => {
     setServiceCatalogBusy(true);
     setMessage(null);
@@ -518,6 +614,15 @@ export function DeveloperSettings() {
     setTimeout(() => setMessage(null), 2500);
   }, []);
 
+  const handleHydrateSiteImportEditorWithTemplate = useCallback(() => {
+    setSiteImportEditorValue(DEFAULT_SITE_ADAPTER_IMPORT_EDITOR_VALUE);
+    setMessage({
+      type: "success",
+      text: "已写入外部来源 YAML 示例",
+    });
+    setTimeout(() => setMessage(null), 2500);
+  }, []);
+
   const handleRefreshSiteCatalog = useCallback(async () => {
     setSiteCatalogBusy(true);
     setMessage(null);
@@ -607,24 +712,67 @@ export function DeveloperSettings() {
     }
   }, [loadSiteAdapterCatalog]);
 
-  const siteCatalogSourceLabel = siteCatalogStatus
-    ? siteCatalogStatus.exists ||
-      siteCatalogStatus.source_kind === "server_synced"
-      ? "服务端同步"
-      : "应用内置"
-    : "加载中";
+  const handleImportSiteAdapterYamlBundle = useCallback(async () => {
+    const raw = siteImportEditorValue.trim();
+    if (!raw) {
+      setMessage({
+        type: "error",
+        text: "请先输入外部来源 YAML",
+      });
+      return;
+    }
 
+    setSiteCatalogBusy(true);
+    setMessage(null);
+    try {
+      const result = await siteImportAdapterYamlBundle({
+        yaml_bundle: raw,
+      });
+      const { adapters } = await loadSiteAdapterCatalog();
+      setMessage({
+        type: "success",
+        text: `已按 Lime 标准导入 ${result.adapter_count} 项外部适配器，当前生效 ${adapters.length} 项`,
+      });
+      setTimeout(() => setMessage(null), 2500);
+    } catch (error) {
+      console.error("导入外部站点适配器来源失败:", error);
+      setMessage({
+        type: "error",
+        text:
+          error instanceof Error ? error.message : "导入外部站点适配器来源失败",
+      });
+    } finally {
+      setSiteCatalogBusy(false);
+    }
+  }, [loadSiteAdapterCatalog, siteImportEditorValue]);
+
+  const siteCatalogSourceLabel = !siteCatalogStatus
+    ? "加载中"
+    : siteCatalogStatus.source_kind === "server_synced"
+      ? "服务端同步"
+      : siteCatalogStatus.source_kind === "imported"
+        ? "外部导入"
+        : "应用内置";
+
+  const workspaceHarnessEnabled = isWorkspaceHarnessEnabled(appConfig);
   const summary = useMemo(
     () => ({
       diagnosticActionCount: 5,
       debugModeLabel: enabled ? "已启用" : "未启用",
+      workspaceHarnessLabel: workspaceHarnessEnabled ? "已启用" : "已关闭",
       clipboardLabel: showClipboardGuide ? "待处理" : "正常",
       serviceCatalogLabel: serviceCatalog
         ? `${serviceCatalog.items.length} 项`
         : "加载中",
       siteAdapterCatalogLabel: `${siteAdapters.length} 项`,
     }),
-    [enabled, serviceCatalog, showClipboardGuide, siteAdapters.length],
+    [
+      enabled,
+      serviceCatalog,
+      showClipboardGuide,
+      siteAdapters.length,
+      workspaceHarnessEnabled,
+    ],
   );
 
   return (
@@ -671,6 +819,9 @@ export function DeveloperSettings() {
                   诊断动作会采集日志、运行态快照和系统自检信息
                 </span>
                 <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
+                  处理工作台默认关闭，只有开发者显式开启后才会显示入口并收集运行态信息
+                </span>
+                <span className="rounded-full border border-white/90 bg-white/88 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm">
                   Workspace 自愈记录用于追踪自动修复链路
                 </span>
               </div>
@@ -681,6 +832,11 @@ export function DeveloperSettings() {
                 label="组件调试"
                 value={summary.debugModeLabel}
                 description="控制组件轮廓显示与 Alt 点击诊断，不改变运行逻辑。"
+              />
+              <SummaryStat
+                label="处理工作台"
+                value={summary.workspaceHarnessLabel}
+                description="默认关闭；关闭时不显示入口，也不会再收集工作台运行态摘要。"
               />
               <SummaryStat
                 label="诊断动作"
@@ -709,6 +865,11 @@ export function DeveloperSettings() {
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
                 <StatusPill
+                  active={workspaceHarnessEnabled}
+                  activeLabel="处理工作台已启用"
+                  inactiveLabel="处理工作台已关闭"
+                />
+                <StatusPill
                   active={enabled}
                   activeLabel="组件调试已启用"
                   inactiveLabel="组件调试未启用"
@@ -723,7 +884,7 @@ export function DeveloperSettings() {
                 </span>
               </div>
               <p className="text-sm leading-6 text-slate-600">
-                建议先打开组件调试看清页面结构，再根据问题类型决定是否复制或导出完整诊断包。
+                建议先确认是否真的需要开启处理工作台；默认保持关闭，只有在开发调试需要看运行态与工具库存时再临时打开。
               </p>
             </div>
           </div>
@@ -732,6 +893,68 @@ export function DeveloperSettings() {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.14fr)_minmax(320px,0.86fr)]">
         <div className="space-y-6">
+          <SurfacePanel
+            icon={Sparkles}
+            title="处理工作台与信息收集"
+            description="控制通用对话里的“处理工作台”入口，以及运行态摘要、工具库存、环境摘要等开发调试信息收集链路。默认关闭。"
+            aside={
+              <StatusPill
+                active={workspaceHarnessEnabled}
+                activeLabel="已启用"
+                inactiveLabel="已关闭"
+              />
+            }
+          >
+            <div className="space-y-4">
+              <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-slate-900">
+                      允许处理工作台进入通用对话
+                    </p>
+                    <p className="text-sm leading-6 text-slate-500">
+                      关闭时不会显示顶部“工作台”入口，也不会继续读取工具库存、整理环境摘要或保留已展开的处理工作台弹层。
+                    </p>
+                  </div>
+                  <Switch
+                    aria-label="切换处理工作台"
+                    checked={workspaceHarnessEnabled}
+                    disabled={workspaceHarnessSaving}
+                    onCheckedChange={(checked) => {
+                      void handleWorkspaceHarnessEnabledChange(Boolean(checked));
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="rounded-[22px] border border-slate-200/80 bg-white p-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[18px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      关闭时
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      通用对话不再显示处理工作台入口，相关弹窗不会打开，信息收集链路直接短路。
+                    </p>
+                  </div>
+                  <div className="rounded-[18px] border border-slate-200/80 bg-slate-50/60 p-4">
+                    <p className="text-sm font-semibold text-slate-900">
+                      开启时
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      仅用于开发排查，可查看运行态摘要、待处理事项、工具库存和协作成员状态。
+                    </p>
+                  </div>
+                </div>
+                <p className="mt-3 text-xs leading-6 text-slate-500">
+                  {workspaceHarnessSaving
+                    ? "正在保存处理工作台开关..."
+                    : "建议默认保持关闭，排查完成后再关回去，避免给普通使用路径增加视觉和运行时噪音。"}
+                </p>
+              </div>
+            </div>
+          </SurfacePanel>
+
           <SurfacePanel
             icon={Eye}
             title="组件视图调试"
@@ -910,7 +1133,7 @@ export function DeveloperSettings() {
           <SurfacePanel
             icon={Globe}
             title="站点脚本目录联调"
-            description="用于验证 siteAdapterCatalog 的服务端下发、事件注入和本地缓存回退。重点看真正生效的适配器列表，而不是只看缓存元数据。"
+            description="用于验证站点适配器目录的服务端下发、外部来源导入和本地缓存回退。重点看真正生效的适配器列表，而不是只看缓存元数据。"
           >
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -932,7 +1155,7 @@ export function DeveloperSettings() {
                 </div>
                 <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/60 p-4">
                   <p className="text-xs font-medium tracking-[0.12em] text-slate-500">
-                    Remote
+                    Catalog
                   </p>
                   <p className="mt-3 text-lg font-semibold text-slate-900">
                     {siteCatalogStatus?.exists
@@ -957,7 +1180,7 @@ export function DeveloperSettings() {
                       当前生效目录摘要
                     </p>
                     <p className="text-sm leading-6 text-slate-500">
-                      这里展示的是运行时当前可见的适配器。如果服务端只同步了部分站点脚本，其余能力仍会由应用内置目录补位。
+                      这里展示的是运行时当前可见的适配器。如果外部导入或服务端同步只覆盖了部分站点，其余能力仍会由应用内置目录补位。
                     </p>
                   </div>
                   <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-500">
@@ -988,6 +1211,55 @@ export function DeveloperSettings() {
                   <div>
                     租户：{siteCatalogStatus?.tenant_id ?? "未绑定租户"}
                   </div>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-[22px] border border-slate-200/80 bg-white p-4">
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-slate-900">
+                    外部来源 YAML 导入
+                  </p>
+                  <p className="text-sm leading-6 text-slate-500">
+                    把外部来源 YAML 粘贴到这里，点击“导入到 Lime 标准”后会先走
+                    Lime 白名单编译层，再写入
+                    <code className="mx-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">
+                      imported
+                    </code>
+                    目录。这里只接受当前支持子集：
+                    <code className="mx-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-700">
+                      navigate / evaluate / map / filter / limit / sort
+                    </code>
+                    。
+                  </p>
+                </div>
+
+                <Textarea
+                  aria-label="站点来源 YAML 导入输入"
+                  value={siteImportEditorValue}
+                  onChange={(event) => setSiteImportEditorValue(event.target.value)}
+                  placeholder={DEFAULT_SITE_ADAPTER_IMPORT_EDITOR_VALUE}
+                  className="min-h-[260px] rounded-[18px] border-slate-200/80 bg-slate-50/60 font-mono text-xs leading-6 text-slate-700"
+                />
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={handleHydrateSiteImportEditorWithTemplate}
+                    disabled={siteCatalogBusy}
+                    className={SECONDARY_BUTTON_CLASS_NAME}
+                  >
+                    <ScrollText className="h-4 w-4" />
+                    填入 YAML 示例
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleImportSiteAdapterYamlBundle()}
+                    disabled={siteCatalogBusy}
+                    className={SECONDARY_BUTTON_CLASS_NAME}
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    导入到 Lime 标准
+                  </button>
                 </div>
               </div>
 

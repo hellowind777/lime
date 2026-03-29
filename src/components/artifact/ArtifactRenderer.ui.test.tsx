@@ -165,6 +165,11 @@ describe("ArtifactRenderer 空内容态", () => {
     ).not.toBeNull();
     expect(container.textContent).toContain("结构化报告标题");
     expect(container.textContent).toContain("正文段落");
+    expect(
+      container
+        .querySelector('[data-testid="artifact-document-renderer"] article')
+        ?.className,
+    ).toContain("max-w-[1100px]");
   });
 
   it("content 为空但 metadata 携带 artifactDocument 时也应渲染结构化阅读面", async () => {

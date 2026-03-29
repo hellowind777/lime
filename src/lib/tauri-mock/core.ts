@@ -91,6 +91,10 @@ type MockBrowserConnectorSettings = {
     description: string;
     enabled: boolean;
     available: boolean;
+    visible: boolean;
+    authorization_status: string;
+    last_error: string | null;
+    capabilities: string[];
   }>;
 };
 
@@ -158,6 +162,14 @@ let mockBrowserConnectorSettings: MockBrowserConnectorSettings = {
       description: "读取和管理你的提醒事项和任务列表。",
       enabled: false,
       available: true,
+      visible: true,
+      authorization_status: "not_determined",
+      last_error: null,
+      capabilities: [
+        "list_reminders",
+        "create_reminder",
+        "update_reminder",
+      ],
     },
     {
       id: "calendar",
@@ -165,6 +177,10 @@ let mockBrowserConnectorSettings: MockBrowserConnectorSettings = {
       description: "读取和管理你的日历事件。",
       enabled: false,
       available: true,
+      visible: true,
+      authorization_status: "not_determined",
+      last_error: null,
+      capabilities: ["list_events", "create_event", "update_event"],
     },
     {
       id: "notes",
@@ -172,6 +188,10 @@ let mockBrowserConnectorSettings: MockBrowserConnectorSettings = {
       description: "读取和创建你的备忘录。",
       enabled: false,
       available: true,
+      visible: true,
+      authorization_status: "not_determined",
+      last_error: null,
+      capabilities: ["list_notes", "read_note", "create_note"],
     },
     {
       id: "mail",
@@ -179,6 +199,10 @@ let mockBrowserConnectorSettings: MockBrowserConnectorSettings = {
       description: "读取邮件和创建草稿。",
       enabled: false,
       available: true,
+      visible: true,
+      authorization_status: "not_determined",
+      last_error: null,
+      capabilities: ["list_mailboxes", "read_messages", "create_draft"],
     },
     {
       id: "contacts",
@@ -186,6 +210,10 @@ let mockBrowserConnectorSettings: MockBrowserConnectorSettings = {
       description: "搜索、读取和创建联系人。",
       enabled: false,
       available: true,
+      visible: true,
+      authorization_status: "not_determined",
+      last_error: null,
+      capabilities: ["search_contacts", "read_contact", "create_contact"],
     },
   ],
 };
@@ -199,6 +227,15 @@ let mockBrowserConnectorInstallStatus: MockBrowserConnectorInstallStatus = {
   installed_name: null,
   installed_version: null,
   message: "尚未导出浏览器连接器",
+};
+
+let mockChromeBridgeStatus = {
+  observer_count: 0,
+  control_count: 0,
+  pending_command_count: 0,
+  observers: [],
+  controls: [],
+  pending_commands: [],
 };
 
 const now = () => new Date().toISOString();
@@ -220,7 +257,7 @@ let mockExistingSessionTabs = [
   },
 ];
 
-const mockSiteAdapters = [
+const mockBundledSiteAdapters = [
   {
     name: "github/search",
     domain: "github.com",
@@ -274,7 +311,7 @@ const mockSiteAdapters = [
 
 const mockSiteRecommendations = [
   {
-    adapter: mockSiteAdapters[0],
+    adapter: mockBundledSiteAdapters[0],
     reason:
       "已检测到资料 research_attach 当前停留在 github.com，可直接复用已连接的 Chrome 上下文。",
     profile_key: "research_attach",
@@ -284,7 +321,7 @@ const mockSiteRecommendations = [
     score: 100,
   },
   {
-    adapter: mockSiteAdapters[1],
+    adapter: mockBundledSiteAdapters[1],
     reason:
       "资料 通用浏览器资料 已绑定站点范围 www.zhihu.com，可优先作为该适配器的执行上下文。",
     profile_key: "general_browser_assist",
@@ -293,9 +330,12 @@ const mockSiteRecommendations = [
   },
 ];
 
+let mockImportedSiteAdapters: any[] = [];
+let mockServerSyncedSiteAdapters: any[] = [];
+
 let mockSiteAdapterCatalogStatus: {
   exists: boolean;
-  source_kind: "bundled" | "server_synced";
+  source_kind: "bundled" | "imported" | "server_synced";
   registry_version: number;
   directory: string;
   catalog_version?: string;
@@ -307,8 +347,117 @@ let mockSiteAdapterCatalogStatus: {
   source_kind: "bundled",
   registry_version: 1,
   directory: "/tmp/lime/site-adapters/server-synced",
-  adapter_count: mockSiteAdapters.length,
+  adapter_count: mockBundledSiteAdapters.length,
 };
+
+function getMockEffectiveSiteAdapters() {
+  const merged = new Map<string, any>();
+  for (const adapter of [
+    ...mockBundledSiteAdapters,
+    ...mockImportedSiteAdapters,
+    ...mockServerSyncedSiteAdapters,
+  ]) {
+    const normalizedName = String(adapter?.name ?? "")
+      .trim()
+      .toLowerCase();
+    if (!normalizedName) {
+      continue;
+    }
+    merged.set(normalizedName, adapter);
+  }
+  return Array.from(merged.values());
+}
+
+function buildMockSiteCatalogStatus(
+  sourceKind: "bundled" | "imported" | "server_synced",
+  adapterCount: number,
+  overrides?: Partial<{
+    exists: boolean;
+    registry_version: number;
+    directory: string;
+    catalog_version: string | null;
+    tenant_id: string | null;
+    synced_at: string | null;
+  }>,
+) {
+  return {
+    exists: overrides?.exists ?? sourceKind !== "bundled",
+    source_kind: sourceKind,
+    registry_version: overrides?.registry_version ?? 1,
+    directory:
+      overrides?.directory ??
+      (sourceKind === "imported"
+        ? "/tmp/lime/site-adapters/imported"
+        : "/tmp/lime/site-adapters/server-synced"),
+    catalog_version: overrides?.catalog_version ?? undefined,
+    tenant_id: overrides?.tenant_id ?? undefined,
+    synced_at: overrides?.synced_at ?? undefined,
+    adapter_count: adapterCount,
+  };
+}
+
+function normalizeMockSiteAdapterPayload(
+  adapter: any,
+  sourceKind: "imported" | "server_synced",
+) {
+  const name = String(adapter?.name ?? "").trim();
+  if (!name) {
+    return null;
+  }
+  return {
+    name,
+    domain: String(adapter?.domain ?? "example.com").trim() || "example.com",
+    description:
+      String(adapter?.description ?? "导入的站点适配器").trim() ||
+      "导入的站点适配器",
+    read_only: adapter?.read_only ?? adapter?.readOnly ?? true,
+    capabilities: Array.isArray(adapter?.capabilities)
+      ? adapter.capabilities.map((item: unknown) => String(item))
+      : ["research"],
+    input_schema: { type: "object" },
+    example_args: {},
+    example: String(adapter?.example ?? `${name} {}`),
+    auth_hint:
+      typeof adapter?.auth_hint === "string" ? adapter.auth_hint : undefined,
+    source_kind: sourceKind,
+    source_version:
+      typeof adapter?.source_version === "string"
+        ? adapter.source_version
+        : typeof adapter?.sourceVersion === "string"
+          ? adapter.sourceVersion
+          : undefined,
+  };
+}
+
+function parseMockImportedYamlBundle(bundle: string, sourceVersion?: string) {
+  return bundle
+    .split(/^---\s*$/m)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item, index) => {
+      const site = item.match(/(?:^|\n)site:\s*([^\n]+)/)?.[1]?.trim();
+      const name = item.match(/(?:^|\n)name:\s*([^\n]+)/)?.[1]?.trim();
+      const domain = item.match(/(?:^|\n)domain:\s*([^\n]+)/)?.[1]?.trim();
+      const description =
+        item.match(/(?:^|\n)description:\s*([^\n]+)/)?.[1]?.trim() ??
+        "从外部来源导入的站点适配器";
+      if (!site || !name || !domain) {
+        throw new Error(`第 ${index + 1} 个 YAML 文档缺少 site/name/domain`);
+      }
+      return {
+        name: `${site}/${name}`,
+        domain,
+        description,
+        read_only: true,
+        capabilities: ["research"],
+        input_schema: { type: "object" },
+        example_args: {},
+        example: `${site}/${name} {}`,
+        source_kind: "imported",
+        source_version: sourceVersion,
+      };
+    });
+}
 
 function upsertMockBrowserSessionState(launchResponse: any) {
   mockBrowserSessionStates.set(
@@ -1503,7 +1652,7 @@ const defaultMocks: Record<string, any> = {
       open_window: args?.request?.open_window,
       stream_mode: args?.request?.stream_mode,
     }),
-  site_list_adapters: () => mockSiteAdapters,
+  site_list_adapters: () => getMockEffectiveSiteAdapters(),
   site_recommend_adapters: (args: any) => {
     const rawLimit = Number(
       args?.request?.limit ?? mockSiteRecommendations.length,
@@ -1517,24 +1666,80 @@ const defaultMocks: Record<string, any> = {
     const query = String(args?.request?.query ?? "")
       .trim()
       .toLowerCase();
+    const effectiveAdapters = getMockEffectiveSiteAdapters();
     if (!query) {
-      return mockSiteAdapters;
+      return effectiveAdapters;
     }
-    return mockSiteAdapters.filter(
+    return effectiveAdapters.filter(
       (adapter) =>
         adapter.name.toLowerCase().includes(query) ||
         adapter.domain.toLowerCase().includes(query) ||
         adapter.description.toLowerCase().includes(query) ||
-        adapter.capabilities.some((item) => item.toLowerCase().includes(query)),
+        adapter.capabilities.some((item: string) =>
+          item.toLowerCase().includes(query),
+        ),
     );
   },
   site_get_adapter_info: (args: any) => {
     const name = String(args?.request?.name ?? "");
-    const adapter = mockSiteAdapters.find((item) => item.name === name);
+    const adapter = getMockEffectiveSiteAdapters().find(
+      (item) => item.name === name,
+    );
     if (!adapter) {
       throw new Error("未找到对应的站点适配器");
     }
     return adapter;
+  },
+  site_get_adapter_launch_readiness: (args: any) => {
+    const request = args?.request ?? {};
+    const adapterName = String(request.adapter_name ?? "");
+    const adapter = getMockEffectiveSiteAdapters().find(
+      (item) => item.name === adapterName,
+    );
+    if (!adapter) {
+      throw new Error("未找到对应的站点适配器");
+    }
+
+    const requestedProfileKey =
+      typeof request.profile_key === "string" ? request.profile_key.trim() : "";
+    const requestedTargetId =
+      typeof request.target_id === "string" ? request.target_id.trim() : "";
+    const matchingTab = mockExistingSessionTabs.find((tab) =>
+      tab.url?.toLowerCase().includes(adapter.domain.replace(/^www\./, "")),
+    );
+
+    if (requestedProfileKey === "general_browser_assist") {
+      return {
+        status: "requires_browser_runtime",
+        adapter: adapter.name,
+        domain: adapter.domain,
+        profile_key: requestedProfileKey,
+        message:
+          "当前资料属于 Lime 托管浏览器，不允许在 Claw 内静默接管执行；请改走浏览器工作台。",
+        report_hint:
+          "Claw 不会在后台偷偷启动浏览器；请先进入浏览器工作台连接真实浏览器并打开目标站点页面，再返回 Claw 重试。",
+      };
+    }
+
+    if (requestedTargetId || matchingTab) {
+      return {
+        status: "ready",
+        adapter: adapter.name,
+        domain: adapter.domain,
+        profile_key: requestedProfileKey || "attached-site-session",
+        target_id: requestedTargetId || String(matchingTab?.id ?? "mock-target-1"),
+        message: `已检测到 ${adapter.domain} 的真实浏览器页面，Claw 可以直接复用当前会话执行。`,
+      };
+    }
+
+    return {
+      status: "requires_browser_runtime",
+      adapter: adapter.name,
+      domain: adapter.domain,
+      message: `当前没有检测到已附着到真实浏览器的 ${adapter.domain} 页面，请先去浏览器工作台连接浏览器并打开目标页面。`,
+      report_hint:
+        "Claw 不会在后台偷偷启动浏览器；请先进入浏览器工作台连接真实浏览器并打开目标站点页面，再返回 Claw 重试。",
+    };
   },
   site_get_adapter_catalog_status: () => mockSiteAdapterCatalogStatus,
   site_apply_adapter_catalog_bootstrap: (args: any) => {
@@ -1547,60 +1752,95 @@ const defaultMocks: Record<string, any> = {
     )
       ? payload.adapters
       : [];
-    const normalizedBundledNames = new Set(
-      mockSiteAdapters.map((adapter) =>
-        String(adapter.name).trim().toLowerCase(),
-      ),
+    mockServerSyncedSiteAdapters = syncedAdapters
+      .map((adapter) =>
+        normalizeMockSiteAdapterPayload(adapter, "server_synced"),
+      )
+      .filter(Boolean);
+    mockSiteAdapterCatalogStatus = buildMockSiteCatalogStatus(
+      "server_synced",
+      mockServerSyncedSiteAdapters.length,
+      {
+        exists: syncedAdapters.length > 0,
+        registry_version:
+          Number.isFinite(payload?.registry_version) &&
+          payload.registry_version > 0
+            ? payload.registry_version
+            : 1,
+        directory: "/tmp/lime/site-adapters/server-synced",
+        catalog_version:
+          payload?.catalogVersion ??
+          payload?.catalog_version ??
+          payload?.version ??
+          null,
+        tenant_id: payload?.tenantId ?? payload?.tenant_id ?? null,
+        synced_at: payload?.syncedAt ?? payload?.synced_at ?? null,
+      },
     );
-    const normalizedSyncedNames = new Set<string>(
-      syncedAdapters.reduce<string[]>((names, adapter) => {
-        if (typeof adapter?.name !== "string") {
-          return names;
-        }
-
-        const normalizedName = adapter.name.trim().toLowerCase();
-        if (normalizedName) {
-          names.push(normalizedName);
-        }
-
-        return names;
-      }, []),
-    );
-    const adapterCount =
-      mockSiteAdapters.length +
-      Array.from(normalizedSyncedNames).filter(
-        (name) => !normalizedBundledNames.has(name),
-      ).length;
-    mockSiteAdapterCatalogStatus = {
-      exists: syncedAdapters.length > 0,
-      source_kind: "server_synced",
-      registry_version:
-        Number.isFinite(payload?.registry_version) &&
-        payload.registry_version > 0
-          ? payload.registry_version
-          : 1,
-      directory: "/tmp/lime/site-adapters/server-synced",
-      catalog_version:
-        payload?.catalogVersion ?? payload?.catalog_version ?? payload?.version,
-      tenant_id: payload?.tenantId ?? payload?.tenant_id,
-      synced_at: payload?.syncedAt ?? payload?.synced_at,
-      adapter_count: adapterCount,
-    };
     return mockSiteAdapterCatalogStatus;
   },
-  site_clear_adapter_catalog_cache: () => {
-    mockSiteAdapterCatalogStatus = {
-      exists: false,
-      source_kind: "bundled",
-      registry_version: 1,
-      directory: "/tmp/lime/site-adapters/server-synced",
-      adapter_count: mockSiteAdapters.length,
+  site_import_adapter_yaml_bundle: (args: any) => {
+    const yamlBundle = String(args?.request?.yaml_bundle ?? "").trim();
+    if (!yamlBundle) {
+      throw new Error("请先输入外部来源 YAML");
+    }
+
+    mockImportedSiteAdapters = parseMockImportedYamlBundle(
+      yamlBundle,
+      typeof args?.request?.source_version === "string"
+        ? args.request.source_version
+        : undefined,
+    );
+    const catalogVersion =
+      typeof args?.request?.catalog_version === "string"
+        ? args.request.catalog_version
+        : undefined;
+    mockSiteAdapterCatalogStatus = buildMockSiteCatalogStatus(
+      "imported",
+      mockImportedSiteAdapters.length,
+      {
+        directory: "/tmp/lime/site-adapters/imported",
+        catalog_version: catalogVersion ?? null,
+      },
+    );
+    return {
+      directory: "/tmp/lime/site-adapters/imported",
+      adapter_count: mockImportedSiteAdapters.length,
+      catalog_version: catalogVersion,
     };
+  },
+  site_clear_adapter_catalog_cache: () => {
+    mockImportedSiteAdapters = [];
+    mockServerSyncedSiteAdapters = [];
+    mockSiteAdapterCatalogStatus = buildMockSiteCatalogStatus(
+      "bundled",
+      mockBundledSiteAdapters.length,
+      {
+        exists: false,
+      },
+    );
     return mockSiteAdapterCatalogStatus;
   },
   site_run_adapter: (args: any) => {
     const request = args?.request ?? {};
     const adapterName = String(request.adapter_name ?? "");
+    if (
+      request.require_attached_session &&
+      (!request.profile_key || request.profile_key === "general_browser_assist")
+    ) {
+      return {
+        ok: false,
+        adapter: adapterName || "github/search",
+        domain: adapterName.startsWith("zhihu") ? "www.zhihu.com" : "github.com",
+        profile_key: request.profile_key ?? "general_browser_assist",
+        entry_url: "https://example.com/mock-site",
+        error_code: "attached_session_required",
+        error_message:
+          "当前执行链路没有附着到真实浏览器会话，请先去浏览器工作台连接目标站点后重试。",
+        report_hint:
+          "Claw 不会在后台偷偷启动浏览器；请先进入浏览器工作台连接真实浏览器并打开目标站点页面，再返回 Claw 重试。",
+      };
+    }
     const targetContentId =
       typeof request.content_id === "string" && request.content_id.trim()
         ? request.content_id.trim()
@@ -1728,14 +1968,25 @@ const defaultMocks: Record<string, any> = {
       "ws://127.0.0.1:8999/lime-chrome-control/Lime_Key=proxy_cast",
     bridge_key: "proxy_cast",
   }),
-  get_chrome_bridge_status: () => ({
-    observer_count: 0,
-    control_count: 0,
-    pending_command_count: 0,
-    observers: [],
-    controls: [],
-    pending_commands: [],
-  }),
+  get_chrome_bridge_status: () => mockChromeBridgeStatus,
+  disconnect_browser_connector_session: () => {
+    const disconnectedObserverCount = mockChromeBridgeStatus.observer_count;
+    const disconnectedControlCount = mockChromeBridgeStatus.control_count;
+    mockChromeBridgeStatus = {
+      ...mockChromeBridgeStatus,
+      observer_count: 0,
+      control_count: 0,
+      pending_command_count: 0,
+      observers: [],
+      controls: [],
+      pending_commands: [],
+    };
+    return {
+      disconnected_observer_count: disconnectedObserverCount,
+      disconnected_control_count: disconnectedControlCount,
+      status: mockChromeBridgeStatus,
+    };
+  },
   get_browser_connector_settings_cmd: () => mockBrowserConnectorSettings,
   set_browser_connector_install_root_cmd: (args: any) => {
     const installRootDir =
@@ -1769,7 +2020,13 @@ const defaultMocks: Record<string, any> = {
       system_connectors: mockBrowserConnectorSettings.system_connectors.map(
         (connector) =>
           connector.id === request.id
-            ? { ...connector, enabled: request.enabled === true }
+            ? {
+                ...connector,
+                enabled: request.enabled === true,
+                authorization_status:
+                  request.enabled === true ? "authorized" : "not_determined",
+                last_error: null,
+              }
             : connector,
       ),
     };

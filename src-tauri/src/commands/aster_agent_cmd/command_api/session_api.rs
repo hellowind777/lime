@@ -99,6 +99,14 @@ pub async fn agent_runtime_update_session(
         .await?;
     }
 
+    if let Some(recent_access_mode) = request.recent_access_mode {
+        AsterAgentWrapper::persist_session_recent_access_mode(
+            &trimmed_session_id,
+            recent_access_mode,
+        )
+        .await?;
+    }
+
     if let Some(recent_team_selection) = request.recent_team_selection {
         AsterAgentWrapper::persist_session_recent_team_selection(
             &trimmed_session_id,

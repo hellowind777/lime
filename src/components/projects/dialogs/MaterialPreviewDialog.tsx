@@ -6,7 +6,6 @@
  */
 
 import { useState, useEffect } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +26,7 @@ import {
   PaletteIcon,
   LayoutIcon,
 } from "lucide-react";
+import { convertLocalFileSrc } from "@/lib/api/fileSystem";
 import type { Material, MaterialType } from "@/types/material";
 import { MaterialTypeLabels } from "@/types/material";
 
@@ -76,7 +76,7 @@ export function MaterialPreviewDialog({
         material.type === "video") &&
       material.filePath
     ) {
-      const src = convertFileSrc(material.filePath);
+      const src = convertLocalFileSrc(material.filePath);
       setImageSrc(src);
     }
 

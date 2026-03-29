@@ -217,7 +217,7 @@ function buildServiceSkillAutomationDescription(
   skill: ServiceSkillItem,
   scheduleValue: string,
 ): string {
-  const lines = [skill.summary, "来源：服务型技能本地自动化草稿。"];
+  const lines = [skill.summary, "来源：技能本地自动化草稿。"];
   if (scheduleValue.trim()) {
     lines.push(`预设调度：${scheduleValue.trim()}`);
   }

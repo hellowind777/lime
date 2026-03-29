@@ -2,6 +2,7 @@ import type { CreationMode } from "./components/types";
 import type { MessageImage } from "./types";
 import type { StepStatus } from "@/components/content-creator/types";
 import type { Page, PageParams } from "@/types/page";
+import type { AgentSiteSkillLaunchParams } from "@/types/page";
 
 export interface WorkflowProgressSnapshot {
   steps: Array<{
@@ -44,4 +45,5 @@ export interface AgentChatWorkspaceProps {
   onSessionChange?: (sessionId: string | null) => void;
   preferContentReviewInRightRail?: boolean;
   openBrowserAssistOnMount?: boolean;
+  initialSiteSkillLaunch?: AgentSiteSkillLaunchParams;
 }

@@ -5,11 +5,15 @@ import {
   parseAgentEvent,
   type AgentEvent,
 } from "@/lib/api/agentProtocol";
+import {
+  dedupeAgentRuntimeEventNames,
+  listenAgentSubagentStatus,
+  listenAgentSubagentStream,
+} from "@/lib/api/agentRuntimeEvents";
 import type {
   AsterSubagentParentContext,
   AsterSubagentSessionInfo,
 } from "@/lib/api/agentRuntime";
-import { safeListen } from "@/lib/dev-bridge";
 import {
   buildStatusEventActivityEntry,
   buildTeamWorkspaceActivityEntryFromThreadItem,
@@ -907,16 +911,15 @@ export function useTeamWorkspaceRuntime(
   useEffect(() => {
     const eventNames = [
       currentSessionId
-        ? `agent_subagent_status:${currentSessionId}`
+        ? currentSessionId
         : null,
       subagentParentContext?.parent_session_id
-        ? `agent_subagent_status:${subagentParentContext.parent_session_id}`
+        ? subagentParentContext.parent_session_id
         : null,
-    ].filter((value, index, values): value is string => {
-      return Boolean(value) && values.indexOf(value) === index;
-    });
+    ];
+    const statusSessionIds = dedupeAgentRuntimeEventNames(eventNames);
 
-    if (eventNames.length === 0) {
+    if (statusSessionIds.length === 0) {
       return;
     }
 
@@ -924,8 +927,8 @@ export function useTeamWorkspaceRuntime(
     const unlisteners: Array<() => void> = [];
 
     const subscribe = async () => {
-      for (const eventName of eventNames) {
-        const unlisten = await safeListen(eventName, (event) => {
+      for (const sessionId of statusSessionIds) {
+        const unlisten = await listenAgentSubagentStatus(sessionId, (event) => {
           const data = parseAgentEvent(event.payload);
           if (disposed || data?.type !== "subagent_status_changed") {
             return;
@@ -1037,8 +1040,7 @@ export function useTeamWorkspaceRuntime(
 
     const subscribe = async () => {
       for (const sessionId of sessionIds) {
-        const eventName = `agent_subagent_stream:${sessionId}`;
-        const unlisten = await safeListen(eventName, (event) => {
+        const unlisten = await listenAgentSubagentStream(sessionId, (event) => {
           const data = parseAgentEvent(event.payload);
           if (disposed || !data) {
             return;

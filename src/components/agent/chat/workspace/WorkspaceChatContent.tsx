@@ -5,19 +5,27 @@ import { EmptyState } from "../components/EmptyState";
 import { MessageList } from "../components/MessageList";
 import { RuntimeStyleControlBar } from "../components/RuntimeStyleControlBar";
 import { TeamWorkspaceDock } from "../components/TeamWorkspaceDock";
+import { WorkspacePendingA2UIDialog } from "./WorkspacePendingA2UIDialog";
 import {
   ChatContainer,
   ChatContainerInner,
   ChatContent,
+  ChatInputSlot,
   EntryBanner,
   EntryBannerClose,
   MessageViewport,
 } from "./WorkspaceStyles";
+import type {
+  A2UIFormData,
+  A2UIResponse,
+} from "@/components/content-creator/a2ui/types";
+import type { A2UISubmissionNoticeData } from "../components/Inputbar/components/A2UISubmissionNotice";
 
 interface WorkspaceChatContentProps {
   entryBannerVisible: boolean;
   entryBannerMessage?: string;
   onDismissEntryBanner: () => void;
+  serviceSkillExecutionCard?: ReactNode;
   stepProgressProps?: ComponentProps<typeof StepProgress> | null;
   runtimeStyleControlBarProps?: ComponentProps<
     typeof RuntimeStyleControlBar
@@ -32,6 +40,9 @@ interface WorkspaceChatContentProps {
   showWorkspaceAlert: boolean;
   onSelectWorkspaceDirectory: () => void;
   onDismissWorkspaceAlert: () => void;
+  pendingA2UIForm?: A2UIResponse | null;
+  onPendingA2UISubmit?: (formData: A2UIFormData) => void;
+  a2uiSubmissionNotice?: A2UISubmissionNoticeData | null;
   showInlineInputbar: boolean;
   inputbarNode: ReactNode;
 }
@@ -40,6 +51,7 @@ export function WorkspaceChatContent({
   entryBannerVisible,
   entryBannerMessage,
   onDismissEntryBanner,
+  serviceSkillExecutionCard,
   stepProgressProps,
   runtimeStyleControlBarProps,
   showChatLayout,
@@ -52,6 +64,9 @@ export function WorkspaceChatContent({
   showWorkspaceAlert,
   onSelectWorkspaceDirectory,
   onDismissWorkspaceAlert,
+  pendingA2UIForm,
+  onPendingA2UISubmit,
+  a2uiSubmissionNotice,
   showInlineInputbar,
   inputbarNode,
 }: WorkspaceChatContentProps) {
@@ -83,6 +98,7 @@ export function WorkspaceChatContent({
         {runtimeStyleControlBarProps ? (
           <RuntimeStyleControlBar {...runtimeStyleControlBarProps} />
         ) : null}
+        {serviceSkillExecutionCard}
 
         {showChatLayout ? (
           <ChatContent $compact={compactChrome}>
@@ -129,7 +145,14 @@ export function WorkspaceChatContent({
                 </button>
               </div>
             ) : null}
-            {showInlineInputbar ? inputbarNode : null}
+            <WorkspacePendingA2UIDialog
+              pendingA2UIForm={pendingA2UIForm}
+              onA2UISubmit={onPendingA2UISubmit}
+              a2uiSubmissionNotice={a2uiSubmissionNotice}
+            />
+            {showInlineInputbar ? (
+              <ChatInputSlot>{inputbarNode}</ChatInputSlot>
+            ) : null}
           </>
         )}
       </ChatContainerInner>

@@ -13,7 +13,11 @@ import type {
   AgentEventTurnContext,
 } from "@/lib/api/agentProtocol";
 import type { SessionModelPreference } from "../hooks/agentChatShared";
-import type { ChatToolPreferences } from "./chatToolPreferences";
+import {
+  alignChatToolPreferencesWithExecutionStrategy,
+  type ChatToolPreferences,
+} from "./chatToolPreferences";
+import { createAccessModeFromExecutionRuntime } from "./accessModeRuntime";
 import {
   buildTeamDefinitionSummary,
   createTeamDefinitionFromPreset,
@@ -35,6 +39,8 @@ function mergeExecutionRuntime(
     updates.execution_strategy ?? current?.execution_strategy ?? null;
   const outputSchemaRuntime =
     updates.output_schema_runtime ?? current?.output_schema_runtime ?? null;
+  const recentAccessMode =
+    updates.recent_access_mode ?? current?.recent_access_mode ?? null;
   const recentPreferences =
     updates.recent_preferences ?? current?.recent_preferences ?? null;
   const recentTeamSelection =
@@ -81,6 +87,7 @@ function mergeExecutionRuntime(
     model_name: modelName,
     execution_strategy: executionStrategy,
     output_schema_runtime: outputSchemaRuntime,
+    recent_access_mode: recentAccessMode,
     recent_preferences: recentPreferences,
     recent_team_selection: recentTeamSelection,
     recent_theme: recentTheme,
@@ -128,7 +135,10 @@ function normalizeRecentPreferenceBoolean(value: unknown): boolean | null {
 }
 
 export function createChatToolPreferencesFromExecutionRuntime(
-  runtime?: Pick<AsterSessionExecutionRuntime, "recent_preferences"> | null,
+  runtime?: Pick<
+    AsterSessionExecutionRuntime,
+    "recent_preferences" | "execution_strategy"
+  > | null,
 ): ChatToolPreferences | null {
   const preferences = runtime?.recent_preferences as
     | AsterSessionExecutionRuntimePreferences
@@ -152,12 +162,21 @@ export function createChatToolPreferencesFromExecutionRuntime(
     return null;
   }
 
-  return {
-    webSearch: webSearch ?? false,
-    thinking: thinking ?? false,
-    task: task ?? false,
-    subagent: subagent ?? false,
-  };
+  return alignChatToolPreferencesWithExecutionStrategy(
+    {
+      webSearch: webSearch ?? false,
+      thinking: thinking ?? false,
+      task: task ?? false,
+      subagent: subagent ?? false,
+    },
+    runtime?.execution_strategy,
+  );
+}
+
+export function createSessionAccessModeFromExecutionRuntime(
+  runtime?: Pick<AsterSessionExecutionRuntime, "recent_access_mode"> | null,
+) {
+  return createAccessModeFromExecutionRuntime(runtime);
 }
 
 export function createSessionRecentPreferencesFromChatToolPreferences(

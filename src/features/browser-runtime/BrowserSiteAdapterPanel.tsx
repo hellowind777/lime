@@ -698,6 +698,7 @@ export function BrowserSiteAdapterPanel(props: BrowserSiteAdapterPanelProps) {
         adapter_name: selectedAdapter.name,
         args: parsedArgs,
         profile_key: runProfileKey,
+        require_attached_session: initialRequireAttachedSession || undefined,
         content_id: shouldWriteToCurrentContent
           ? normalizedCurrentContentId
           : undefined,

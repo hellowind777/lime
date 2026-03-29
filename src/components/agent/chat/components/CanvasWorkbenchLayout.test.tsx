@@ -235,14 +235,12 @@ function MockArtifactDocumentPreview({
   controller,
   target,
   onArtifactDocumentControllerChange,
-  artifactDocumentLayoutMode,
 }: {
   controller: ArtifactWorkbenchDocumentController | null;
   target: CanvasWorkbenchPreviewTarget;
   onArtifactDocumentControllerChange?: (
     controller: ArtifactWorkbenchDocumentController | null,
   ) => void;
-  artifactDocumentLayoutMode?: "full" | "canvas-only";
 }) {
   React.useEffect(() => {
     onArtifactDocumentControllerChange?.(
@@ -255,7 +253,7 @@ function MockArtifactDocumentPreview({
 
   return (
     <div data-testid="preview-panel">
-      {artifactDocumentLayoutMode}:{target.kind}:{target.title}
+      {target.kind}:{target.title}
     </div>
   );
 }
@@ -589,7 +587,6 @@ describe("CanvasWorkbenchLayout", () => {
   it("命中文档产物时应把文稿 inspector 收口到右侧工作台", async () => {
     const controller = createMockArtifactDocumentController();
     const previewOptions: Array<{
-      artifactDocumentLayoutMode?: "full" | "canvas-only";
       onArtifactDocumentControllerChange?: (
         value: ArtifactWorkbenchDocumentController | null,
       ) => void;
@@ -613,7 +610,6 @@ describe("CanvasWorkbenchLayout", () => {
       onRevealPath: vi.fn(async () => undefined),
       renderPreview: (target, options) => {
         previewOptions.push({
-          artifactDocumentLayoutMode: options?.artifactDocumentLayoutMode,
           onArtifactDocumentControllerChange:
             options?.onArtifactDocumentControllerChange,
         });
@@ -621,7 +617,6 @@ describe("CanvasWorkbenchLayout", () => {
           <MockArtifactDocumentPreview
             controller={controller}
             target={target}
-            artifactDocumentLayoutMode={options?.artifactDocumentLayoutMode}
             onArtifactDocumentControllerChange={
               options?.onArtifactDocumentControllerChange
             }
@@ -634,15 +629,30 @@ describe("CanvasWorkbenchLayout", () => {
 
     expect(
       container.querySelector('[data-testid="preview-panel"]')?.textContent,
-    ).toContain("canvas-only:artifact:board-review.artifact.json");
-    expect(previewOptions.at(-1)?.artifactDocumentLayoutMode).toBe("canvas-only");
+    ).toContain("artifact:board-review.artifact.json");
+    expect(
+      container.querySelector('button[aria-label="展开当前文稿检查器"]'),
+    ).not.toBeNull();
     expect(
       container.querySelector('[data-testid="canvas-workbench-document-inspector"]'),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(container.textContent).toContain("当前文稿");
     expect(container.textContent).toContain("统一在右侧切换产物与版本");
     expect(container.textContent).toContain("董事会季度复盘");
     expect(container.textContent).toContain("需要优先补齐来源与版本线索。");
+    expect(container.textContent).toContain(
+      "默认先收起概览、来源、版本与编辑",
+    );
+
+    clickButtonByLabel(container, "展开当前文稿检查器");
+    await flushEffects();
+
+    expect(
+      container.querySelector('button[aria-label="折叠当前文稿检查器"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="canvas-workbench-document-inspector"]'),
+    ).not.toBeNull();
   });
 
   it("工作区文件为二进制时应展示不支持预览提示", async () => {

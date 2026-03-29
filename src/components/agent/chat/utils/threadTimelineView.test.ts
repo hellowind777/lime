@@ -101,6 +101,38 @@ describe("threadTimelineView", () => {
     expect(items.map((item) => item.id)).toEqual(["item-1", "item-2"]);
   });
 
+  it("应忽略仅用于内部恢复成功的 warning 项", () => {
+    const repairedWarning: AgentThreadItem = {
+      id: "warning-artifact-repaired",
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      sequence: 1,
+      status: "completed",
+      started_at: "2026-03-13T10:00:00Z",
+      completed_at: "2026-03-13T10:00:01Z",
+      updated_at: "2026-03-13T10:00:01Z",
+      type: "warning",
+      code: "artifact_document_repaired",
+      message: "ArtifactDocument 已落盘: 已根据正文整理出一份可继续编辑的草稿。",
+    };
+    const planItem: AgentThreadItem = {
+      id: "plan-2",
+      thread_id: "thread-1",
+      turn_id: "turn-1",
+      sequence: 2,
+      status: "completed",
+      started_at: "2026-03-13T10:00:02Z",
+      completed_at: "2026-03-13T10:00:03Z",
+      updated_at: "2026-03-13T10:00:03Z",
+      type: "plan",
+      text: "继续整理结构",
+    };
+
+    const items = mergeThreadItems([repairedWarning], [planItem]);
+
+    expect(items).toEqual([planItem]);
+  });
+
   it("应优先将 turn 关联到最接近完成时刻的 assistant 消息", () => {
     const messages: Message[] = [
       {

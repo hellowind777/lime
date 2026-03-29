@@ -17,6 +17,7 @@ const {
   mockGetChromeProfileSessions,
   mockGetChromeBridgeEndpointInfo,
   mockGetChromeBridgeStatus,
+  mockDisconnectBrowserConnectorSession,
   mockGetBrowserBackendPolicy,
   mockGetBrowserBackendsStatus,
 } = vi.hoisted(() => ({
@@ -34,6 +35,7 @@ const {
   mockGetChromeProfileSessions: vi.fn(),
   mockGetChromeBridgeEndpointInfo: vi.fn(),
   mockGetChromeBridgeStatus: vi.fn(),
+  mockDisconnectBrowserConnectorSession: vi.fn(),
   mockGetBrowserBackendPolicy: vi.fn(),
   mockGetBrowserBackendsStatus: vi.fn(),
 }));
@@ -66,6 +68,7 @@ vi.mock("@/lib/webview-api", async () => {
     getChromeProfileSessions: mockGetChromeProfileSessions,
     getChromeBridgeEndpointInfo: mockGetChromeBridgeEndpointInfo,
     getChromeBridgeStatus: mockGetChromeBridgeStatus,
+    disconnectBrowserConnectorSession: mockDisconnectBrowserConnectorSession,
     getBrowserBackendPolicy: mockGetBrowserBackendPolicy,
     getBrowserBackendsStatus: mockGetBrowserBackendsStatus,
     closeChromeProfileSession: vi.fn(),
@@ -158,6 +161,10 @@ beforeEach(() => {
         description: "读取和管理你的日历事件。",
         enabled: false,
         available: true,
+        visible: true,
+        authorization_status: "not_determined",
+        last_error: null,
+        capabilities: ["list_events", "create_event", "update_event"],
       },
     ],
   });
@@ -172,6 +179,10 @@ beforeEach(() => {
         description: "读取和管理你的日历事件。",
         enabled: false,
         available: true,
+        visible: true,
+        authorization_status: "not_determined",
+        last_error: null,
+        capabilities: ["list_events", "create_event", "update_event"],
       },
     ],
   });
@@ -205,6 +216,10 @@ beforeEach(() => {
         description: "读取和管理你的日历事件。",
         enabled: false,
         available: true,
+        visible: true,
+        authorization_status: "not_determined",
+        last_error: null,
+        capabilities: ["list_events", "create_event", "update_event"],
       },
     ],
   });
@@ -219,6 +234,10 @@ beforeEach(() => {
         description: "读取和管理你的日历事件。",
         enabled: true,
         available: true,
+        visible: true,
+        authorization_status: "authorized",
+        last_error: null,
+        capabilities: ["list_events", "create_event", "update_event"],
       },
     ],
   });
@@ -257,6 +276,18 @@ beforeEach(() => {
     observers: [],
     controls: [],
     pending_commands: [],
+  });
+  mockDisconnectBrowserConnectorSession.mockResolvedValue({
+    disconnected_observer_count: 1,
+    disconnected_control_count: 1,
+    status: {
+      observer_count: 0,
+      control_count: 0,
+      pending_command_count: 0,
+      observers: [],
+      controls: [],
+      pending_commands: [],
+    },
   });
   mockGetBrowserBackendPolicy.mockResolvedValue({
     priority: ["aster_compat", "lime_extension_bridge", "cdp_direct"],
@@ -390,5 +421,54 @@ describe("ChromeRelaySettings", () => {
 
     expect(mockOpenBrowserRuntimeDebuggerWindow).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("已打开独立浏览器调试窗口");
+  });
+
+  it("扩展已连接时应允许断开当前连接", async () => {
+    mockGetChromeBridgeStatus.mockResolvedValueOnce({
+      observer_count: 1,
+      control_count: 1,
+      pending_command_count: 0,
+      observers: [
+        {
+          client_id: "observer-1",
+          profile_key: "default",
+          connected_at: "2026-03-14T00:00:00Z",
+        },
+      ],
+      controls: [
+        {
+          client_id: "control-1",
+          connected_at: "2026-03-14T00:00:00Z",
+        },
+      ],
+      pending_commands: [],
+    });
+
+    const container = renderComponent();
+    await flushEffects();
+
+    const button = findButton(container, "断开已连接扩展");
+    await act(async () => {
+      button.click();
+      await flushEffects();
+    });
+
+    expect(mockDisconnectBrowserConnectorSession).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("已断开 1 个扩展观察连接和 1 个控制连接");
+  });
+
+  it("系统连接器为空时不应渲染 macOS 连接器卡片", async () => {
+    mockGetBrowserConnectorSettings.mockResolvedValueOnce({
+      enabled: true,
+      install_root_dir: null,
+      install_dir: null,
+      system_connectors: [],
+    });
+
+    const container = renderComponent();
+    await flushEffects();
+
+    expect(container.textContent).not.toContain("macOS 连接器");
+    expect(container.textContent).not.toContain("0 / 0 已启用");
   });
 });

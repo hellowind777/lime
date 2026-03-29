@@ -132,22 +132,21 @@ describe("InputbarOverlayShell", () => {
     ).toBeNull();
   });
 
-  it("A2UI 表单进入粘性保留期时应显示同步提示并禁用提交", () => {
+  it("输入栏 overlay 不再承载 A2UI 表单与提交提示", () => {
     const container = renderShell({
       taskFiles: [],
       pendingA2UIForm: createPendingA2UIForm(),
       pendingA2UIFormStale: true,
+      submissionNotice: {
+        title: "补充信息已确认",
+        summary: "已继续处理。",
+      },
+      isSubmissionNoticeVisible: true,
       onA2UISubmit: vi.fn(),
     });
 
-    const submitButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("继续处理"),
-    ) as HTMLButtonElement | undefined;
-
-    expect(container.textContent).toContain("同步中");
-    expect(container.textContent).toContain(
-      "正在同步最新上下文，表单暂时不可提交。",
-    );
-    expect(submitButton?.disabled).toBe(true);
+    expect(container.textContent).not.toContain("继续处理");
+    expect(container.textContent).not.toContain("同步中");
+    expect(container.textContent).not.toContain("补充信息已确认");
   });
 });

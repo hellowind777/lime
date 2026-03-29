@@ -1,11 +1,11 @@
 import React from "react";
-import { Code2 } from "lucide-react";
+import { ListChecks } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-} from "@/components/ui/select";
+  MetaToggleButton,
+  MetaToggleCheck,
+  MetaToggleGlyph,
+  MetaToggleLabel,
+} from "../styles";
 
 interface InputbarExecutionStrategySelectProps {
   isFullscreen?: boolean;
@@ -18,57 +18,36 @@ interface InputbarExecutionStrategySelectProps {
 
 export const InputbarExecutionStrategySelect: React.FC<
   InputbarExecutionStrategySelectProps
-> = ({
-  isFullscreen = false,
-  isThemeWorkbenchVariant = false,
-  executionStrategy,
-  setExecutionStrategy,
-}) => {
-  if (isFullscreen || isThemeWorkbenchVariant || !setExecutionStrategy) {
+> = (props) => {
+  const {
+    isFullscreen = false,
+    executionStrategy,
+    setExecutionStrategy,
+  } = props;
+
+  if (isFullscreen || !setExecutionStrategy) {
     return null;
   }
 
-  const resolvedExecutionStrategy = executionStrategy || "react";
-  const executionStrategyLabel =
-    resolvedExecutionStrategy === "auto"
-      ? "Auto"
-      : resolvedExecutionStrategy === "code_orchestrated"
-        ? "Plan"
-        : "ReAct";
+  const planEnabled = executionStrategy === "code_orchestrated";
 
   return (
-    <Select
-      value={resolvedExecutionStrategy}
-      onValueChange={(value) =>
-        setExecutionStrategy(value as "react" | "code_orchestrated" | "auto")
+    <MetaToggleButton
+      type="button"
+      $checked={planEnabled}
+      aria-label={planEnabled ? "关闭 Plan 模式" : "开启 Plan 模式"}
+      aria-pressed={planEnabled}
+      data-testid="inputbar-plan-toggle"
+      title={planEnabled ? "关闭 Plan 模式" : "开启 Plan 模式"}
+      onClick={() =>
+        setExecutionStrategy(planEnabled ? "react" : "code_orchestrated")
       }
     >
-      <SelectTrigger className="h-8 text-xs bg-background border shadow-sm min-w-[116px] px-2">
-        <div className="flex items-center gap-1.5">
-          <Code2 className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="whitespace-nowrap">{executionStrategyLabel}</span>
-        </div>
-      </SelectTrigger>
-      <SelectContent side="top" className="p-1 w-[176px]">
-        <SelectItem value="react">
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <Code2 className="w-3.5 h-3.5" />
-            ReAct
-          </div>
-        </SelectItem>
-        <SelectItem value="code_orchestrated">
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <Code2 className="w-3.5 h-3.5" />
-            Plan
-          </div>
-        </SelectItem>
-        <SelectItem value="auto">
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <Code2 className="w-3.5 h-3.5" />
-            Auto
-          </div>
-        </SelectItem>
-      </SelectContent>
-    </Select>
+      <MetaToggleCheck $checked={planEnabled} aria-hidden />
+      <MetaToggleGlyph aria-hidden>
+        <ListChecks strokeWidth={1.8} />
+      </MetaToggleGlyph>
+      <MetaToggleLabel>Plan</MetaToggleLabel>
+    </MetaToggleButton>
   );
 };

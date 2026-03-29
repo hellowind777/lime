@@ -126,6 +126,33 @@ pub(crate) fn resolve_request_web_search_preference_from_sources(
     })
 }
 
+fn resolve_runtime_access_mode_from_request(
+    request: &AsterChatRequest,
+) -> Option<lime_agent::SessionExecutionRuntimeAccessMode> {
+    lime_agent::SessionExecutionRuntimeAccessMode::from_runtime_policies(
+        request.approval_policy.as_deref(),
+        request.sandbox_policy.as_deref(),
+    )
+    .or_else(|| {
+        let access_mode =
+            extract_harness_string(request.metadata.as_ref(), &["access_mode", "accessMode"]);
+        lime_agent::SessionExecutionRuntimeAccessMode::from_access_mode_text(access_mode.as_deref())
+    })
+}
+
+fn backfill_runtime_access_policies(request: &mut AsterChatRequest) {
+    let Some(access_mode) = resolve_runtime_access_mode_from_request(request) else {
+        return;
+    };
+
+    if request.approval_policy.is_none() {
+        request.approval_policy = Some(access_mode.approval_policy().to_string());
+    }
+    if request.sandbox_policy.is_none() {
+        request.sandbox_policy = Some(access_mode.sandbox_policy().to_string());
+    }
+}
+
 fn should_skip_artifact_document_autopersist(
     run_observation: &Arc<Mutex<ChatRunObservation>>,
     final_text_output: &str,
@@ -334,6 +361,7 @@ async fn execute_aster_chat_request(
         session_recent_harness_context.run_title.as_deref(),
         session_recent_harness_context.content_id.as_deref(),
     );
+    backfill_runtime_access_policies(&mut request);
 
     // 直接使用前端传递的 session_id
     // LimeSessionStore 会在 add_message 时自动创建不存在的 session
@@ -506,6 +534,8 @@ async fn execute_aster_chat_request(
         .set_working_dir(Some(workspace_root.clone()))
         .set_effective_user_message(request.message.clone())
         .set_include_context_trace(include_context_trace)
+        .set_approval_policy(request.approval_policy.clone())
+        .set_sandbox_policy(request.sandbox_policy.clone())
         .set_turn_context_metadata_from_value(request.metadata.as_ref());
 
     // 构建 system_prompt：优先使用项目上下文，其次使用 session 的 system_prompt
@@ -1987,6 +2017,8 @@ mod tests {
             provider_preference: None,
             model_preference: None,
             thinking_enabled: None,
+            approval_policy: None,
+            sandbox_policy: None,
             project_id: None,
             workspace_id: "workspace-artifact".to_string(),
             web_search: None,
@@ -2072,6 +2104,8 @@ mod tests {
             provider_preference: None,
             model_preference: None,
             thinking_enabled: None,
+            approval_policy: None,
+            sandbox_policy: None,
             project_id: None,
             workspace_id: "workspace-artifact".to_string(),
             web_search: None,
@@ -2138,6 +2172,8 @@ mod tests {
             provider_preference: None,
             model_preference: None,
             thinking_enabled: None,
+            approval_policy: None,
+            sandbox_policy: None,
             project_id: None,
             workspace_id: "workspace-artifact".to_string(),
             web_search: None,
@@ -2197,6 +2233,8 @@ mod tests {
             provider_preference: None,
             model_preference: None,
             thinking_enabled: None,
+            approval_policy: None,
+            sandbox_policy: None,
             project_id: None,
             workspace_id: "workspace-social".to_string(),
             web_search: None,
@@ -2237,6 +2275,45 @@ mod tests {
                 .pointer("/harness/run_title")
                 .and_then(Value::as_str),
             Some("社媒初稿")
+        );
+    }
+
+    #[test]
+    fn backfill_runtime_access_policies_should_derive_from_legacy_harness_access_mode() {
+        let mut request = AsterChatRequest {
+            message: "继续执行".to_string(),
+            session_id: "session-access-legacy".to_string(),
+            event_name: "agent_stream".to_string(),
+            images: None,
+            provider_config: None,
+            provider_preference: None,
+            model_preference: None,
+            thinking_enabled: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            project_id: None,
+            workspace_id: "workspace-access".to_string(),
+            web_search: None,
+            search_mode: None,
+            execution_strategy: None,
+            auto_continue: None,
+            system_prompt: None,
+            metadata: Some(json!({
+                "harness": {
+                    "access_mode": "full-access"
+                }
+            })),
+            turn_id: None,
+            queue_if_busy: None,
+            queued_turn_id: None,
+        };
+
+        backfill_runtime_access_policies(&mut request);
+
+        assert_eq!(request.approval_policy.as_deref(), Some("never"));
+        assert_eq!(
+            request.sandbox_policy.as_deref(),
+            Some("danger-full-access")
         );
     }
 

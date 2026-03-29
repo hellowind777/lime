@@ -13,6 +13,7 @@ const mockIsTerminalServiceSkillRunStatus = vi.fn();
 const mockCreateContent = vi.fn();
 const mockListProjects = vi.fn();
 const mockRecordServiceSkillAutomationLink = vi.fn();
+const mockSiteGetAdapterLaunchReadiness = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockToastInfo = vi.fn();
@@ -53,6 +54,11 @@ vi.mock("@/lib/api/project", () => ({
         return "document";
     }
   },
+}));
+
+vi.mock("@/lib/webview-api", () => ({
+  siteGetAdapterLaunchReadiness: (...args: unknown[]) =>
+    mockSiteGetAdapterLaunchReadiness(...args),
 }));
 
 vi.mock("../service-skills/automationLinkStorage", () => ({
@@ -274,6 +280,14 @@ beforeEach(() => {
       IS_REACT_ACT_ENVIRONMENT?: boolean;
     }
   ).IS_REACT_ACT_ENVIRONMENT = true;
+  mockSiteGetAdapterLaunchReadiness.mockResolvedValue({
+    status: "ready",
+    adapter: "github/search",
+    domain: "github.com",
+    profile_key: "attached-github",
+    target_id: "tab-github",
+    message: "已检测到 github.com 的真实浏览器页面，Claw 可以直接复用当前会话执行。",
+  });
   mockCreateAutomationJob.mockResolvedValue({
     id: "automation-job-1",
     name: "每日趋势摘要｜定时执行",
@@ -311,7 +325,7 @@ afterEach(() => {
 });
 
 describe("useWorkspaceServiceSkillEntryActions", () => {
-  it("浏览器站点型技能在已有 contentId 时应复用当前主稿", async () => {
+  it("站点型技能主按钮应进入 Claw 工作区并复用当前主稿", async () => {
     const onNavigate = vi.fn();
     const recordServiceSkillUsage = vi.fn();
     const { render, getValue } = renderHook({
@@ -327,9 +341,58 @@ describe("useWorkspaceServiceSkillEntryActions", () => {
     });
 
     expect(mockCreateContent).not.toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalledWith(
+      "agent",
+      expect.objectContaining({
+        projectId: "project-1",
+        contentId: "content-current",
+        theme: "general",
+        initialCreationMode: "guided",
+        newChatAt: expect.any(Number),
+        initialSiteSkillLaunch: {
+          adapterName: "github/search",
+          args: {
+            query: "browser assist mcp",
+            limit: 10,
+          },
+          autoRun: true,
+          profileKey: "attached-github",
+          targetId: "tab-github",
+          requireAttachedSession: true,
+          saveTitle: undefined,
+          skillTitle: "GitHub 仓库线索检索",
+        },
+      }),
+    );
+    expect(recordServiceSkillUsage).toHaveBeenCalledWith({
+      skillId: "github-repo-radar",
+      runnerType: "instant",
+    });
+  });
+
+  it("站点型技能次级动作才应跳到浏览器工作台", async () => {
+    const onNavigate = vi.fn();
+    const recordServiceSkillUsage = vi.fn();
+    const { render, getValue } = renderHook({
+      onNavigate,
+      recordServiceSkillUsage,
+    });
+    await render();
+
+    await act(async () => {
+      await getValue().handleServiceSkillBrowserRuntimeLaunch(
+        createBrowserServiceSkill(),
+        {
+          repository_query: "browser assist mcp",
+        },
+      );
+    });
+
     expect(onNavigate).toHaveBeenCalledWith("browser-runtime", {
       projectId: "project-1",
       contentId: "content-current",
+      initialProfileKey: "attached-github",
+      initialTargetId: "tab-github",
       initialAdapterName: "github/search",
       initialArgs: {
         query: "browser assist mcp",
@@ -343,6 +406,31 @@ describe("useWorkspaceServiceSkillEntryActions", () => {
       skillId: "github-repo-radar",
       runnerType: "instant",
     });
+  });
+
+  it("站点型技能缺少附着会话时不应进入 Claw 工作区", async () => {
+    const onNavigate = vi.fn();
+    const { render, getValue } = renderHook({
+      onNavigate,
+      recordServiceSkillUsage: vi.fn(),
+    });
+    mockSiteGetAdapterLaunchReadiness.mockResolvedValueOnce({
+      status: "requires_browser_runtime",
+      adapter: "github/search",
+      domain: "github.com",
+      message: "当前没有检测到已附着到真实浏览器的 github.com 页面。",
+      report_hint: "请先去浏览器工作台连接真实浏览器。",
+    });
+    await render();
+
+    await act(async () => {
+      await getValue().handleServiceSkillLaunch(createBrowserServiceSkill(), {
+        repository_query: "browser assist mcp",
+      });
+    });
+
+    expect(onNavigate).not.toHaveBeenCalledWith("agent", expect.anything());
+    expect(mockToastError).toHaveBeenCalled();
   });
 
   it("cloud_required 服务型技能成功后应回流本地工作区", async () => {
@@ -371,7 +459,7 @@ describe("useWorkspaceServiceSkillEntryActions", () => {
 
     expect(mockCreateServiceSkillRun).toHaveBeenCalledWith(
       "cloud-video-dubbing",
-      expect.stringContaining("[服务型技能] 云端视频配音"),
+      expect.stringContaining("[技能任务] 云端视频配音"),
     );
     expect(mockCreateServiceSkillRun).toHaveBeenCalledWith(
       "cloud-video-dubbing",
@@ -543,7 +631,7 @@ describe("useWorkspaceServiceSkillEntryActions", () => {
         contentId: "content-current",
         theme: "social-media",
         initialCreationMode: "guided",
-        initialUserPrompt: expect.stringContaining("[服务型技能] 每日趋势摘要"),
+        initialUserPrompt: expect.stringContaining("[技能任务] 每日趋势摘要"),
         autoRunInitialPromptOnMount: true,
       }),
     );

@@ -542,7 +542,7 @@ export function AppSidebar({
 
   const filteredMainMenuItems = useMemo(() => {
     return MAIN_SIDEBAR_NAV_ITEMS.filter((item) =>
-      enabledNavItems.includes(item.id),
+      item.configurable === false || enabledNavItems.includes(item.id),
     );
   }, [enabledNavItems]);
 

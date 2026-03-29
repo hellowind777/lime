@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import {
   browserExecuteAction,
   chromeBridgeExecuteCommand,
+  disconnectBrowserConnectorSession,
   getBrowserConnectorInstallStatus,
   getBrowserConnectorSettings,
   closeChromeProfileSession,
@@ -57,6 +58,7 @@ import {
   type ChromeBridgeEndpointInfo,
   type ChromeBridgeStatusSnapshot,
   type ChromeProfileSessionInfo,
+  type SystemConnectorSnapshot,
 } from "@/lib/webview-api";
 
 type SearchEngine = "google" | "xiaohongshu";
@@ -266,6 +268,39 @@ function resolveBackendTone(item?: BrowserBackendStatusItem | null) {
   return item.available ? ("success" as const) : ("warning" as const);
 }
 
+function getSystemConnectorStatusTone(
+  connector: Pick<SystemConnectorSnapshot, "available" | "authorization_status">,
+) {
+  if (!connector.available) {
+    return "neutral" as const;
+  }
+  if (connector.authorization_status === "authorized") {
+    return "success" as const;
+  }
+  return "warning" as const;
+}
+
+function getSystemConnectorStatusLabel(
+  connector: Pick<SystemConnectorSnapshot, "available" | "authorization_status" | "enabled">,
+) {
+  if (!connector.available) {
+    return "当前平台不支持";
+  }
+  if (connector.enabled && connector.authorization_status === "authorized") {
+    return "已启用";
+  }
+  switch (connector.authorization_status) {
+    case "authorized":
+      return "已授权";
+    case "denied":
+      return "授权被拒绝";
+    case "error":
+      return "授权异常";
+    default:
+      return "等待授权";
+  }
+}
+
 export function ChromeRelaySettings() {
   const [activeEngine, setActiveEngine] = useState<SearchEngine>("google");
   const [activeSectionTab, setActiveSectionTab] =
@@ -308,6 +343,7 @@ export function ChromeRelaySettings() {
   const [savingConnectorEnabled, setSavingConnectorEnabled] = useState(false);
   const [openingExtensionsPage, setOpeningExtensionsPage] = useState(false);
   const [openingInstallDirectory, setOpeningInstallDirectory] = useState(false);
+  const [disconnectingConnector, setDisconnectingConnector] = useState(false);
   const [updatingSystemConnectorId, setUpdatingSystemConnectorId] = useState<
     string | null
   >(null);
@@ -808,12 +844,66 @@ export function ChromeRelaySettings() {
     }
   }, [pushMessage]);
 
+  const handleDisconnectBrowserConnector = useCallback(async () => {
+    try {
+      setDisconnectingConnector(true);
+      const result = await disconnectBrowserConnectorSession();
+      setBridgeStatus(result.status);
+      pushMessage({
+        type: "success",
+        text:
+          result.disconnected_observer_count > 0 ||
+          result.disconnected_control_count > 0
+            ? `已断开 ${result.disconnected_observer_count} 个扩展观察连接和 ${result.disconnected_control_count} 个控制连接`
+            : "当前没有可断开的扩展连接",
+      });
+    } catch (error) {
+      pushMessage({
+        type: "error",
+        text: `断开扩展连接失败: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      });
+    } finally {
+      setDisconnectingConnector(false);
+    }
+  }, [pushMessage]);
+
   const handleSetSystemConnectorEnabled = useCallback(
     async (id: string, enabled: boolean) => {
       try {
         setUpdatingSystemConnectorId(id);
         const next = await setSystemConnectorEnabled({ id, enabled });
         setBrowserConnectorSettings(next);
+        const updatedConnector = next.system_connectors.find(
+          (connector) => connector.id === id,
+        );
+        if (!updatedConnector) {
+          return;
+        }
+        if (!enabled) {
+          pushMessage({
+            type: "success",
+            text: `${updatedConnector.label} 已关闭`,
+          });
+          return;
+        }
+        if (
+          updatedConnector.enabled &&
+          updatedConnector.authorization_status === "authorized"
+        ) {
+          pushMessage({
+            type: "success",
+            text: `${updatedConnector.label} 已授权并启用`,
+          });
+          return;
+        }
+        pushMessage({
+          type: "error",
+          text:
+            updatedConnector.last_error ||
+            `${updatedConnector.label} 当前未获得系统授权`,
+        });
       } catch (error) {
         pushMessage({
           type: "error",
@@ -1701,11 +1791,12 @@ export function ChromeRelaySettings() {
           ? "安装异常"
           : "未安装";
   const connectorEnabled = browserConnectorSettings?.enabled ?? true;
-  const systemConnectorCount =
-    browserConnectorSettings?.system_connectors.length ?? 0;
+  const visibleSystemConnectors = (browserConnectorSettings?.system_connectors ?? [])
+    .filter((item) => item.visible !== false);
+  const shouldShowSystemConnectors = visibleSystemConnectors.length > 0;
+  const systemConnectorCount = visibleSystemConnectors.length;
   const enabledSystemConnectorCount =
-    browserConnectorSettings?.system_connectors.filter((item) => item.enabled)
-      .length ?? 0;
+    visibleSystemConnectors.filter((item) => item.enabled).length;
   const systemConnectorTitle = /mac/i.test(window.navigator.platform)
     ? "macOS 连接器"
     : "系统连接器";
@@ -1795,17 +1886,24 @@ export function ChromeRelaySettings() {
             开启或关闭浏览器连接器后，新的浏览器任务与扩展配置会按当前状态同步；已安装的扩展目录会保留，不会被自动删除。
           </div>
 
-          <div className="grid gap-3 md:grid-cols-3">
+          <div
+            className={cn(
+              "grid gap-3",
+              shouldShowSystemConnectors ? "md:grid-cols-3" : "md:grid-cols-2",
+            )}
+          >
             <SummaryStat
               label="扩展连接"
               value={`${runtimeSummary.observerCount}`}
               description="当前 observer 连接数，用于判断我的浏览器是否已接入。"
             />
-            <SummaryStat
-              label="系统连接器"
-              value={`${enabledSystemConnectorCount}/${systemConnectorCount}`}
-              description="当前已启用的系统连接器数量。"
-            />
+            {shouldShowSystemConnectors ? (
+              <SummaryStat
+                label="系统连接器"
+                value={`${enabledSystemConnectorCount}/${systemConnectorCount}`}
+                description="当前已启用的系统连接器数量。"
+              />
+            ) : null}
             <SummaryStat
               label="高级会话"
               value={`${runtimeSummary.cdpAliveProfiles}`}
@@ -1815,7 +1913,14 @@ export function ChromeRelaySettings() {
         </div>
       </section>
 
-      <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+      <section
+        className={cn(
+          "grid gap-5",
+          shouldShowSystemConnectors
+            ? "xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]"
+            : "xl:grid-cols-1",
+        )}
+      >
         <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5 sm:p-6">
           <div className="flex flex-col gap-4 border-b border-slate-100 pb-4">
             <div className="flex items-start justify-between gap-4">
@@ -1862,16 +1967,27 @@ export function ChromeRelaySettings() {
               <div className="flex flex-col gap-2">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-sm font-semibold text-slate-900">
-                    扩展已连接
+                    {hasObserverConnected ? "扩展连接中" : "扩展连接状态"}
                   </p>
                   <span className="text-xs font-medium text-amber-600">
                     开发版
                   </span>
                 </div>
                 <p className="text-sm leading-6 text-slate-500">
-                  {browserConnectorInstallStatus?.message ||
-                    "先导出浏览器连接器到用户目录，再在 Chrome 扩展页加载已解压目录。"}
+                  {hasObserverConnected
+                    ? `当前已接入 ${runtimeSummary.observerCount} 个 observer，Lime 可以读取页面信息并下发基础控制命令。`
+                    : browserConnectorInstallStatus?.message ||
+                      "先导出浏览器连接器到用户目录，再在 Chrome 扩展页加载已解压目录。"}
                 </p>
+                {hasObserverConnected ? (
+                  <div className="rounded-[18px] border border-emerald-200 bg-emerald-50/80 p-3 text-sm leading-6 text-emerald-700">
+                    {(bridgeStatus?.observers ?? []).map((observer) => (
+                      <p key={observer.client_id}>
+                        {observer.profile_key} · {observer.client_id}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
                 <div className="grid gap-4 pt-2 md:grid-cols-2">
                   <div className="space-y-2">
                     <p className="text-xs font-semibold tracking-[0.12em] text-slate-500">
@@ -1983,11 +2099,20 @@ export function ChromeRelaySettings() {
                   ? "打开中..."
                   : "打开 Chrome 扩展页"}
               </button>
+              <button
+                type="button"
+                onClick={() => void handleDisconnectBrowserConnector()}
+                disabled={!hasObserverConnected || disconnectingConnector}
+                className={SECONDARY_BUTTON_CLASS_NAME}
+              >
+                {disconnectingConnector ? "断开中..." : "断开已连接扩展"}
+              </button>
             </div>
           </div>
         </article>
 
-        <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5 sm:p-6">
+        {shouldShowSystemConnectors ? (
+          <article className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5 sm:p-6">
           <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
             <div className="space-y-1">
               <h3 className="text-lg font-semibold text-slate-900">
@@ -2003,29 +2128,42 @@ export function ChromeRelaySettings() {
           </div>
 
           <div className="divide-y divide-slate-100">
-            {(browserConnectorSettings?.system_connectors ?? []).map(
+            {visibleSystemConnectors.map(
               (connector) => (
                 <div
                   key={connector.id}
                   className="flex items-center justify-between gap-4 py-4"
                 >
                   <div className="space-y-1">
-                    <p className="text-sm font-semibold text-slate-900">
-                      {connector.label}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-900">
+                        {connector.label}
+                      </p>
+                      <StatusPill tone={getSystemConnectorStatusTone(connector)}>
+                        {getSystemConnectorStatusLabel(connector)}
+                      </StatusPill>
+                    </div>
                     <p className="text-sm leading-6 text-slate-500">
                       {connector.description}
                     </p>
-                    {!connector.available ? (
-                      <p className="text-xs text-amber-600">
-                        当前平台暂未开放，先保留入口与状态。
+                    {connector.capabilities.length > 0 ? (
+                      <p className="text-xs leading-5 text-slate-500">
+                        能力：{connector.capabilities.join(" / ")}
+                      </p>
+                    ) : null}
+                    {connector.last_error ? (
+                      <p className="text-xs text-rose-600">
+                        {connector.last_error}
                       </p>
                     ) : null}
                   </div>
                   <Switch
                     aria-label={`切换${connector.label}`}
                     checked={connector.enabled}
-                    disabled={updatingSystemConnectorId === connector.id}
+                    disabled={
+                      !connector.available ||
+                      updatingSystemConnectorId === connector.id
+                    }
                     onCheckedChange={(checked) =>
                       void handleSetSystemConnectorEnabled(
                         connector.id,
@@ -2037,7 +2175,8 @@ export function ChromeRelaySettings() {
               ),
             )}
           </div>
-        </article>
+          </article>
+        ) : null}
       </section>
 
       <section className="rounded-[26px] border border-slate-200/80 bg-white p-5 shadow-sm shadow-slate-950/5 sm:p-6">

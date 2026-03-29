@@ -8,6 +8,7 @@ import { useWorkspaceShellChromeRuntime } from "./useWorkspaceShellChromeRuntime
 import type { ChatToolPreferences } from "../utils/chatToolPreferences";
 import type { CreationMode } from "../components/types";
 import type { WriteArtifactContext } from "../types";
+import type { PendingA2UISource } from "../types";
 import type { LayoutMode, ThemeType } from "@/components/content-creator/types";
 import type { Artifact } from "@/lib/artifact/types";
 import type { Character } from "@/lib/api/memory";
@@ -35,6 +36,7 @@ interface UseWorkspaceConversationSceneRuntimeParams {
   themeWorkbenchHarnessDialog: ConversationScenePresentationParams["scene"]["themeWorkbenchHarnessDialog"];
   entryBannerVisible: ConversationScenePresentationParams["scene"]["entryBannerVisible"];
   entryBannerMessage: ConversationScenePresentationParams["scene"]["entryBannerMessage"];
+  serviceSkillExecutionCard?: ConversationScenePresentationParams["scene"]["serviceSkillExecutionCard"];
   contextWorkspaceEnabled: boolean;
   input: ConversationScenePresentationParams["scene"]["input"];
   setInput: ConversationScenePresentationParams["scene"]["setInput"];
@@ -44,6 +46,8 @@ interface UseWorkspaceConversationSceneRuntimeParams {
   setModel: ConversationScenePresentationParams["scene"]["setModel"];
   executionStrategy: ConversationScenePresentationParams["scene"]["executionStrategy"];
   setExecutionStrategy: ConversationScenePresentationParams["scene"]["setExecutionStrategy"];
+  accessMode: ConversationScenePresentationParams["scene"]["accessMode"];
+  setAccessMode: ConversationScenePresentationParams["scene"]["setAccessMode"];
   chatToolPreferences: ChatToolPreferences;
   setChatToolPreferences: Dispatch<SetStateAction<ChatToolPreferences>>;
   selectedTeam: ConversationScenePresentationParams["scene"]["selectedTeam"];
@@ -86,7 +90,12 @@ interface UseWorkspaceConversationSceneRuntimeParams {
   harnessAttentionLevel: ConversationScenePresentationParams["scene"]["harnessAttentionLevel"];
   sessionId: string | null | undefined;
   syncStatus: ConversationScenePresentationParams["scene"]["syncStatus"];
-  pendingA2UIForm: unknown;
+  pendingA2UIForm: ConversationScenePresentationParams["scene"]["pendingA2UIForm"];
+  pendingA2UISource: PendingA2UISource | null;
+  a2uiSubmissionNotice: ConversationScenePresentationParams["scene"]["a2uiSubmissionNotice"];
+  handlePendingA2UISubmit: NonNullable<
+    ConversationScenePresentationParams["scene"]["onPendingA2UISubmit"]
+  >;
   handleToggleCanvas: ConversationScenePresentationParams["scene"]["onToggleCanvas"];
   currentImageWorkbenchActive: ConversationScenePresentationParams["scene"]["currentImageWorkbenchActive"];
   hideInlineStepProgress: ConversationScenePresentationParams["stepProgress"]["hidden"];
@@ -158,6 +167,7 @@ export function useWorkspaceConversationSceneRuntime({
   themeWorkbenchHarnessDialog,
   entryBannerVisible,
   entryBannerMessage,
+  serviceSkillExecutionCard,
   contextWorkspaceEnabled,
   input,
   setInput,
@@ -167,6 +177,8 @@ export function useWorkspaceConversationSceneRuntime({
   setModel,
   executionStrategy,
   setExecutionStrategy,
+  accessMode,
+  setAccessMode,
   chatToolPreferences,
   setChatToolPreferences,
   selectedTeam,
@@ -210,6 +222,9 @@ export function useWorkspaceConversationSceneRuntime({
   sessionId,
   syncStatus,
   pendingA2UIForm,
+  pendingA2UISource,
+  a2uiSubmissionNotice,
+  handlePendingA2UISubmit,
   handleToggleCanvas,
   currentImageWorkbenchActive,
   hideInlineStepProgress,
@@ -265,6 +280,26 @@ export function useWorkspaceConversationSceneRuntime({
   focusedTimelineItemId,
   timelineFocusRequestKey,
 }: UseWorkspaceConversationSceneRuntimeParams) {
+  const handleQuoteMessage = (content: string) => {
+    const normalized = content.trim();
+    if (!normalized) {
+      return;
+    }
+
+    const quotedBlock = `${normalized
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n")}\n\n`;
+
+    setInput((previous) => {
+      if (!previous.trim()) {
+        return quotedBlock;
+      }
+
+      return `${previous.trimEnd()}\n\n${quotedBlock}`;
+    });
+  };
+
   const teamWorkspaceDockLayoutMode =
     layoutMode === "chat" ? "chat" : "chat-canvas";
 
@@ -273,6 +308,7 @@ export function useWorkspaceConversationSceneRuntime({
       entryBannerVisible,
       entryBannerMessage,
       onDismissEntryBanner: navigationActions.handleDismissEntryBanner,
+      serviceSkillExecutionCard,
       showChatLayout: shellChromeRuntime.showChatLayout,
       compactChrome: shellChromeRuntime.isWorkspaceCompactChrome,
       contextWorkspaceEnabled,
@@ -293,6 +329,8 @@ export function useWorkspaceConversationSceneRuntime({
       setModel,
       executionStrategy,
       setExecutionStrategy,
+      accessMode,
+      setAccessMode,
       onManageProviders: navigationActions.handleManageProviders,
       toolPreferences: chatToolPreferences,
       onToolPreferenceChange: (key, enabled) =>
@@ -351,6 +389,9 @@ export function useWorkspaceConversationSceneRuntime({
       contextCompactionRunning: isSending,
       onCompactContext: navigationActions.handleCompactContext,
       syncStatus,
+      pendingA2UIForm,
+      onPendingA2UISubmit: handlePendingA2UISubmit,
+      a2uiSubmissionNotice,
       hasLiveCanvasPreviewContent: canvasScene.hasLiveCanvasPreviewContent,
       liveCanvasPreview: canvasScene.liveCanvasPreview,
       currentImageWorkbenchActive,
@@ -391,6 +432,7 @@ export function useWorkspaceConversationSceneRuntime({
       onPromoteQueuedTurn: promoteQueuedTurn,
       onDeleteMessage: deleteMessage,
       onEditMessage: editMessage,
+      onQuoteMessage: handleQuoteMessage,
       onA2UISubmit: handleA2UISubmit,
       onWriteFile: handleWriteFile,
       onFileClick: handleFileClick,
@@ -401,6 +443,7 @@ export function useWorkspaceConversationSceneRuntime({
       onPermissionResponse: handlePermissionResponseWithBrowserPreflight,
       promoteActionRequestsToA2UI: Boolean(pendingPromotedA2UIActionRequest),
       renderA2UIInline: shellChromeRuntime.shouldRenderInlineA2UI,
+      activePendingA2UISource: pendingA2UISource,
       collapseCodeBlocks: shouldCollapseCodeBlocks,
       shouldCollapseCodeBlock: shouldCollapseCodeBlockInChat,
       onCodeBlockClick: handleCodeBlockClick,

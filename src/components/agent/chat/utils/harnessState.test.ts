@@ -209,7 +209,7 @@ describe("deriveHarnessSessionState", () => {
         completed_at: "2026-03-13T12:00:01.000Z",
         updated_at: "2026-03-13T12:00:01.000Z",
         type: "turn_summary",
-        text: "已决定：直接回答优先\n当前请求无需工具介入。",
+        text: "直接回答优先\n当前请求无需工具介入。",
       },
     ];
 
@@ -217,7 +217,7 @@ describe("deriveHarnessSessionState", () => {
 
     expect(state.plan.phase).toBe("ready");
     expect(state.plan.items).toHaveLength(0);
-    expect(state.plan.summaryText).toContain("已决定：直接回答优先");
+    expect(state.plan.summaryText).toContain("直接回答优先");
     expect(state.outputSignals[0]?.toolName).toBe("turn_summary");
   });
 

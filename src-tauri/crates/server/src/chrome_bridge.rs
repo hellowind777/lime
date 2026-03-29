@@ -83,6 +83,13 @@ pub struct ChromeBridgeStatusSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChromeBridgeDisconnectResult {
+    pub disconnected_observer_count: usize,
+    pub disconnected_control_count: usize,
+    pub status: ChromeBridgeStatusSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChromeBridgeCommandRequest {
     #[serde(default)]
     pub profile_key: Option<String>,
@@ -281,6 +288,118 @@ impl ChromeBridgeHub {
 
         for request_id in pending_ids {
             inner.pending_commands.remove(&request_id);
+        }
+    }
+
+    pub async fn disconnect_connections(
+        &self,
+        profile_key: Option<&str>,
+    ) -> ChromeBridgeDisconnectResult {
+        let normalized_profile =
+            profile_key.map(|value| normalize_profile_key(Some(value.to_string())));
+        let (observer_senders, control_senders, pending) = {
+            let mut inner = self.inner.lock().await;
+
+            let observer_ids: Vec<String> = inner
+                .observers
+                .iter()
+                .filter_map(|(client_id, conn)| {
+                    let matches_profile = normalized_profile
+                        .as_ref()
+                        .map(|profile| conn.profile_key == *profile)
+                        .unwrap_or(true);
+                    if matches_profile {
+                        Some(client_id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let observer_senders = observer_ids
+                .iter()
+                .filter_map(|client_id| {
+                    inner
+                        .observers
+                        .get(client_id)
+                        .map(|conn| conn.sender.clone())
+                })
+                .collect::<Vec<_>>();
+
+            let mut pending = Vec::new();
+            for client_id in &observer_ids {
+                inner.observers.remove(client_id);
+                pending.extend(take_pending_by_observer(
+                    &mut inner.pending_commands,
+                    client_id,
+                ));
+            }
+
+            let control_ids: Vec<String> = if observer_ids.is_empty() {
+                Vec::new()
+            } else {
+                inner.controls.keys().cloned().collect()
+            };
+
+            let control_senders = control_ids
+                .iter()
+                .filter_map(|client_id| {
+                    inner
+                        .controls
+                        .get(client_id)
+                        .map(|conn| conn.sender.clone())
+                })
+                .collect::<Vec<_>>();
+
+            for client_id in &control_ids {
+                inner.controls.remove(client_id);
+                let pending_ids: Vec<String> = inner
+                    .pending_commands
+                    .iter()
+                    .filter_map(|(request_id, pending)| match &pending.source {
+                        PendingSource::Control { control_client_id }
+                            if control_client_id == client_id =>
+                        {
+                            Some(request_id.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for request_id in pending_ids {
+                    inner.pending_commands.remove(&request_id);
+                }
+            }
+
+            (observer_senders, control_senders, pending)
+        };
+
+        for sender in &observer_senders {
+            let _ = sender.send(
+                json!({
+                    "type": "force_disconnect",
+                    "message": "Lime 已主动断开当前扩展连接。",
+                })
+                .to_string(),
+            );
+        }
+
+        for sender in &control_senders {
+            let _ = sender.send(
+                json!({
+                    "type": "force_disconnect",
+                    "message": "Lime 已主动断开当前控制连接。",
+                })
+                .to_string(),
+            );
+        }
+
+        self.resolve_pending_with_disconnect(pending).await;
+        let status = self.get_status_snapshot().await;
+
+        ChromeBridgeDisconnectResult {
+            disconnected_observer_count: observer_senders.len(),
+            disconnected_control_count: control_senders.len(),
+            status,
         }
     }
 
@@ -1145,6 +1264,82 @@ mod tests {
         let result = result_rx.await.expect("must receive disconnect result");
         assert!(!result.success);
         assert!(result.error.unwrap_or_default().contains("observer"));
+    }
+
+    #[tokio::test]
+    async fn should_force_disconnect_connections_and_notify_clients() {
+        let hub = Arc::new(ChromeBridgeHub::new());
+
+        let (observer_tx, mut observer_rx) = mpsc::unbounded_channel::<String>();
+        hub.register_observer(
+            "observer-a".to_string(),
+            Some("search_google".to_string()),
+            None,
+            observer_tx,
+        )
+        .await;
+
+        let (control_tx, mut control_rx) = mpsc::unbounded_channel::<String>();
+        hub.register_control("control-a".to_string(), None, control_tx)
+            .await;
+
+        let (result_tx, result_rx) = oneshot::channel();
+        {
+            let mut inner = hub.inner.lock().await;
+            inner.pending_commands.insert(
+                "req-disconnect".to_string(),
+                PendingCommand {
+                    request_id: "req-disconnect".to_string(),
+                    source: PendingSource::Api(result_tx),
+                    command: "click".to_string(),
+                    observer_client_id: "observer-a".to_string(),
+                    wait_for_page_info: false,
+                    command_completed: false,
+                    execution_message: None,
+                    created_at: Utc::now(),
+                    expires_at: Instant::now() + Duration::from_secs(30),
+                },
+            );
+        }
+
+        let result = hub.disconnect_connections(Some("search_google")).await;
+        assert_eq!(result.disconnected_observer_count, 1);
+        assert_eq!(result.disconnected_control_count, 1);
+        assert_eq!(result.status.observer_count, 0);
+        assert_eq!(result.status.control_count, 0);
+        assert_eq!(result.status.pending_command_count, 0);
+
+        let observer_message = observer_rx
+            .recv()
+            .await
+            .expect("observer should receive force_disconnect");
+        let control_message = control_rx
+            .recv()
+            .await
+            .expect("control should receive force_disconnect");
+
+        let observer_payload: Value =
+            serde_json::from_str(&observer_message).expect("observer message should be valid json");
+        let control_payload: Value =
+            serde_json::from_str(&control_message).expect("control message should be valid json");
+
+        assert_eq!(
+            observer_payload.get("type").and_then(Value::as_str),
+            Some("force_disconnect")
+        );
+        assert_eq!(
+            control_payload.get("type").and_then(Value::as_str),
+            Some("force_disconnect")
+        );
+
+        let pending_result = result_rx
+            .await
+            .expect("pending api command should resolve after disconnect");
+        assert!(!pending_result.success);
+        assert!(pending_result
+            .error
+            .unwrap_or_default()
+            .contains("observer"));
     }
 
     #[tokio::test]

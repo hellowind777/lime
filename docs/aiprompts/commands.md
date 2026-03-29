@@ -33,6 +33,7 @@
 - `get_browser_connector_install_status_cmd`
 - `install_browser_connector_extension_cmd`
 - `open_browser_extensions_page_cmd`
+- `disconnect_browser_connector_session`
 
 这些命令属于当前设置主路径，不应再在页面组件里散落裸 `invoke`。
 
@@ -157,9 +158,10 @@ npm run verify:local
 
 如果命令边界改动影响会话运行时恢复语义，例如：
 
-- `agent_runtime_update_session` 新增或调整 `provider_name / model_name / execution_strategy / recent_preferences / recent_team_selection`
-- `getSession/listSessions` 的 `execution_runtime` 新增或调整 `recent_theme / recent_session_mode / recent_gate_key / recent_run_title / recent_content_id`
-- 话题切换时的 provider/model、工具偏好、Team 选择，或 `theme / session_mode / gate_key / run_title / content_id` 恢复从本地 fallback 向 `execution_runtime` 收敛
+- `agent_runtime_submit_turn.turn_config` 新增或调整 `approval_policy / sandbox_policy`
+- `agent_runtime_update_session` 新增或调整 `provider_name / model_name / execution_strategy / recent_access_mode / recent_preferences / recent_team_selection`
+- `getSession/listSessions` 的 `execution_runtime` 新增或调整 `recent_access_mode / recent_theme / recent_session_mode / recent_gate_key / recent_run_title / recent_content_id`
+- 话题切换时的 provider/model、权限 accessMode、工具偏好、Team 选择，或 `theme / session_mode / gate_key / run_title / content_id` 恢复从本地 fallback 向 `execution_runtime` 收敛
 
 除了契约检查，还应补对应 Hook / UI 稳定回归，确认切换话题后模型选择器恢复的是会话 runtime，而不是陈旧本地缓存。
 
@@ -201,7 +203,8 @@ npm run verify:local
 以下是仓库当前已经明确收敛的几个方向：
 
 - **Agent / Codex 主命令**：继续收敛到 `agent_runtime_*`
-- **会话状态回写主链**：继续收敛到 `agent_runtime_update_session`，用于名称、执行策略、session provider/model、`recent_preferences` 以及 `recent_team_selection` 的轻量持久化回写
+- **会话状态回写主链**：继续收敛到 `agent_runtime_update_session`，用于名称、执行策略、session provider/model、`recent_access_mode`、`recent_preferences` 以及 `recent_team_selection` 的轻量持久化回写
+- **会话权限主链**：`agent_runtime_submit_turn.turn_config.approval_policy / sandbox_policy` 是正式 turn context 权限协议；`getSession` 返回的 `execution_runtime.recent_access_mode` 负责承接会话最近一次 accessMode。当前端已命中同一 steady-state 权限时，不应继续依赖 `harness.access_mode` 作为唯一事实源
 - **运行时交接导出主链**：继续收敛到 `agent_runtime_export_handoff_bundle`；前端统一通过 `src/lib/api/agentRuntime.ts` 网关进入，当前 GUI 入口位于 `HarnessStatusPanel`
 - **运行时证据导出主链**：继续收敛到 `agent_runtime_export_evidence_pack`，用于把 runtime / timeline / artifacts 打包成最小问题证据
 - **运行时 replay 样本主链**：继续收敛到 `agent_runtime_export_replay_case`，复用 handoff bundle + evidence pack 生成 `input / expected / grader / evidence-links`
@@ -221,9 +224,11 @@ npm run verify:local
 
 补充约定：
 
-- **站点能力主链**：继续收敛到 `site_list_adapters / site_recommend_adapters / site_search_adapters / site_get_adapter_info / site_run_adapter`
+- **站点能力主链**：继续收敛到 `site_list_adapters / site_recommend_adapters / site_search_adapters / site_get_adapter_info / site_get_adapter_launch_readiness / site_get_adapter_catalog_status / site_import_adapter_yaml_bundle / site_run_adapter`
+- **站点适配器导入主链**：`site_import_adapter_yaml_bundle` 只负责把外部 YAML 来源编译为 Lime 标准并写入 `imported` 目录，不允许带入第二套 runtime、daemon 或自动唤醒浏览器链路
 - **站点 Agent 工具主链**：继续收敛到 `lime_site_list / lime_site_recommend / lime_site_search / lime_site_info / lime_site_run`
 - **站点结果沉淀主线**：`site_run_adapter` / `lime_site_run` 优先透传 `content_id` 写回当前主稿；只有缺少 `content_id` 时，才回退到 `project_id` 新建结果文档
+- **Claw 站点直跑门禁主链**：`site_get_adapter_launch_readiness` 只负责检测“是否存在已附着的真实浏览器会话 + 目标站点上下文”；`site_run_adapter.require_attached_session = true` 时，后端必须拒绝 managed/default fallback，不能后台偷偷起 Chrome
 - **站点运行失败语义**：`SiteAdapterRunResult` 至少统一输出 `auth_required / no_matching_context / adapter_runtime_error`，并在前端与 Agent 结果里保留 `report_hint`
 - **浏览器资料 / 环境预设主链**：`list/save/archive/restore_browser_profile_cmd` 与 `list/save/archive/restore_browser_environment_preset_cmd` 已进入真实 DevBridge 主路径；浏览器模式下不应再默认放进 `mockPriorityCommands`，仅在 DevBridge 不可用时才允许回落 `defaultMocks`
 

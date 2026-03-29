@@ -31,10 +31,11 @@ import { useSoundContext } from "@/contexts/useSoundContext";
 import type { Language } from "../../shared/language/LanguageSelector";
 import { Switch } from "@/components/ui/switch";
 import {
+  CONFIGURABLE_MAIN_SIDEBAR_NAV_ITEMS,
   CONFIGURABLE_FOOTER_SIDEBAR_NAV_ITEMS,
   DEFAULT_ENABLED_SIDEBAR_NAV_ITEM_IDS,
+  FIXED_MAIN_SIDEBAR_NAV_ITEMS,
   FIXED_FOOTER_SIDEBAR_NAV_ITEMS,
-  MAIN_SIDEBAR_NAV_ITEMS,
   resolveEnabledSidebarNavItems,
 } from "@/lib/navigation/sidebarNav";
 import {
@@ -263,8 +264,10 @@ export function AppearanceSettings() {
 
   const enabledWorkspaceNavCount = useMemo(
     () =>
-      MAIN_SIDEBAR_NAV_ITEMS.filter((item) => enabledNavItems.includes(item.id))
-        .length,
+      FIXED_MAIN_SIDEBAR_NAV_ITEMS.length +
+      CONFIGURABLE_MAIN_SIDEBAR_NAV_ITEMS.filter((item) =>
+        enabledNavItems.includes(item.id),
+      ).length,
     [enabledNavItems],
   );
 
@@ -277,7 +280,9 @@ export function AppearanceSettings() {
   );
 
   const visibleNavItemCount =
-    enabledNavItems.length + FIXED_FOOTER_SIDEBAR_NAV_ITEMS.length;
+    FIXED_MAIN_SIDEBAR_NAV_ITEMS.length +
+    enabledNavItems.length +
+    FIXED_FOOTER_SIDEBAR_NAV_ITEMS.length;
 
   const handleThemeChange = useCallback((nextTheme: Theme) => {
     setTheme(nextTheme);
@@ -787,7 +792,7 @@ export function AppearanceSettings() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2.5">
-                  {MAIN_SIDEBAR_NAV_ITEMS.map((item) => {
+                  {CONFIGURABLE_MAIN_SIDEBAR_NAV_ITEMS.map((item) => {
                     const active = enabledNavItems.includes(item.id);
                     return (
                       <button
@@ -808,6 +813,15 @@ export function AppearanceSettings() {
                     );
                   })}
                 </div>
+
+                {FIXED_MAIN_SIDEBAR_NAV_ITEMS.length > 0 ? (
+                  <div className="mt-3 rounded-[18px] border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs leading-5 text-slate-600">
+                    核心入口固定显示：
+                    {FIXED_MAIN_SIDEBAR_NAV_ITEMS.map((item) => item.label).join(
+                      "、",
+                    )}
+                  </div>
+                ) : null}
               </section>
 
               <section className="rounded-[20px] border border-slate-200 bg-white/80 p-4">

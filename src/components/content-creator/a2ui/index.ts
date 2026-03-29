@@ -49,3 +49,8 @@ export {
 
 // 组件导出
 export { A2UIRenderer, default as A2UIRendererDefault } from "./components";
+export * from "./A2uiSurface";
+export * from "./adapter";
+export * from "./catalog";
+export { basicCatalog, basicCatalogId } from "./catalog/basic";
+export { minimalCatalog, minimalCatalogId } from "./catalog/minimal";

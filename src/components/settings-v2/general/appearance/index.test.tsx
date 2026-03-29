@@ -145,6 +145,7 @@ describe("AppearanceSettings", () => {
     expect(text).toContain("左侧边栏导航");
     expect(text).toContain("工作区入口");
     expect(text).toContain("底部入口");
+    expect(text).toContain("核心入口固定显示：技能");
     expect(text).toContain("OpenClaw");
     expect(text).toContain("资源");
     expect(text).toContain("我的风格");

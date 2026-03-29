@@ -15,6 +15,7 @@ vi.mock("@/lib/api/agentRuntime", () => ({
 }));
 
 interface HookProps {
+  enabled: boolean;
   chatMode: "agent" | "general" | "creator";
   mappedTheme: string;
   harnessPanelVisible: boolean;
@@ -48,6 +49,7 @@ function mountHook(initialProps?: Partial<HookProps>): HookHarness {
   let hookValue: ReturnType<typeof useWorkspaceHarnessInventoryRuntime> | null =
     null;
   let currentProps: HookProps = {
+    enabled: true,
     chatMode: "agent",
     mappedTheme: "social-media",
     harnessPanelVisible: false,
@@ -181,6 +183,25 @@ describe("useWorkspaceHarnessInventoryRuntime", () => {
 
     try {
       expect(harness.getValue().socialMediaHarnessSummary?.artifactCount).toBe(1);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("开关关闭时不应继续读取工具库存，也不应生成工作台摘要", async () => {
+    const harness = mountHook({
+      enabled: false,
+      harnessPanelVisible: true,
+    });
+
+    try {
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(mockGetAgentRuntimeToolInventory).not.toHaveBeenCalled();
+      expect(harness.getValue().toolInventory).toBeNull();
+      expect(harness.getValue().socialMediaHarnessSummary).toBeNull();
     } finally {
       harness.unmount();
     }

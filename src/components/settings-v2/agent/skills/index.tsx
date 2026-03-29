@@ -5,7 +5,7 @@ export function ExtensionsSettings() {
     <div className="space-y-5">
       <div className="max-w-3xl">
         <p className="text-sm leading-6 text-muted-foreground">
-          管理 Skills 实验功能，不影响核心使用。
+          Claw 左侧导航已经提供面向最终用户的技能主入口；这里仅保留本地导入、仓库管理与标准检查等高级能力。
           <a
             href="https://github.com/aiclientproxy/lime/issues"
             target="_blank"

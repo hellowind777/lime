@@ -23,7 +23,6 @@ import type { ArtifactDocumentV1 } from "@/lib/artifact-document";
 import type { AgentThreadItem } from "../types";
 import {
   type ArtifactWorkbenchDocumentController,
-  type ArtifactWorkbenchLayoutMode,
   useArtifactWorkbenchDocumentController,
 } from "./artifactWorkbenchDocument";
 
@@ -53,7 +52,6 @@ interface ArtifactWorkbenchPreviewProps {
   onJumpToTimelineItem?: (itemId: string) => void;
   onCloseCanvas: () => void;
   stackedWorkbenchTrigger?: ReactNode;
-  artifactDocumentLayoutMode?: ArtifactWorkbenchLayoutMode;
   onArtifactDocumentControllerChange?: (
     controller: ArtifactWorkbenchDocumentController | null,
   ) => void;
@@ -80,7 +78,6 @@ export function ArtifactWorkbenchPreview({
   onJumpToTimelineItem,
   onCloseCanvas,
   stackedWorkbenchTrigger,
-  artifactDocumentLayoutMode = "full",
   onArtifactDocumentControllerChange,
   renderToolbarActions,
 }: ArtifactWorkbenchPreviewProps) {
@@ -181,7 +178,6 @@ export function ArtifactWorkbenchPreview({
         onJumpToTimelineItem={onJumpToTimelineItem}
         onCloseCanvas={onCloseCanvas}
         actionsSlot={combinedActionsSlot}
-        layoutMode={artifactDocumentLayoutMode}
         documentController={documentController}
       />
     );
@@ -237,7 +233,6 @@ interface WorkspaceLiveCanvasPreviewProps {
     artifact: Artifact,
     options?: {
       stackedWorkbenchTrigger?: ReactNode;
-      artifactDocumentLayoutMode?: ArtifactWorkbenchLayoutMode;
       onArtifactDocumentControllerChange?: (
         controller: ArtifactWorkbenchDocumentController | null,
       ) => void;

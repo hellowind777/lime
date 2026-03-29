@@ -1,13 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { parseAIResponse } from "@/components/content-creator/a2ui/parser";
-import type { A2UIResponse } from "@/components/content-creator/a2ui/types";
+import type {
+  A2UIFormData,
+  A2UIResponse,
+} from "@/components/content-creator/a2ui/types";
 import {
   buildActionRequestA2UI,
   isActionRequestA2UICompatible,
   summarizeActionRequestSubmission,
 } from "../utils/actionRequestA2UI";
 import { buildLegacyQuestionnaireA2UI } from "../utils/legacyQuestionnaireA2UI";
-import type { ActionRequired, Message } from "../types";
+import {
+  buildProgressiveA2UIStepForm,
+  hasMeaningfulProgressiveA2UIAnswers,
+  type ProgressiveA2UIStepView,
+} from "../utils/progressivePendingA2UI";
+import { governActionRequest } from "../utils/actionRequestGovernance";
+import type { ActionRequired, Message, PendingA2UISource } from "../types";
 
 interface A2UISubmissionNotice {
   title: string;
@@ -17,21 +26,51 @@ interface A2UISubmissionNotice {
 type PendingA2UIResolution =
   | {
       form: A2UIResponse;
-      source: {
+      source: PendingA2UISource & {
         kind: "assistant_message" | "legacy_message";
-        messageId: string;
       };
     }
   | {
       form: A2UIResponse;
-      source: {
+      source: PendingA2UISource & {
         kind: "action_request";
-        requestId: string;
       };
     };
 
 interface UseWorkspaceA2UIRuntimeParams {
   messages: Message[];
+}
+
+interface PendingA2UIProgressState {
+  sourceKey: string;
+  stepIndex: number;
+  accumulatedFormData: A2UIFormData;
+}
+
+type PendingA2UISubmitResolution =
+  | {
+      status: "advance";
+    }
+  | {
+      status: "empty";
+    }
+  | {
+      status: "submit";
+      formData: A2UIFormData;
+    };
+
+function getPendingA2UISourceKey(
+  resolution: PendingA2UIResolution | null,
+): string | null {
+  if (!resolution) {
+    return null;
+  }
+
+  if (resolution.source.kind === "action_request") {
+    return `${resolution.source.kind}:${resolution.source.requestId}:${resolution.form.id}`;
+  }
+
+  return `${resolution.source.kind}:${resolution.source.messageId}:${resolution.form.id}`;
 }
 
 function isSamePendingA2UIResolution(
@@ -61,9 +100,13 @@ export function useWorkspaceA2UIRuntime({
 }: UseWorkspaceA2UIRuntimeParams): {
   a2uiSubmissionNotice: A2UISubmissionNotice | null;
   pendingA2UIForm: A2UIResponse | null;
+  pendingA2UISource: PendingA2UISource | null;
   pendingActionRequest: ActionRequired | null;
   pendingLegacyQuestionnaireA2UIForm: A2UIResponse | null;
   pendingPromotedA2UIActionRequest: ActionRequired | null;
+  resolvePendingA2UISubmit: (
+    formData: A2UIFormData,
+  ) => PendingA2UISubmitResolution;
 } {
   const pendingActionRequest = useMemo<ActionRequired | null>(() => {
     const latestPendingMessage = [...messages]
@@ -76,11 +119,12 @@ export function useWorkspaceA2UIRuntime({
       return null;
     }
 
-    return (
+    const pendingRequest =
       [...latestPendingMessage.actionRequests]
         .reverse()
-        .find((request) => request.status === "pending") || null
-    );
+        .find((request) => request.status === "pending") || null;
+
+    return pendingRequest ? governActionRequest(pendingRequest) : null;
   }, [messages]);
 
   const pendingMessageA2UI = useMemo<PendingA2UIResolution | null>(() => {
@@ -138,7 +182,7 @@ export function useWorkspaceA2UIRuntime({
         );
 
       if (pendingRequest) {
-        return pendingRequest;
+        return governActionRequest(pendingRequest);
       }
     }
 
@@ -305,8 +349,106 @@ export function useWorkspaceA2UIRuntime({
     });
   }, [a2uiSubmissionNotice, messages, resolvedPendingA2UI]);
 
+  const visiblePendingA2UI =
+    resolvedPendingA2UI ?? retainedPendingA2UI ?? null;
+  const [pendingA2UIProgressState, setPendingA2UIProgressState] =
+    useState<PendingA2UIProgressState | null>(null);
+
+  useEffect(() => {
+    const sourceKey = getPendingA2UISourceKey(visiblePendingA2UI);
+    if (!sourceKey) {
+      if (a2uiSubmissionNotice) {
+        setPendingA2UIProgressState(null);
+      }
+      return;
+    }
+
+    setPendingA2UIProgressState((previous) =>
+      previous?.sourceKey === sourceKey
+        ? previous
+        : {
+            sourceKey,
+            stepIndex: 0,
+            accumulatedFormData: {},
+          },
+    );
+  }, [a2uiSubmissionNotice, visiblePendingA2UI]);
+
+  const progressivePendingA2UI = useMemo<ProgressiveA2UIStepView | null>(() => {
+    if (!visiblePendingA2UI) {
+      return null;
+    }
+
+    if (
+      visiblePendingA2UI.source.kind !== "assistant_message"
+    ) {
+      return null;
+    }
+
+    const sourceKey = getPendingA2UISourceKey(visiblePendingA2UI);
+    const currentStepIndex =
+      sourceKey && pendingA2UIProgressState?.sourceKey === sourceKey
+        ? pendingA2UIProgressState.stepIndex
+        : 0;
+
+    return buildProgressiveA2UIStepForm(
+      visiblePendingA2UI.form,
+      currentStepIndex,
+    );
+  }, [pendingA2UIProgressState, visiblePendingA2UI]);
+
   const pendingA2UIForm =
-    resolvedPendingA2UI?.form ?? retainedPendingA2UI?.form ?? null;
+    progressivePendingA2UI?.form ?? visiblePendingA2UI?.form ?? null;
+  const pendingA2UISource = visiblePendingA2UI?.source ?? null;
+
+  const resolvePendingA2UISubmit = useCallback(
+    (formData: A2UIFormData): PendingA2UISubmitResolution => {
+      if (!progressivePendingA2UI || !visiblePendingA2UI) {
+        return {
+          status: "submit",
+          formData,
+        };
+      }
+
+      const sourceKey = getPendingA2UISourceKey(visiblePendingA2UI);
+      const accumulatedFormData =
+        sourceKey && pendingA2UIProgressState?.sourceKey === sourceKey
+          ? pendingA2UIProgressState.accumulatedFormData
+          : {};
+      const mergedFormData = {
+        ...accumulatedFormData,
+        ...formData,
+      };
+
+      if (
+        !hasMeaningfulProgressiveA2UIAnswers(
+          progressivePendingA2UI.meta.fieldIds,
+          mergedFormData,
+        )
+      ) {
+        return {
+          status: "empty",
+        };
+      }
+
+      if (!progressivePendingA2UI.meta.isFinalStep && sourceKey) {
+        setPendingA2UIProgressState({
+          sourceKey,
+          stepIndex: progressivePendingA2UI.meta.currentStep,
+          accumulatedFormData: mergedFormData,
+        });
+        return {
+          status: "advance",
+        };
+      }
+
+      return {
+        status: "submit",
+        formData: mergedFormData,
+      };
+    },
+    [pendingA2UIProgressState, progressivePendingA2UI, visiblePendingA2UI],
+  );
 
   useEffect(() => {
     if (
@@ -328,8 +470,10 @@ export function useWorkspaceA2UIRuntime({
   return {
     a2uiSubmissionNotice,
     pendingA2UIForm,
+    pendingA2UISource,
     pendingActionRequest,
     pendingLegacyQuestionnaireA2UIForm,
     pendingPromotedA2UIActionRequest,
+    resolvePendingA2UISubmit,
   };
 }

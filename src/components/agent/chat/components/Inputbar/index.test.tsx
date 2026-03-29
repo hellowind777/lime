@@ -27,7 +27,6 @@ const mockInputbarCore = vi.fn(
     topExtra?: React.ReactNode;
     placeholder?: string;
     toolMode?: "default" | "attach-only";
-    showTranslate?: boolean;
   }) => (
     <div data-testid="inputbar-core">
       <button
@@ -74,7 +73,6 @@ vi.mock("./components/InputbarCore", () => ({
     topExtra?: React.ReactNode;
     placeholder?: string;
     toolMode?: "default" | "attach-only";
-    showTranslate?: boolean;
   }) => mockInputbarCore(props),
 }));
 
@@ -99,6 +97,26 @@ vi.mock("./hooks/useActiveSkill", () => ({
     activeSkill: null,
     setActiveSkill: vi.fn(),
     clearActiveSkill: vi.fn(),
+    buildSkillSelection: (source: {
+      skills?: Skill[];
+      serviceSkills?: ServiceSkillHomeItem[];
+      isSkillsLoading?: boolean;
+      onSelectServiceSkill?: (skill: ServiceSkillHomeItem) => void;
+      onNavigateToSettings?: () => void;
+      onImportSkill?: () => void | Promise<void>;
+      onRefreshSkills?: () => void | Promise<void>;
+    }) => ({
+      skills: source.skills ?? [],
+      serviceSkills: source.serviceSkills ?? [],
+      activeSkill: null,
+      isSkillsLoading: source.isSkillsLoading ?? false,
+      onSelectSkill: vi.fn(),
+      onSelectServiceSkill: source.onSelectServiceSkill,
+      onClearSkill: vi.fn(),
+      onNavigateToSettings: source.onNavigateToSettings,
+      onImportSkill: source.onImportSkill,
+      onRefreshSkills: source.onRefreshSkills,
+    }),
   }),
 }));
 
@@ -316,7 +334,34 @@ describe("Inputbar", () => {
     expect(latestCall.onSelectServiceSkill).toBe(onSelectServiceSkill);
   });
 
-  it("存在 executionRuntime 时应展示最近执行模型与结构化输出提示", async () => {
+  it("工作区输入区应保留技能下拉，但与 @ 面板共用同一技能数据源", async () => {
+    const { container } = renderInputbar({
+      activeTheme: "general",
+      skills: [
+        {
+          key: "writer",
+          name: "写作助手",
+          description: "用于写作",
+          directory: "writer",
+          installed: true,
+          sourceKind: "builtin",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(
+      container.querySelector('[data-testid="skill-selector-trigger"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="character-mention-stub"]'),
+    ).toBeTruthy();
+  });
+
+  it("存在 executionRuntime 时应仅展示结构化输出提示", async () => {
     const { container } = renderInputbar({
       providerType: "openai",
       setProviderType: vi.fn(),
@@ -341,10 +386,47 @@ describe("Inputbar", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("最近执行模型 OpenAI · gpt-5.4");
+    expect(container.textContent).not.toContain("最近执行模型");
     expect(container.textContent).toContain(
       "结构化输出 Native schema · turn contract",
     );
+  });
+
+  it("应将 Plan 开关与权限模式拆成独立控件，并透传对应回调", async () => {
+    const setExecutionStrategy = vi.fn();
+    const setAccessMode = vi.fn();
+    const { container } = renderInputbar({
+      executionStrategy: "react",
+      setExecutionStrategy,
+      accessMode: "current",
+      setAccessMode,
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const planToggle = container.querySelector(
+      '[data-testid="inputbar-plan-toggle"]',
+    ) as HTMLButtonElement | null;
+    const accessSelect = container.querySelector(
+      'select[aria-label="权限模式"]',
+    ) as HTMLSelectElement | null;
+
+    expect(planToggle).toBeTruthy();
+    expect(accessSelect).toBeTruthy();
+    expect(
+      container.querySelector('select[aria-label="执行模式"]'),
+    ).toBeNull();
+
+    act(() => {
+      planToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      accessSelect!.value = "full-access";
+      accessSelect?.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(setExecutionStrategy).toHaveBeenCalledWith("code_orchestrated");
+    expect(setAccessMode).toHaveBeenCalledWith("full-access");
   });
 
   it("受控模式下点击联网搜索应透传状态变更", async () => {
@@ -651,9 +733,11 @@ describe("Inputbar", () => {
       mockInputbarCore.mock.calls[mockInputbarCore.mock.calls.length - 1]?.[0];
     expect(latestCall).toBeTruthy();
     expect(latestCall.toolMode).toBe("attach-only");
-    expect(latestCall.showTranslate).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(latestCall, "showTranslate"),
+    ).toBe(false);
     expect(latestCall.placeholder).toContain("试着输入任何指令");
-    expect(latestCall.rightExtra).toBeDefined();
+    expect(latestCall.leftExtra).toBeDefined();
   });
 
   it("主题工作台在待启动状态下不应显示闸门条", async () => {
@@ -827,48 +911,37 @@ describe("Inputbar", () => {
     expect(container.textContent).not.toContain("正在生成中");
   });
 
-  it("pending A2UI 表单短暂消失时应保留可见，但进入不可提交的同步态", async () => {
-    vi.useFakeTimers();
+  it("pending A2UI 与提交提示不应再由 Inputbar 浮层承载", async () => {
     const pendingForm = createPendingA2UIForm();
     const { container, rerender } = renderInputbar({
       pendingA2UIForm: pendingForm,
+      a2uiSubmissionNotice: {
+        title: "补充信息已确认",
+        summary: "已继续处理。",
+      },
       onA2UISubmit: vi.fn(),
     });
 
     await act(async () => {
       await Promise.resolve();
-    });
-
-    let submitButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("继续处理"),
-    ) as HTMLButtonElement | undefined;
-
-    expect(submitButton?.disabled).toBe(false);
-
-    rerender({
-      pendingA2UIForm: null,
-      onA2UISubmit: vi.fn(),
-    });
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    submitButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("继续处理"),
-    ) as HTMLButtonElement | undefined;
-
-    expect(container.textContent).toContain("同步中");
-    expect(container.textContent).toContain(
-      "正在同步最新上下文，表单暂时不可提交。",
-    );
-    expect(submitButton?.disabled).toBe(true);
-
-    await act(async () => {
-      vi.advanceTimersByTime(1200);
     });
 
     expect(container.textContent).not.toContain("继续处理");
-    vi.useRealTimers();
+    expect(container.textContent).not.toContain("同步中");
+    expect(container.textContent).not.toContain("补充信息已确认");
+
+    rerender({
+      pendingA2UIForm: null,
+      a2uiSubmissionNotice: null,
+      onA2UISubmit: vi.fn(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).not.toContain("继续处理");
+    expect(container.textContent).not.toContain("同步中");
+    expect(container.textContent).not.toContain("补充信息已确认");
   });
 });

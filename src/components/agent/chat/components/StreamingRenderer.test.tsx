@@ -12,6 +12,25 @@ import type {
 } from "../types";
 
 const parseAIResponseMock = vi.fn();
+const mockMarkdownRenderer = vi.fn(
+  ({
+    content,
+    showBlockActions,
+    onQuoteContent,
+  }: {
+    content: string;
+    showBlockActions?: boolean;
+    onQuoteContent?: (content: string) => void;
+  }) => (
+    <div
+      data-testid="markdown-renderer"
+      data-show-block-actions={showBlockActions ? "yes" : "no"}
+      data-has-on-quote-content={onQuoteContent ? "yes" : "no"}
+    >
+      {content}
+    </div>
+  ),
+);
 const mockToolCallList = vi.fn(
   ({
     onOpenSavedSiteContent,
@@ -31,16 +50,19 @@ const mockToolCallList = vi.fn(
 const mockToolCallItem = vi.fn(
   ({
     onOpenSavedSiteContent,
+    grouped,
   }: {
     onOpenSavedSiteContent?: (target: {
       projectId: string;
       contentId: string;
       title?: string;
     }) => void;
+    grouped?: boolean;
   }) => (
     <div
       data-testid="tool-call-item"
       data-has-open-saved-site-content={onOpenSavedSiteContent ? "yes" : "no"}
+      data-grouped={grouped ? "yes" : "no"}
     />
   ),
 );
@@ -54,9 +76,11 @@ vi.mock("@/lib/artifact/hooks/useDebouncedValue", () => ({
 }));
 
 vi.mock("./MarkdownRenderer", () => ({
-  MarkdownRenderer: ({ content }: { content: string }) => (
-    <div data-testid="markdown-renderer">{content}</div>
-  ),
+  MarkdownRenderer: (props: {
+    content: string;
+    showBlockActions?: boolean;
+    onQuoteContent?: (content: string) => void;
+  }) => mockMarkdownRenderer(props),
 }));
 
 vi.mock("./A2UITaskCard", () => ({
@@ -155,6 +179,9 @@ function renderHarness(props: {
     contentId: string;
     title?: string;
   }) => void;
+  suppressProcessFlow?: boolean;
+  showContentBlockActions?: boolean;
+  onQuoteContent?: (content: string) => void;
 }) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -180,6 +207,24 @@ describe("StreamingRenderer", () => {
     });
 
     expect(parseAIResponseMock).not.toHaveBeenCalled();
+  });
+
+  it("开启正文块操作时应向 MarkdownRenderer 透传引用/复制能力", () => {
+    const onQuoteContent = vi.fn();
+
+    renderHarness({
+      content: "这是最终输出",
+      showContentBlockActions: true,
+      onQuoteContent,
+    });
+
+    expect(mockMarkdownRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "这是最终输出",
+        showBlockActions: true,
+        onQuoteContent,
+      }),
+    );
   });
 
   it("交错内容重复渲染时应复用已缓存解析结果", () => {
@@ -250,9 +295,10 @@ describe("StreamingRenderer", () => {
       onOpenSavedSiteContent,
     });
 
-    expect(mockToolCallList).toHaveBeenCalledWith(
+    expect(mockToolCallItem).toHaveBeenCalledWith(
       expect.objectContaining({ onOpenSavedSiteContent }),
     );
+    expect(mockToolCallList).not.toHaveBeenCalled();
   });
 
   it("交错工具片段应透传已保存站点内容打开回调", () => {
@@ -280,6 +326,161 @@ describe("StreamingRenderer", () => {
     expect(mockToolCallItem).toHaveBeenCalledWith(
       expect.objectContaining({ onOpenSavedSiteContent }),
     );
+  });
+
+  it("非交错模式应将思考和工具收敛为同一执行过程组", () => {
+    const { container } = renderHarness({
+      content: "最终结论",
+      thinkingContent: "先检查滚动触发逻辑\n再确认输出展开时机",
+      toolCalls: [
+        {
+          id: "tool-process-group-legacy",
+          name: "functions.exec_command",
+          arguments: JSON.stringify({ cmd: "rg -n scrollKey src" }),
+          status: "completed",
+          result: { success: true, output: "ok" },
+          startTime: new Date("2026-03-25T10:02:00.000Z"),
+          endTime: new Date("2026-03-25T10:02:01.000Z"),
+        },
+      ],
+    });
+
+    expect(container.textContent).toContain("1 个工具调用，1 条过程消息");
+    expect(
+      container.querySelector('[data-testid="streaming-process-group"]'),
+    ).toBeTruthy();
+    expect(
+      container
+        .querySelector('[data-testid="tool-call-item"]')
+        ?.getAttribute("data-grouped"),
+    ).toBe("yes");
+    expect(container.textContent).toContain("最终结论");
+  });
+
+  it("交错内容中的思考与工具应按连续执行流分组", () => {
+    const { container } = renderHarness({
+      content: "",
+      contentParts: [
+        {
+          type: "thinking",
+          text: "先检查 auto-scroll 触发条件\n确认是否只跟踪最后一项",
+        },
+        {
+          type: "tool_use",
+          toolCall: {
+            id: "tool-process-group-interleaved",
+            name: "functions.exec_command",
+            arguments: JSON.stringify({ cmd: "sed -n '1,120p' src/messages.tsx" }),
+            status: "completed",
+            result: { success: true, output: "ok" },
+            startTime: new Date("2026-03-25T10:03:00.000Z"),
+            endTime: new Date("2026-03-25T10:03:01.000Z"),
+          },
+        },
+        {
+          type: "thinking",
+          text: "根因已经定位\n准备收口实现",
+        },
+        {
+          type: "text",
+          text: "已经定位到滚动没有跟随增量输出。",
+        },
+      ],
+      isStreaming: false,
+    });
+
+    expect(container.textContent).toContain("1 个工具调用，2 条过程消息");
+    expect(
+      container.querySelector('[data-testid="streaming-process-group"]'),
+    ).toBeTruthy();
+    expect(
+      container
+        .querySelector('[data-testid="tool-call-item"]')
+        ?.getAttribute("data-grouped"),
+    ).toBe("yes");
+    expect(container.textContent).toContain("已经定位到滚动没有跟随增量输出。");
+  });
+
+  it("抑制过程流时，非交错模式不应重复渲染思考、工具和确认卡", () => {
+    const { container } = renderHarness({
+      content: "最终回答内容",
+      thinkingContent: "这段思考应由 timeline 承载",
+      toolCalls: [
+        {
+          id: "tool-suppressed-legacy",
+          name: "functions.exec_command",
+          arguments: JSON.stringify({ cmd: "rg -n duplicate src" }),
+          status: "completed",
+          result: { success: true, output: "ok" },
+          startTime: new Date("2026-03-28T12:10:00.000Z"),
+          endTime: new Date("2026-03-28T12:10:01.000Z"),
+        },
+      ],
+      actionRequests: [
+        {
+          requestId: "req-suppressed-legacy",
+          actionType: "tool_confirmation",
+          status: "pending",
+          prompt: "请确认是否继续",
+        },
+      ],
+      onPermissionResponse: vi.fn(),
+      suppressProcessFlow: true,
+    });
+
+    expect(
+      container.querySelector('[data-testid="streaming-process-group"]'),
+    ).toBeNull();
+    expect(container.querySelector('[data-testid="tool-call-item"]')).toBeNull();
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.querySelector('[data-testid="decision-panel"]')).toBeNull();
+    expect(container.textContent).toContain("最终回答内容");
+  });
+
+  it("抑制过程流时，交错模式只保留正文片段", () => {
+    const { container } = renderHarness({
+      content: "",
+      contentParts: [
+        {
+          type: "thinking",
+          text: "这段思考应由 timeline 渲染",
+        },
+        {
+          type: "tool_use",
+          toolCall: {
+            id: "tool-suppressed-interleaved",
+            name: "functions.exec_command",
+            arguments: JSON.stringify({ cmd: "sed -n '1,80p' src/app.tsx" }),
+            status: "completed",
+            result: { success: true, output: "ok" },
+            startTime: new Date("2026-03-28T12:12:00.000Z"),
+            endTime: new Date("2026-03-28T12:12:01.000Z"),
+          },
+        },
+        {
+          type: "action_required",
+          actionRequired: {
+            requestId: "req-suppressed-interleaved",
+            actionType: "tool_confirmation",
+            status: "pending",
+            prompt: "请确认是否继续",
+          },
+        },
+        {
+          type: "text",
+          text: "这里只保留最终正文。",
+        },
+      ],
+      onPermissionResponse: vi.fn(),
+      suppressProcessFlow: true,
+    });
+
+    expect(
+      container.querySelector('[data-testid="streaming-process-group"]'),
+    ).toBeNull();
+    expect(container.querySelector('[data-testid="tool-call-item"]')).toBeNull();
+    expect(container.querySelector('[data-testid="decision-panel"]')).toBeNull();
+    expect(container.textContent).toContain("这里只保留最终正文。");
   });
 
   it("关闭内联 A2UI 时应仅保留普通文本片段", () => {
@@ -415,6 +616,56 @@ describe("StreamingRenderer", () => {
     expect(streamingDetails).toBeTruthy();
     expect((streamingDetails as HTMLDetailsElement).open).toBe(true);
     expect(container.textContent).toContain("第二步：调用工具");
+  });
+
+  it("思考块应使用统一状态标签，并保留首行原始文案", () => {
+    const { container, rerender } = renderHarness({
+      content: "",
+      thinkingContent: "先生成一版草稿\n- 再根据反馈快速迭代",
+      isStreaming: false,
+    });
+
+    expect(container.textContent).toContain("已完成思考");
+    expect(container.textContent).toContain("先生成一版草稿");
+    expect(container.textContent).not.toContain("思考中");
+
+    rerender({
+      content: "",
+      thinkingContent: "先生成一版草稿\n- 再根据反馈快速迭代",
+      isStreaming: true,
+    });
+
+    expect(container.textContent).toContain("先生成一版草稿");
+  });
+
+  it("过程组中的思考块应切换为轻量行内样式", () => {
+    const { container } = renderHarness({
+      content: "",
+      contentParts: [
+        {
+          type: "thinking",
+          text: "先确认过程组行高\n再和工具行对齐",
+        },
+        {
+          type: "tool_use",
+          toolCall: {
+            id: "tool-thinking-inline-style",
+            name: "functions.exec_command",
+            arguments: JSON.stringify({ cmd: "rg -n thinking src" }),
+            status: "completed",
+            result: { success: true, output: "ok" },
+            startTime: new Date("2026-03-29T08:40:00.000Z"),
+            endTime: new Date("2026-03-29T08:40:01.000Z"),
+          },
+        },
+      ],
+    });
+
+    expect(
+      container
+        .querySelector('[data-testid="thinking-block"]')
+        ?.getAttribute("data-visual-style"),
+    ).toBe("grouped-inline");
   });
 
   it("提升为输入区 A2UI 的待处理问答不应继续渲染内联 DecisionPanel", () => {

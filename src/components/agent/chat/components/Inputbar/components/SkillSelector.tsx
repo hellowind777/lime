@@ -1,12 +1,11 @@
 import React, {
   Suspense,
-  lazy,
   useCallback,
-  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { Zap } from "lucide-react";
+import { FolderOpen, Loader2, RefreshCw, Zap } from "lucide-react";
 import {
   Popover,
   PopoverContent,
@@ -15,20 +14,27 @@ import {
 import type { Skill } from "@/lib/api/skills";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { scheduleIdleModulePreload } from "./scheduleIdleModulePreload";
-
-const preloadSkillSelectorPanel = () => import("./SkillSelectorPanel");
-
-const SkillSelectorPanel = lazy(async () => {
-  const module = await preloadSkillSelectorPanel();
-  return { default: module.SkillSelectorPanel };
-});
+import { filterMentionableServiceSkills } from "@/components/agent/chat/service-skills/entryAdapter";
+import type { ServiceSkillHomeItem } from "@/components/agent/chat/service-skills/types";
+import type { BuiltinInputCommand } from "./builtinCommands";
+import {
+  LazyCharacterMentionPanel,
+  preloadCharacterMentionPanel,
+} from "./characterMentionPanelLoader";
+import {
+  getActiveSkillDisplayLabel,
+  SKILL_SELECTION_DISPLAY_COPY,
+} from "./skillSelectionDisplay";
+import { partitionMentionableSkills } from "./skillQuery";
+import { useIdleModulePreload } from "./useIdleModulePreload";
 
 interface SkillSelectorProps {
   skills?: Skill[];
+  serviceSkills?: ServiceSkillHomeItem[];
   activeSkill?: Skill | null;
   isLoading?: boolean;
   onSelectSkill: (skill: Skill) => void;
+  onSelectServiceSkill?: (skill: ServiceSkillHomeItem) => void;
   onClearSkill?: () => void;
   onNavigateToSettings?: () => void;
   onImportSkill?: () => void | Promise<void>;
@@ -37,24 +43,162 @@ interface SkillSelectorProps {
   className?: string;
 }
 
-function matchesSkillQuery(skill: Skill, query: string): boolean {
-  if (!query) {
-    return true;
-  }
-
-  const normalizedQuery = query.toLowerCase();
-  return (
-    skill.name.toLowerCase().includes(normalizedQuery) ||
-    skill.key.toLowerCase().includes(normalizedQuery) ||
-    skill.description?.toLowerCase().includes(normalizedQuery) === true
-  );
+interface SkillSelectorContentProps {
+  activeSkill: Skill | null;
+  installedSkills: Skill[];
+  availableSkills: Skill[];
+  mentionServiceSkills?: ServiceSkillHomeItem[];
+  query: string;
+  refreshBusy: boolean;
+  hasResults: boolean;
+  canRefresh: boolean;
+  canImport: boolean;
+  importing: boolean;
+  commandRef: React.RefObject<HTMLDivElement>;
+  onQueryChange: (query: string) => void;
+  onSelectInstalledSkill: (skill: Skill) => void;
+  onSelectAvailableSkill: (skill: Skill) => void;
+  onSelectServiceSkill?: (skill: ServiceSkillHomeItem) => void;
+  onClearSkill?: () => void;
+  onNavigateToSettings?: () => void;
+  onRefresh?: () => void;
+  onImport?: () => void;
 }
+
+export const SkillSelectorContent: React.FC<SkillSelectorContentProps> = ({
+  activeSkill,
+  installedSkills,
+  availableSkills,
+  mentionServiceSkills = [],
+  query,
+  refreshBusy,
+  hasResults,
+  canRefresh,
+  canImport,
+  importing,
+  commandRef,
+  onQueryChange,
+  onSelectInstalledSkill,
+  onSelectAvailableSkill,
+  onSelectServiceSkill,
+  onClearSkill,
+  onNavigateToSettings,
+  onRefresh,
+  onImport,
+}) => {
+  const activeSkillLabel = getActiveSkillDisplayLabel(activeSkill);
+
+  return (
+    <Suspense
+      fallback={
+        <div className="px-4 py-7 text-center text-sm text-slate-500">
+          加载中...
+        </div>
+      }
+    >
+      <div className="bg-white">
+        <div className="border-b border-slate-200/80 bg-[linear-gradient(180deg,rgb(255,255,255)_0%,rgb(248,250,252)_100%)] px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-semibold tracking-[0.08em] text-slate-500">
+                {SKILL_SELECTION_DISPLAY_COPY.titleLabel}
+              </div>
+              <div className="mt-1 text-sm text-slate-700">
+                {activeSkillLabel ??
+                  SKILL_SELECTION_DISPLAY_COPY.emptySelectionLabel}
+              </div>
+            </div>
+            {activeSkill && onClearSkill ? (
+              <button
+                type="button"
+                data-testid="skill-selector-clear"
+                onClick={onClearSkill}
+                className="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-600 transition hover:border-slate-300 hover:bg-white hover:text-slate-900"
+              >
+                {SKILL_SELECTION_DISPLAY_COPY.clearActionLabel}
+              </button>
+            ) : null}
+          </div>
+          {refreshBusy && !hasResults ? (
+            <div className="mt-2 text-xs text-slate-500">
+              {SKILL_SELECTION_DISPLAY_COPY.loadingLabel}
+            </div>
+          ) : null}
+        </div>
+        <LazyCharacterMentionPanel
+          mode="mention"
+          mentionQuery={query}
+          builtinCommands={[] satisfies BuiltinInputCommand[]}
+          slashCommands={[]}
+          mentionServiceSkills={mentionServiceSkills}
+          filteredCharacters={[]}
+          installedSkills={installedSkills}
+          availableSkills={availableSkills}
+          commandRef={commandRef}
+          onQueryChange={onQueryChange}
+          onSelectBuiltinCommand={() => undefined}
+          onSelectServiceSkill={(skill) => onSelectServiceSkill?.(skill)}
+          onSelectSlashCommand={() => undefined}
+          onSelectCharacter={() => undefined}
+          onSelectInstalledSkill={onSelectInstalledSkill}
+          onSelectAvailableSkill={onSelectAvailableSkill}
+          onNavigateToSettings={onNavigateToSettings}
+        />
+        {canRefresh || canImport ? (
+          <div className="border-t border-slate-200/80 p-1.5">
+            <div className="flex items-center gap-1.5">
+              {canRefresh ? (
+                <button
+                  type="button"
+                  data-testid="skill-selector-refresh"
+                  onClick={onRefresh}
+                  disabled={refreshBusy}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {refreshBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                  <span>{refreshBusy ? "刷新中..." : "刷新技能"}</span>
+                </button>
+              ) : null}
+              {canImport ? (
+                <button
+                  type="button"
+                  data-testid="skill-selector-import"
+                  onClick={onImport}
+                  disabled={importing}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {importing ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderOpen className="h-4 w-4" />
+                  )}
+                  <span>{importing ? "导入中..." : "导入技能"}</span>
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        {!hasResults && !canRefresh && !canImport ? (
+          <div className="px-4 pb-3 text-xs text-slate-400">
+            暂无更多技能操作。
+          </div>
+        ) : null}
+      </div>
+    </Suspense>
+  );
+};
 
 export const SkillSelector: React.FC<SkillSelectorProps> = ({
   skills = [],
+  serviceSkills = [],
   activeSkill = null,
   isLoading = false,
   onSelectSkill,
+  onSelectServiceSkill,
   onClearSkill,
   onNavigateToSettings,
   onImportSkill,
@@ -67,37 +211,31 @@ export const SkillSelector: React.FC<SkillSelectorProps> = ({
   const [importing, setImporting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [autoRefreshTriggered, setAutoRefreshTriggered] = useState(false);
+  const commandRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    return scheduleIdleModulePreload(() => {
-      void preloadSkillSelectorPanel();
-    });
-  }, []);
+  useIdleModulePreload(() => {
+    void preloadCharacterMentionPanel();
+  });
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (!open) {
       setQuery("");
       setAutoRefreshTriggered(false);
     }
   }, [open]);
 
-  const installedSkills = useMemo(
-    () =>
-      skills.filter(
-        (skill) => skill.installed && matchesSkillQuery(skill, query),
-      ),
+  const { installedSkills, availableSkills } = useMemo(
+    () => partitionMentionableSkills(skills, query),
     [query, skills],
   );
 
-  const availableSkills = useMemo(
-    () =>
-      skills.filter(
-        (skill) => !skill.installed && matchesSkillQuery(skill, query),
-      ),
-    [query, skills],
+  const filteredServiceSkills = useMemo(
+    () => filterMentionableServiceSkills(serviceSkills, query),
+    [query, serviceSkills],
   );
 
   const hasResults =
+    filteredServiceSkills.length > 0 ||
     installedSkills.length > 0 ||
     availableSkills.length > 0 ||
     Boolean(activeSkill && onClearSkill);
@@ -118,7 +256,7 @@ export const SkillSelector: React.FC<SkillSelectorProps> = ({
     }
   }, [onRefreshSkills, refreshBusy]);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (
       !open ||
       autoRefreshTriggered ||
@@ -150,12 +288,17 @@ export const SkillSelector: React.FC<SkillSelectorProps> = ({
     setOpen(false);
   };
 
+  const handleSelectServiceSkill = (skill: ServiceSkillHomeItem) => {
+    onSelectServiceSkill?.(skill);
+    setOpen(false);
+  };
+
   const handleSelectAvailableSkill = (skill: Skill) => {
     setOpen(false);
     toast.info(`技能「${skill.name}」尚未安装`, {
       action: onNavigateToSettings
         ? {
-            label: "去安装",
+            label: "去技能中心",
             onClick: onNavigateToSettings,
           }
         : undefined,
@@ -207,39 +350,34 @@ export const SkillSelector: React.FC<SkillSelectorProps> = ({
         sideOffset={8}
       >
         {open ? (
-          <Suspense
-            fallback={
-              <div className="px-4 py-7 text-center text-sm text-slate-500">
-                加载中...
-              </div>
+          <SkillSelectorContent
+            activeSkill={activeSkill}
+            installedSkills={installedSkills}
+            availableSkills={availableSkills}
+            mentionServiceSkills={filteredServiceSkills}
+            query={query}
+            refreshBusy={refreshBusy}
+            hasResults={hasResults}
+            canRefresh={canRefresh}
+            canImport={canImport}
+            importing={importing}
+            commandRef={commandRef}
+            onQueryChange={setQuery}
+            onSelectInstalledSkill={handleSelectInstalledSkill}
+            onSelectAvailableSkill={handleSelectAvailableSkill}
+            onSelectServiceSkill={handleSelectServiceSkill}
+            onClearSkill={handleClearSkill}
+            onNavigateToSettings={
+              onNavigateToSettings
+                ? () => {
+                    setOpen(false);
+                    onNavigateToSettings();
+                  }
+                : undefined
             }
-          >
-            <SkillSelectorPanel
-              activeSkill={activeSkill}
-              installedSkills={installedSkills}
-              availableSkills={availableSkills}
-              query={query}
-              canRefresh={canRefresh}
-              refreshBusy={refreshBusy}
-              canImport={canImport}
-              importing={importing}
-              hasResults={hasResults}
-              onQueryChange={setQuery}
-              onRefresh={() => void handleRefresh()}
-              onSelectInstalledSkill={handleSelectInstalledSkill}
-              onSelectAvailableSkill={handleSelectAvailableSkill}
-              onClearSkill={handleClearSkill}
-              onNavigateToSettings={
-                onNavigateToSettings
-                  ? () => {
-                      setOpen(false);
-                      onNavigateToSettings();
-                    }
-                  : undefined
-              }
-              onImport={() => void handleImport()}
-            />
-          </Suspense>
+            onRefresh={() => void handleRefresh()}
+            onImport={() => void handleImport()}
+          />
         ) : null}
       </PopoverContent>
     </Popover>

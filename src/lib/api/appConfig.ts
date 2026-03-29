@@ -2,6 +2,7 @@ import { safeInvoke } from "@/lib/dev-bridge";
 import type { Config, EnvironmentPreview } from "./appConfigTypes";
 
 const APP_CONFIG_CHANGE_STAMP_KEY = "lime.app-config.changed-at";
+const APP_CONFIG_CHANGED_EVENT = "lime:app-config-changed";
 
 let configCache: Config | null = null;
 let configLoadingPromise: Promise<Config> | null = null;
@@ -12,6 +13,7 @@ export type {
   CrashReportingConfig,
   ChatAppearanceConfig,
   ContentCreatorConfig,
+  DeveloperConfig,
   EnvironmentConfig,
   EnvironmentPreview,
   EnvironmentPreviewEntry,
@@ -62,6 +64,12 @@ function markAppConfigChanged(): string | null {
     } catch {
       // ignore
     }
+
+    try {
+      window.dispatchEvent(new CustomEvent(APP_CONFIG_CHANGED_EVENT));
+    } catch {
+      // ignore
+    }
   }
 
   return nextStamp;
@@ -75,6 +83,29 @@ function invalidateConfigCache(): void {
 
 export function invalidateAppConfigCache(): void {
   invalidateConfigCache();
+}
+
+export function subscribeAppConfigChanged(listener: () => void): () => void {
+  if (typeof window === "undefined") {
+    return () => undefined;
+  }
+
+  const handleCustomChange = () => {
+    listener();
+  };
+  const handleStorage = (event: StorageEvent) => {
+    if (event.key === APP_CONFIG_CHANGE_STAMP_KEY) {
+      listener();
+    }
+  };
+
+  window.addEventListener(APP_CONFIG_CHANGED_EVENT, handleCustomChange);
+  window.addEventListener("storage", handleStorage);
+
+  return () => {
+    window.removeEventListener(APP_CONFIG_CHANGED_EVENT, handleCustomChange);
+    window.removeEventListener("storage", handleStorage);
+  };
 }
 
 export async function getConfig(

@@ -39,10 +39,13 @@ describe("generalAgentPrompt", () => {
     expect(prompt).toContain("需求澄清");
     expect(prompt).toContain("当前能力开关");
     expect(prompt).toContain("执行车道");
-    expect(prompt).toContain("后台任务：已开启");
+    expect(prompt).toContain("计划执行：已开启");
     expect(prompt).toContain("多代理：已开启");
     expect(prompt).toContain("统一使用 WebSearch");
     expect(prompt).toContain("不要混用 search/search_query/tool_search");
+    expect(prompt).toContain("1 个当前最关键的问题");
+    expect(prompt).toContain("合理假设补齐");
+    expect(prompt).toContain("每轮最多只保留 1 个最关键问题");
   });
 
   it("知识主题 Prompt 应强调事实与时效性", () => {

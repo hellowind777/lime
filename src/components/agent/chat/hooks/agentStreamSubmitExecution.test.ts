@@ -49,6 +49,7 @@ describe("agentStreamSubmitExecution", () => {
         task: false,
         subagent: true,
       }),
+      effectiveAccessMode: "read-only",
       content: "继续生成提纲",
       images: [],
       skipUserMessage: false,
@@ -103,6 +104,10 @@ describe("agentStreamSubmitExecution", () => {
         workspaceId: "workspace-1",
         turnId: "turn-1",
         text: "继续生成提纲",
+        preferences: expect.objectContaining({
+          approvalPolicy: "on-request",
+          sandboxPolicy: "read-only",
+        }),
       }),
     );
     expect(activateStream).toHaveBeenCalled();

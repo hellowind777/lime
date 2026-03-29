@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
   baseInvoke: vi.fn(),
   baseListen: vi.fn(),
   baseEmit: vi.fn(),
+  listenViaHttpEvent: vi.fn(),
+  hasDevBridgeEventListenerCapability: vi.fn(),
   invokeViaHttp: vi.fn(),
   isDevBridgeAvailable: vi.fn(),
   normalizeDevBridgeError: vi.fn((cmd: string, error: unknown) => {
@@ -25,8 +27,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("./http-client", () => ({
+  hasDevBridgeEventListenerCapability:
+    mocks.hasDevBridgeEventListenerCapability,
   invokeViaHttp: mocks.invokeViaHttp,
   isDevBridgeAvailable: mocks.isDevBridgeAvailable,
+  listenViaHttpEvent: mocks.listenViaHttpEvent,
   normalizeDevBridgeError: mocks.normalizeDevBridgeError,
 }));
 
@@ -48,6 +53,7 @@ describe("safeInvoke", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isDevBridgeAvailable.mockReturnValue(true);
+    mocks.hasDevBridgeEventListenerCapability.mockReturnValue(false);
     window.localStorage.clear();
     clearInvokeErrorBuffer();
     clearInvokeTraceBuffer();
@@ -136,7 +142,24 @@ describe("safeInvoke", () => {
     );
   });
 
+  it("浏览器开发模式下 safeListen 优先走 HTTP 事件桥", async () => {
+    const unlisten = vi.fn();
+    mocks.hasDevBridgeEventListenerCapability.mockReturnValue(true);
+    mocks.listenViaHttpEvent.mockResolvedValueOnce(unlisten);
+
+    await expect(safeListen("config-changed", vi.fn())).resolves.toBe(unlisten);
+
+    expect(mocks.listenViaHttpEvent).toHaveBeenCalledWith(
+      "config-changed",
+      expect.any(Function),
+    );
+    expect(mocks.baseListen).not.toHaveBeenCalled();
+  });
+
   it("Tauri 运行时存在但事件桥缺失时 safeListen 返回空清理函数", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
     vi.useFakeTimers();
     (window as any).__TAURI__ = {
       core: {
@@ -144,16 +167,23 @@ describe("safeInvoke", () => {
       },
     };
 
-    const promise = safeListen("config-changed", vi.fn());
-    await vi.advanceTimersByTimeAsync(3000);
-    const unlisten = await promise;
+    try {
+      const promise = safeListen("config-changed", vi.fn());
+      await vi.advanceTimersByTimeAsync(3000);
+      const unlisten = await promise;
 
-    expect(typeof unlisten).toBe("function");
-    expect(mocks.baseListen).not.toHaveBeenCalled();
-    vi.useRealTimers();
+      expect(typeof unlisten).toBe("function");
+      expect(mocks.baseListen).not.toHaveBeenCalled();
+    } finally {
+      consoleWarnSpy.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("事件桥调用异常时 safeListen 降级为空清理函数", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
     (window as any).__TAURI_INTERNALS__ = {
       invoke: vi.fn(),
       transformCallback: vi.fn(),
@@ -164,12 +194,16 @@ describe("safeInvoke", () => {
       ),
     );
 
-    const unlisten = await safeListen("plugin-task-event", vi.fn());
+    try {
+      const unlisten = await safeListen("plugin-task-event", vi.fn());
 
-    expect(typeof unlisten).toBe("function");
-    expect(mocks.baseListen).toHaveBeenCalledWith(
-      "plugin-task-event",
-      expect.any(Function),
-    );
+      expect(typeof unlisten).toBe("function");
+      expect(mocks.baseListen).toHaveBeenCalledWith(
+        "plugin-task-event",
+        expect.any(Function),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
   });
 });

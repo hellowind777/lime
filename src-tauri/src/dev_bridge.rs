@@ -9,9 +9,12 @@ pub mod dispatcher;
 
 #[cfg(debug_assertions)]
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{request::Parts as RequestParts, HeaderValue, Method},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event as SseEvent, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     routing::{get, post},
     Json, Router,
 };
@@ -19,6 +22,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 #[cfg(debug_assertions)]
 use std::sync::Arc;
+#[cfg(debug_assertions)]
+use std::{convert::Infallible, time::Duration};
 #[cfg(debug_assertions)]
 use tokio::sync::RwLock;
 #[cfg(debug_assertions)]
@@ -34,7 +39,7 @@ use lime_services::{
     provider_pool_service::ProviderPoolService, skill_service::SkillService,
 };
 #[cfg(debug_assertions)]
-use tauri::AppHandle;
+use tauri::{AppHandle, EventId, Listener};
 
 #[cfg(debug_assertions)]
 #[derive(Debug, Deserialize)]
@@ -49,6 +54,12 @@ pub struct InvokeRequest {
 pub struct InvokeResponse {
     pub result: Option<serde_json::Value>,
     pub error: Option<String>,
+}
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Deserialize)]
+pub struct EventStreamRequest {
+    pub event: String,
 }
 
 #[cfg(debug_assertions)]
@@ -143,6 +154,7 @@ impl DevBridgeServer {
 
         let app = Router::new()
             .route("/invoke", post(invoke_command))
+            .route("/events", get(stream_events))
             .route("/health", get(health_check).post(health_check))
             .layer(
                 // CORS 配置 - 允许本地开发前端访问
@@ -177,6 +189,20 @@ impl DevBridgeServer {
 }
 
 #[cfg(debug_assertions)]
+#[derive(Clone)]
+struct DevBridgeEventListenerGuard {
+    app_handle: AppHandle,
+    listener_id: EventId,
+}
+
+#[cfg(debug_assertions)]
+impl Drop for DevBridgeEventListenerGuard {
+    fn drop(&mut self) {
+        self.app_handle.unlisten(self.listener_id);
+    }
+}
+
+#[cfg(debug_assertions)]
 fn invoke_command(
     State(state): State<DevBridgeState>,
     Json(req): Json<InvokeRequest>,
@@ -196,6 +222,63 @@ fn invoke_command(
             .into_response(),
         }
     }
+}
+
+#[cfg(debug_assertions)]
+async fn stream_events(
+    State(state): State<DevBridgeState>,
+    Query(req): Query<EventStreamRequest>,
+) -> Response {
+    let event_name = req.event.trim().to_string();
+    if event_name.is_empty() {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "missing event query parameter",
+        )
+            .into_response();
+    }
+
+    let Some(app_handle) = state.app_handle.clone() else {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "dev bridge app handle unavailable",
+        )
+            .into_response();
+    };
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let listener_event_name = event_name.clone();
+    let listener_id = app_handle.listen_any(listener_event_name.clone(), move |event| {
+        let payload = event.payload();
+        let payload_value = serde_json::from_str::<serde_json::Value>(payload)
+            .unwrap_or_else(|_| serde_json::Value::String(payload.to_string()));
+        let serialized = serde_json::json!({
+            "event": listener_event_name.clone(),
+            "payload": payload_value,
+        })
+        .to_string();
+        let _ = tx.send(serialized);
+    });
+
+    let cleanup_handle = app_handle.clone();
+    let stream = async_stream::stream! {
+        let _listener_guard = DevBridgeEventListenerGuard {
+            app_handle: cleanup_handle,
+            listener_id,
+        };
+
+        while let Some(payload) = rx.recv().await {
+            yield Ok::<SseEvent, Infallible>(SseEvent::default().data(payload));
+        }
+    };
+
+    Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("keepalive"),
+        )
+        .into_response()
 }
 
 #[cfg(debug_assertions)]

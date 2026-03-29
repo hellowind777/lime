@@ -145,6 +145,7 @@ export interface OemCloudBootstrapResponse {
   };
   providerOffersSummary: OemCloudProviderOfferSummary[];
   providerPreference: OemCloudProviderPreference;
+  skillCatalog?: unknown;
   serviceSkillCatalog?: unknown;
   siteAdapterCatalog?: unknown;
   sceneCatalog?: Array<{ id: string }>;
@@ -812,6 +813,7 @@ function parseBootstrap(value: unknown): OemCloudBootstrapResponse {
       ? value.providerOffersSummary.map(parseProviderOfferSummary)
       : [],
     providerPreference: parseProviderPreference(value.providerPreference),
+    skillCatalog: value.skillCatalog,
     serviceSkillCatalog: value.serviceSkillCatalog,
     siteAdapterCatalog: value.siteAdapterCatalog ?? value.site_adapter_catalog,
     sceneCatalog: Array.isArray(value.sceneCatalog)

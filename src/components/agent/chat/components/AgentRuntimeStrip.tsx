@@ -10,7 +10,6 @@ import type { ChatToolPreferences } from "../utils/chatToolPreferences";
 import type { CompatSubagentRuntimeStatus } from "../utils/compatSubagentRuntime";
 import type { HarnessSessionState } from "../utils/harnessState";
 import {
-  getExecutionRuntimeDisplayLabel,
   getOutputSchemaRuntimeLabel,
 } from "../utils/sessionExecutionRuntime";
 
@@ -77,7 +76,6 @@ export const AgentRuntimeStrip: React.FC<AgentRuntimeStripProps> = ({
         label: "联网搜索",
         enabled: toolPreferences.webSearch,
       },
-      { key: "task", label: "后台任务", enabled: toolPreferences.task },
       { key: "subagent", label: "多代理", enabled: toolPreferences.subagent },
     ],
     [toolPreferences],
@@ -85,10 +83,6 @@ export const AgentRuntimeStrip: React.FC<AgentRuntimeStripProps> = ({
 
   const statusItems = useMemo<StatusItem[]>(() => {
     const nextItems: StatusItem[] = [];
-    const executionRuntimeLabel = getExecutionRuntimeDisplayLabel(
-      executionRuntime,
-      { active: isExecutionRuntimeActive },
-    );
     const outputSchemaLabel = getOutputSchemaRuntimeLabel(
       executionRuntime?.output_schema_runtime,
     );
@@ -114,19 +108,11 @@ export const AgentRuntimeStrip: React.FC<AgentRuntimeStripProps> = ({
       });
     }
 
-    if (executionRuntimeLabel) {
-      nextItems.push({
-        key: "execution_runtime",
-        label: executionRuntimeLabel,
-        tone: isExecutionRuntimeActive ? "secondary" : "outline",
-      });
-    }
-
     if (outputSchemaLabel) {
       nextItems.push({
         key: "output_schema_runtime",
         label: `结构化输出 ${outputSchemaLabel}`,
-        tone: "outline",
+        tone: isExecutionRuntimeActive ? "secondary" : "outline",
       });
     }
 

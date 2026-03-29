@@ -166,6 +166,8 @@ pub struct TurnInputEnvelope {
     working_dir: Option<String>,
     effective_user_message: String,
     include_context_trace: bool,
+    approval_policy: Option<String>,
+    sandbox_policy: Option<String>,
     turn_context_metadata: Option<Map<String, Value>>,
 }
 
@@ -196,11 +198,17 @@ impl TurnInputEnvelope {
     }
 
     pub fn turn_context_override(&self) -> Option<TurnContextOverride> {
-        self.merged_turn_context_metadata()
-            .map(|metadata| TurnContextOverride {
-                metadata: metadata.into_iter().collect(),
-                ..TurnContextOverride::default()
-            })
+        let metadata = self.merged_turn_context_metadata();
+        if metadata.is_none() && self.approval_policy.is_none() && self.sandbox_policy.is_none() {
+            return None;
+        }
+
+        Some(TurnContextOverride {
+            approval_policy: self.approval_policy.clone(),
+            sandbox_policy: self.sandbox_policy.clone(),
+            metadata: metadata.unwrap_or_default().into_iter().collect(),
+            ..TurnContextOverride::default()
+        })
     }
 
     pub fn diagnostics_snapshot(&self) -> TurnDiagnosticsSnapshot {
@@ -266,6 +274,8 @@ impl TurnInputEnvelopeBuilder {
                 working_dir: None,
                 effective_user_message: String::new(),
                 include_context_trace: false,
+                approval_policy: None,
+                sandbox_policy: None,
                 turn_context_metadata: None,
             },
         }
@@ -342,6 +352,16 @@ impl TurnInputEnvelopeBuilder {
 
     pub fn set_include_context_trace(&mut self, include_context_trace: bool) -> &mut Self {
         self.envelope.include_context_trace = include_context_trace;
+        self
+    }
+
+    pub fn set_approval_policy(&mut self, approval_policy: Option<String>) -> &mut Self {
+        self.envelope.approval_policy = normalize_optional_string(approval_policy);
+        self
+    }
+
+    pub fn set_sandbox_policy(&mut self, sandbox_policy: Option<String>) -> &mut Self {
+        self.envelope.sandbox_policy = normalize_optional_string(sandbox_policy);
         self
     }
 
@@ -555,5 +575,19 @@ mod tests {
                 "previous_response_id": "resp-2"
             }))
         );
+    }
+
+    #[test]
+    fn test_turn_input_envelope_keeps_runtime_access_policies() {
+        let mut builder = TurnInputEnvelopeBuilder::new("session-4", "workspace-4");
+        builder
+            .set_approval_policy(Some("on-request".to_string()))
+            .set_sandbox_policy(Some("read-only".to_string()));
+
+        let envelope = builder.build();
+        let turn_context = envelope.turn_context_override().expect("turn context");
+
+        assert_eq!(turn_context.approval_policy.as_deref(), Some("on-request"));
+        assert_eq!(turn_context.sandbox_policy.as_deref(), Some("read-only"));
     }
 }

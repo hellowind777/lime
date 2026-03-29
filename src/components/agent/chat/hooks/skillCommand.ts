@@ -639,10 +639,6 @@ export async function tryExecuteSlashSkillCommand(
       sessionId: activeSessionId,
     });
 
-    console.log(
-      `[SkillCommand] 执行完成: name=${command.skillName}, success=${result.success}, output_len=${result.output?.length ?? 0}, stream_stats=${JSON.stringify(streamCounters)}`,
-    );
-
     if (isExecutionCancelled()) {
       console.info(
         `[SkillCommand] 执行结果已忽略（用户已取消）: ${command.skillName}`,

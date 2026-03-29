@@ -1,3 +1,4 @@
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { safeInvoke } from "@/lib/dev-bridge";
 
 export async function revealPathInFinder(path: string): Promise<void> {
@@ -6,4 +7,8 @@ export async function revealPathInFinder(path: string): Promise<void> {
 
 export async function openPathWithDefaultApp(path: string): Promise<void> {
   await safeInvoke("open_with_default_app", { path });
+}
+
+export function convertLocalFileSrc(path: string): string {
+  return convertFileSrc(path);
 }

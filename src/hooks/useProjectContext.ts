@@ -6,7 +6,10 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  buildProjectSystemPrompt,
+  getProjectContext,
+} from "@/lib/api/projectContext";
 import type { ProjectContext } from "@/types/context";
 
 /** Hook 返回类型 */
@@ -52,8 +55,8 @@ export function useProjectContext(
       setError(null);
 
       const [ctx, prompt] = await Promise.all([
-        invoke<ProjectContext>("get_project_context", { projectId }),
-        invoke<string>("build_project_system_prompt", { projectId }),
+        getProjectContext(projectId),
+        buildProjectSystemPrompt(projectId),
       ]);
 
       setContext(ctx);
@@ -71,9 +74,7 @@ export function useProjectContext(
       return "";
     }
 
-    const prompt = await invoke<string>("build_project_system_prompt", {
-      projectId,
-    });
+    const prompt = await buildProjectSystemPrompt(projectId);
     setSystemPrompt(prompt);
     return prompt;
   }, [projectId]);

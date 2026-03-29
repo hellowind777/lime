@@ -59,16 +59,9 @@ export function useInputbarToolState({
       ...localActiveTools,
       web_search: webSearchEnabled,
       thinking: thinkingEnabled,
-      task_mode: taskEnabled,
       subagent_mode: subagentEnabled,
     }),
-    [
-      localActiveTools,
-      thinkingEnabled,
-      webSearchEnabled,
-      taskEnabled,
-      subagentEnabled,
-    ],
+    [localActiveTools, thinkingEnabled, webSearchEnabled, subagentEnabled],
   );
 
   const updateToolStates = useCallback(
@@ -116,17 +109,6 @@ export function useInputbarToolState({
           toast.info(`联网搜索${nextWebSearch ? "已开启" : "已关闭"}`);
           break;
         }
-        case "task_mode": {
-          const nextTask = !taskEnabled;
-          updateToolStates({
-            webSearch: webSearchEnabled,
-            thinking: thinkingEnabled,
-            task: nextTask,
-            subagent: subagentEnabled,
-          });
-          toast.info(`后台任务${nextTask ? "偏好已开启" : "偏好已关闭"}`);
-          break;
-        }
         case "subagent_mode": {
           const nextSubagent = !subagentEnabled;
           updateToolStates({
@@ -140,21 +122,13 @@ export function useInputbarToolState({
         }
         case "execution_strategy":
           if (setExecutionStrategy) {
-            const strategyOrder: Array<
-              "react" | "code_orchestrated" | "auto"
-            > = ["react", "code_orchestrated", "auto"];
-            const currentIndex = strategyOrder.indexOf(
-              executionStrategy || "react",
-            );
             const nextStrategy =
-              strategyOrder[(currentIndex + 1) % strategyOrder.length];
+              executionStrategy === "code_orchestrated"
+                ? "react"
+                : "code_orchestrated";
             setExecutionStrategy(nextStrategy);
             toast.info(
-              nextStrategy === "react"
-                ? "执行模式：ReAct"
-                : nextStrategy === "code_orchestrated"
-                  ? "执行模式：Plan"
-                  : "执行模式：Auto",
+              `Plan 模式${nextStrategy === "code_orchestrated" ? "已开启" : "已关闭"}`,
             );
             break;
           }
@@ -178,8 +152,7 @@ export function useInputbarToolState({
           openFileDialog();
           break;
         case "quick_action":
-        case "translate":
-          toast.info("翻译功能开发中...");
+          toast.info("快捷操作开发中...");
           break;
         case "fullscreen":
           setIsFullscreen((prev) => !prev);

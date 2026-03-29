@@ -37,8 +37,6 @@ import { EmptyStateComposerPanel } from "./EmptyStateComposerPanel";
 import { EmptyStateHero } from "./EmptyStateHero";
 import { EmptyStateQuickActions } from "./EmptyStateQuickActions";
 import {
-  EMPTY_STATE_BACKGROUND_ORB_LEFT_CLASSNAME,
-  EMPTY_STATE_BACKGROUND_ORB_RIGHT_CLASSNAME,
   EMPTY_STATE_CONTENT_WRAPPER_CLASSNAME,
   EMPTY_STATE_PAGE_CONTAINER_CLASSNAME,
   EMPTY_STATE_SECONDARY_ACTION_BUTTON_CLASSNAME,
@@ -47,17 +45,21 @@ import {
   getEmptyStateThemeTabIconClassName,
 } from "./emptyStateSurfaceTokens";
 import { useActiveSkill } from "./Inputbar/hooks/useActiveSkill";
+import type { SkillSelectionSourceProps } from "./Inputbar/components/skillSelectionBindings";
 import type { Character } from "@/lib/api/memory";
-import type { Skill } from "@/lib/api/skills";
 import type { WorkspaceSettings } from "@/types/workspace";
 import type { MessageImage } from "../types";
 import type { TeamDefinition } from "../utils/teamDefinitions";
 import { isGeneralResearchTheme } from "../utils/generalAgentPrompt";
+import type { AgentAccessMode } from "../hooks/agentChatStorage";
 import {
   getClipboardImageCandidates,
   readImageAttachment,
 } from "../utils/imageAttachments";
-import type { ServiceSkillHomeItem } from "../service-skills/types";
+import {
+  getActiveSkillDisplayLabel,
+  getSkillSelectionSummaryLabel,
+} from "./Inputbar/components/skillSelectionDisplay";
 
 // Import Assets
 import capabilitySkillsPlaceholder from "@/assets/claw-home/capability-skills-placeholder.svg";
@@ -93,28 +95,6 @@ function scheduleDeferredConfigLoad(task: () => void): () => void {
   };
 }
 
-const backgroundOrbDrift = keyframes`
-  0%, 100% {
-    transform: translate3d(0, 0, 0) scale(1);
-    opacity: 0.92;
-  }
-  50% {
-    transform: translate3d(18px, -14px, 0) scale(1.05);
-    opacity: 1;
-  }
-`;
-
-const backgroundOrbPulse = keyframes`
-  0%, 100% {
-    transform: translate3d(0, 0, 0) scale(1);
-    opacity: 0.9;
-  }
-  50% {
-    transform: translate3d(-16px, 18px, 0) scale(1.08);
-    opacity: 1;
-  }
-`;
-
 const contentReveal = keyframes`
   from {
     opacity: 0;
@@ -132,28 +112,6 @@ const PageContainer = styled.div.attrs({
   isolation: isolate;
 `;
 
-const BackgroundOrbLeft = styled.div.attrs({
-  className: EMPTY_STATE_BACKGROUND_ORB_LEFT_CLASSNAME,
-})`
-  animation: ${backgroundOrbDrift} 18s ease-in-out infinite;
-  will-change: transform, opacity;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-`;
-
-const BackgroundOrbRight = styled.div.attrs({
-  className: EMPTY_STATE_BACKGROUND_ORB_RIGHT_CLASSNAME,
-})`
-  animation: ${backgroundOrbPulse} 22s ease-in-out infinite;
-  will-change: transform, opacity;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-`;
-
 const ContentWrapper = styled.div.attrs({
   className: EMPTY_STATE_CONTENT_WRAPPER_CLASSNAME,
 })`
@@ -164,7 +122,7 @@ const ContentWrapper = styled.div.attrs({
   }
 `;
 
-interface EmptyStateProps {
+interface EmptyStateProps extends SkillSelectionSourceProps {
   input: string;
   setInput: (value: string) => void;
   onSend: (
@@ -192,13 +150,13 @@ interface EmptyStateProps {
   setExecutionStrategy?: (
     strategy: "react" | "code_orchestrated" | "auto",
   ) => void;
+  accessMode?: AgentAccessMode;
+  setAccessMode?: (mode: AgentAccessMode) => void;
   onManageProviders?: () => void;
   webSearchEnabled?: boolean;
   onWebSearchEnabledChange?: (enabled: boolean) => void;
   thinkingEnabled?: boolean;
   onThinkingEnabledChange?: (enabled: boolean) => void;
-  taskEnabled?: boolean;
-  onTaskEnabledChange?: (enabled: boolean) => void;
   subagentEnabled?: boolean;
   onSubagentEnabledChange?: (enabled: boolean) => void;
   selectedTeam?: TeamDefinition | null;
@@ -211,20 +169,6 @@ interface EmptyStateProps {
   selectedText?: string;
   /** 角色列表（用于 @ 引用） */
   characters?: Character[];
-  /** 技能列表（用于 @ 引用） */
-  skills?: Skill[];
-  /** 服务型技能列表（用于 @ 引用） */
-  serviceSkills?: ServiceSkillHomeItem[];
-  /** 技能列表加载状态 */
-  isSkillsLoading?: boolean;
-  /** 选择服务型技能回调 */
-  onSelectServiceSkill?: (skill: ServiceSkillHomeItem) => void;
-  /** 跳转到设置页安装技能 */
-  onNavigateToSettings?: () => void;
-  /** 导入本地技能 */
-  onImportSkill?: () => void | Promise<void>;
-  /** 刷新技能 */
-  onRefreshSkills?: () => void | Promise<void>;
   /** 启动浏览器协助 */
   onLaunchBrowserAssist?: () => void | Promise<void>;
   /** 浏览器协助启动中 */
@@ -388,13 +332,13 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   setModel,
   executionStrategy = "react",
   setExecutionStrategy,
+  accessMode,
+  setAccessMode,
   onManageProviders,
   webSearchEnabled = false,
   onWebSearchEnabledChange,
   thinkingEnabled = false,
   onThinkingEnabledChange,
-  taskEnabled = false,
-  onTaskEnabledChange,
   subagentEnabled = false,
   onSubagentEnabledChange,
   selectedTeam = null,
@@ -406,9 +350,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   hasContentId = false,
   selectedText = "",
   characters = [],
-  skills = [],
-  serviceSkills = [],
-  isSkillsLoading = false,
+  skills,
+  serviceSkills,
+  isSkillsLoading,
   onSelectServiceSkill,
   onNavigateToSettings,
   onImportSkill,
@@ -424,8 +368,25 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   configLoadStrategy = "immediate",
   supportingSlotOverride,
 }) => {
-  const { activeSkill, setActiveSkill, clearActiveSkill, wrapTextWithSkill } =
-    useActiveSkill();
+  const { wrapTextWithSkill, buildSkillSelection } = useActiveSkill();
+  const skillSelection = buildSkillSelection({
+    skills,
+    serviceSkills,
+    isSkillsLoading,
+    onSelectServiceSkill,
+    onNavigateToSettings,
+    onImportSkill,
+    onRefreshSkills,
+  });
+  const currentSkill = skillSelection.activeSkill;
+  const clearSelectedSkill = skillSelection.onClearSkill;
+  const skillOptionCount =
+    skillSelection.skills.length + skillSelection.serviceSkills.length;
+  const activeSkillDisplayLabel = getActiveSkillDisplayLabel(currentSkill);
+  const skillSummaryLabel = getSkillSelectionSummaryLabel({
+    activeSkill: currentSkill,
+    skillCount: skillOptionCount,
+  });
 
   // 从配置中读取启用的主题
   const [enabledThemes, setEnabledThemes] = useState<string[]>(
@@ -684,7 +645,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         imagesToSend,
       );
       setPendingImages([]);
-      clearActiveSkill();
+      clearSelectedSkill?.();
       return;
     }
 
@@ -705,15 +666,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       imagesToSend,
     );
     setPendingImages([]);
-    clearActiveSkill();
+    clearSelectedSkill?.();
   };
 
-  const executionStrategyLabel =
-    executionStrategy === "auto"
-      ? "Auto"
-      : executionStrategy === "code_orchestrated"
-        ? "Plan"
-        : "ReAct";
+  const planEnabled = executionStrategy === "code_orchestrated";
+  const executionModeLabel = planEnabled ? "Plan 已开启" : "直接执行";
 
   const activeCategory =
     ALL_CATEGORIES.find((category) => category.id === activeTheme) ||
@@ -817,7 +774,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       },
       {
         key: "execution",
-        label: `执行 ${executionStrategyLabel}`,
+        label: executionModeLabel,
         tone: "sky",
       },
     ];
@@ -854,10 +811,10 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       });
     }
 
-    if (activeSkill) {
+    if (activeSkillDisplayLabel) {
       badges.push({
         key: "skill",
-        label: `技能 ${activeSkill.name}`,
+        label: activeSkillDisplayLabel,
         tone: "emerald",
       });
     }
@@ -865,14 +822,14 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
     return badges.slice(0, 5);
   }, [
     activeCategory.label,
-    activeSkill,
     activeTheme,
     creationMode,
     depth,
-    executionStrategyLabel,
+    executionModeLabel,
     platform,
     showCreationModeSelector,
     webSearchEnabled,
+    activeSkillDisplayLabel,
   ]);
 
   const workspaceCards = useMemo(() => {
@@ -892,11 +849,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         key: "skills",
         eyebrow: "能力层",
         title: "技能",
-        value: activeSkill
-          ? `当前技能 ${activeSkill.name}`
-          : skills.length > 0
-            ? `${skills.length} 项技能可用`
-            : "按需挂载能力",
+        value: skillSummaryLabel,
         description:
           "把技能当作任务能力层来用，可把固定工作流、提示链和工具调用打包进一次对话。",
         icon: <Lightbulb className="h-5 w-5" />,
@@ -908,11 +861,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
         key: "automation",
         eyebrow: "能力层",
         title: "自动化",
-        value: taskEnabled
-          ? "后台任务已开启"
-          : executionStrategy === "auto"
-            ? "自动执行策略"
-            : `${executionStrategyLabel} 执行`,
+        value: planEnabled ? "Plan 编排已开启" : "按当前对话直接执行",
         description:
           "支持把复杂任务按步骤推进，适合长链路处理、批量执行和需要持续产出的工作流。",
         icon: <ListChecks className="h-5 w-5" />,
@@ -963,14 +912,11 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
     return cards;
   }, [
-    activeSkill,
     browserAssistLoading,
-    executionStrategyLabel,
-    executionStrategy,
+    planEnabled,
     onLaunchBrowserAssist,
-    skills.length,
+    skillSummaryLabel,
     subagentEnabled,
-    taskEnabled,
   ]);
 
   const workspaceFeatures = useMemo(() => {
@@ -1118,8 +1064,9 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       setModel={setModel}
       workspaceId={projectId}
       executionStrategy={executionStrategy}
-      executionStrategyLabel={executionStrategyLabel}
       setExecutionStrategy={setExecutionStrategy}
+      accessMode={accessMode}
+      setAccessMode={setAccessMode}
       onManageProviders={onManageProviders}
       modelSelectorBackgroundPreload={modelSelectorBackgroundPreload}
       isGeneralTheme={isGeneralTheme}
@@ -1133,16 +1080,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       onEntryTaskTypeChange={setEntryTaskType}
       onEntrySlotChange={handleEntrySlotChange}
       characters={characters}
-      skills={skills}
-      serviceSkills={serviceSkills}
-      activeSkill={activeSkill}
-      setActiveSkill={setActiveSkill}
-      onSelectServiceSkill={onSelectServiceSkill}
-      clearActiveSkill={clearActiveSkill}
-      isSkillsLoading={isSkillsLoading}
-      onNavigateToSettings={onNavigateToSettings}
-      onImportSkill={onImportSkill}
-      onRefreshSkills={onRefreshSkills}
+      skillSelection={skillSelection}
       showCreationModeSelector={showCreationModeSelector}
       creationMode={creationMode}
       onCreationModeChange={onCreationModeChange}
@@ -1160,8 +1098,6 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       setStylePopoverOpen={setStylePopoverOpen}
       thinkingEnabled={thinkingEnabled}
       onThinkingEnabledChange={onThinkingEnabledChange}
-      taskEnabled={taskEnabled}
-      onTaskEnabledChange={onTaskEnabledChange}
       subagentEnabled={subagentEnabled}
       onSubagentEnabledChange={onSubagentEnabledChange}
       selectedTeam={selectedTeam}
@@ -1195,7 +1131,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
   const headerControls = onProjectChange ? (
     <div className="flex w-full justify-start sm:w-auto sm:justify-end">
-      <div className="inline-flex max-w-full items-center rounded-[24px] border border-white/85 bg-white/84 p-1 shadow-sm shadow-slate-950/5 backdrop-blur-sm">
+      <div className="inline-flex max-w-full items-center rounded-[24px] border border-slate-200/80 bg-white p-1 shadow-sm shadow-slate-950/5">
         <ProjectSelector
           value={projectId ?? null}
           onChange={onProjectChange}
@@ -1237,8 +1173,6 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
 
   return (
     <PageContainer>
-      <BackgroundOrbLeft />
-      <BackgroundOrbRight />
       <ContentWrapper>
         <EmptyStateHero
           eyebrow={

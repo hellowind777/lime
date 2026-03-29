@@ -21,6 +21,9 @@ pub use crate::protocol::{
     AgentTokenUsage as TauriTokenUsage, AgentToolImage as TauriToolImage,
     AgentToolResult as TauriToolResult,
 };
+use crate::text_normalization::{
+    normalize_legacy_runtime_status_title, normalize_legacy_turn_summary_text,
+};
 use crate::tool_io_offload::{maybe_offload_tool_arguments, maybe_offload_tool_result_payload};
 
 const JSON_RECURSION_LIMIT: usize = 50;
@@ -679,9 +682,9 @@ fn convert_item_status(
 fn format_runtime_status_text(title: &str, detail: &str, checkpoints: &[String]) -> String {
     let mut lines = Vec::new();
 
-    let trimmed_title = title.trim();
+    let trimmed_title = normalize_legacy_runtime_status_title(title);
     if !trimmed_title.is_empty() {
-        lines.push(trimmed_title.to_string());
+        lines.push(trimmed_title);
     }
 
     let trimmed_detail = detail.trim();
@@ -696,7 +699,7 @@ fn format_runtime_status_text(title: &str, detail: &str, checkpoints: &[String])
         }
     }
 
-    lines.join("\n")
+    normalize_legacy_turn_summary_text(&lines.join("\n"))
 }
 
 fn convert_item_payload(payload: ItemRuntimePayload) -> AgentThreadItemPayload {
@@ -727,10 +730,9 @@ fn convert_item_payload(payload: ItemRuntimePayload) -> AgentThreadItemPayload {
             content,
             metadata,
         },
-        ItemRuntimePayload::Reasoning { text } => AgentThreadItemPayload::Reasoning {
-            text,
-            summary: None,
-        },
+        ItemRuntimePayload::Reasoning { text, summary } => {
+            AgentThreadItemPayload::Reasoning { text, summary }
+        }
         ItemRuntimePayload::ToolCall {
             tool_name,
             arguments,
@@ -1441,6 +1443,47 @@ mod tests {
     }
 
     #[test]
+    fn test_convert_item_started_reasoning_runtime_item_preserves_summary() {
+        let now = chrono::Utc::now();
+        let item = ItemRuntime {
+            id: "reasoning-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            turn_id: "turn-1".to_string(),
+            sequence: 3,
+            status: ItemStatus::InProgress,
+            started_at: now,
+            completed_at: None,
+            updated_at: now,
+            payload: ItemRuntimePayload::Reasoning {
+                text: "先判断任务类型\n\n再决定是否联网".to_string(),
+                summary: Some(vec![
+                    "先判断任务类型".to_string(),
+                    "再决定是否联网".to_string(),
+                ]),
+            },
+        };
+
+        let events = convert_agent_event(AgentEvent::ItemStarted { item });
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            TauriAgentEvent::ItemStarted { item } => match &item.payload {
+                AgentThreadItemPayload::Reasoning { text, summary } => {
+                    assert_eq!(text, "先判断任务类型\n\n再决定是否联网");
+                    assert_eq!(
+                        summary.as_ref(),
+                        Some(&vec![
+                            "先判断任务类型".to_string(),
+                            "再决定是否联网".to_string(),
+                        ])
+                    );
+                }
+                other => panic!("Unexpected payload: {other:?}"),
+            },
+            other => panic!("Expected ItemStarted event, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_convert_item_started_file_artifact_runtime_item() {
         let now = chrono::Utc::now();
         let item = ItemRuntime {
@@ -1512,7 +1555,8 @@ mod tests {
         match &events[0] {
             TauriAgentEvent::ItemUpdated { item } => match &item.payload {
                 AgentThreadItemPayload::TurnSummary { text } => {
-                    assert!(text.contains("已决定：先规划再输出"));
+                    assert!(text.contains("先规划再输出"));
+                    assert!(!text.contains("已决定："));
                     assert!(text.contains("当前请求更像计划拆解"));
                     assert!(text.contains("• 检测到计划需求"));
                 }

@@ -6,8 +6,9 @@ const { mockUseComponentDebug } = vi.hoisted(() => ({
   mockUseComponentDebug: vi.fn(),
 }));
 
-const { mockGetConfig } = vi.hoisted(() => ({
+const { mockGetConfig, mockSaveConfig } = vi.hoisted(() => ({
   mockGetConfig: vi.fn(),
+  mockSaveConfig: vi.fn(),
 }));
 
 const {
@@ -79,12 +80,15 @@ const {
   mockSubscribeSiteAdapterCatalogChanged: vi.fn(),
 }));
 
-const { mockSiteGetAdapterCatalogStatus, mockSiteListAdapters } = vi.hoisted(
-  () => ({
-    mockSiteGetAdapterCatalogStatus: vi.fn(),
-    mockSiteListAdapters: vi.fn(),
-  }),
-);
+const {
+  mockSiteGetAdapterCatalogStatus,
+  mockSiteImportAdapterYamlBundle,
+  mockSiteListAdapters,
+} = vi.hoisted(() => ({
+  mockSiteGetAdapterCatalogStatus: vi.fn(),
+  mockSiteImportAdapterYamlBundle: vi.fn(),
+  mockSiteListAdapters: vi.fn(),
+}));
 
 vi.mock("@/contexts/ComponentDebugContext", () => ({
   useComponentDebug: mockUseComponentDebug,
@@ -92,6 +96,7 @@ vi.mock("@/contexts/ComponentDebugContext", () => ({
 
 vi.mock("@/lib/api/appConfig", () => ({
   getConfig: mockGetConfig,
+  saveConfig: mockSaveConfig,
 }));
 
 vi.mock("@/lib/api/serviceSkills", () => ({
@@ -143,6 +148,7 @@ vi.mock("@/lib/siteAdapterCatalogBootstrap", () => ({
 
 vi.mock("@/lib/webview-api", () => ({
   siteGetAdapterCatalogStatus: mockSiteGetAdapterCatalogStatus,
+  siteImportAdapterYamlBundle: mockSiteImportAdapterYamlBundle,
   siteListAdapters: mockSiteListAdapters,
 }));
 
@@ -319,6 +325,9 @@ beforeEach(() => {
   });
 
   mockGetConfig.mockResolvedValue({
+    developer: {
+      workspace_harness_enabled: false,
+    },
     crash_reporting: {
       enabled: true,
       dsn: null,
@@ -328,6 +337,7 @@ beforeEach(() => {
     },
   });
   mockGetLogs.mockResolvedValue([{ level: "error", message: "boom" }]);
+  mockSaveConfig.mockResolvedValue(undefined);
   mockGetPersistedLogsTail.mockResolvedValue([
     { level: "info", message: "ok" },
   ]);
@@ -362,6 +372,11 @@ beforeEach(() => {
     remoteCatalog,
   );
   mockSiteGetAdapterCatalogStatus.mockResolvedValue(siteCatalogStatus);
+  mockSiteImportAdapterYamlBundle.mockResolvedValue({
+    directory: "/tmp/lime/site-adapters/imported",
+    adapter_count: 1,
+    catalog_version: null,
+  });
   mockSiteListAdapters.mockResolvedValue(siteAdapters);
   mockClearSiteAdapterCatalogCache.mockResolvedValue(siteCatalogStatus);
   mockSubscribeSiteAdapterCatalogChanged.mockImplementation(() => vi.fn());
@@ -400,8 +415,10 @@ describe("DeveloperSettings", () => {
 
     const text = container.textContent ?? "";
     expect(text).toContain("DEVELOPER DESK");
+    expect(text).toContain("处理工作台与信息收集");
     expect(text).toContain("服务型技能目录联调");
     expect(text).toContain("站点脚本目录联调");
+    expect(text).toContain("外部来源 YAML 导入");
     expect(text).toContain("组件视图调试");
     expect(text).toContain("崩溃诊断日志（开发协作）");
     expect(text).toContain("诊断建议");
@@ -426,6 +443,23 @@ describe("DeveloperSettings", () => {
     expect(setEnabled).toHaveBeenCalledWith(true);
   });
 
+  it("切换处理工作台开关后应保存 developer.workspace_harness_enabled", async () => {
+    const container = renderComponent();
+    await flushEffects();
+
+    await clickButton(findSwitch(container, "切换处理工作台"));
+
+    expect(mockSaveConfig).toHaveBeenCalledTimes(1);
+    expect(mockSaveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({
+        developer: expect.objectContaining({
+          workspace_harness_enabled: true,
+        }),
+      }),
+    );
+    expect(container.textContent).toContain("已开启处理工作台");
+  });
+
   it("点击复制诊断信息后应构建并复制诊断载荷", async () => {
     const container = renderComponent();
 
@@ -441,18 +475,25 @@ describe("DeveloperSettings", () => {
   });
 
   it("复制诊断因剪贴板权限失败时应显示权限指引", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     mockCopyCrashDiagnosticToClipboard.mockRejectedValueOnce(
       new Error("clipboard denied"),
     );
     mockIsClipboardPermissionDeniedError.mockReturnValue(true);
 
-    const container = renderComponent();
+    try {
+      const container = renderComponent();
 
-    await clickButton(findButton(container, "复制诊断信息"));
-    await flushEffects();
+      await clickButton(findButton(container, "复制诊断信息"));
+      await flushEffects();
 
-    expect(container.textContent).toContain("剪贴板权限卡片占位");
-    expect(container.textContent).toContain("clipboard denied");
+      expect(container.textContent).toContain("剪贴板权限卡片占位");
+      expect(container.textContent).toContain("clipboard denied");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("点击载入当前目录后应把 serviceSkillCatalog 写入调试输入框", async () => {
@@ -529,6 +570,63 @@ describe("DeveloperSettings", () => {
     expect(container.textContent).toContain("应用内置");
     expect(container.textContent).toContain("github/search");
     expect(container.textContent).toContain("zhihu/hot");
+  });
+
+  it("导入外部来源 YAML 后应调用 Lime 标准导入命令并刷新摘要", async () => {
+    const container = renderComponent();
+    await flushEffects();
+    const textarea = findTextarea(container, "站点来源 YAML 导入输入");
+
+    mockSiteGetAdapterCatalogStatus.mockResolvedValueOnce({
+      exists: true,
+      source_kind: "imported",
+      registry_version: 1,
+      directory: "/tmp/lime/site-adapters/imported",
+      catalog_version: "imported-2026-03-28",
+      adapter_count: 1,
+    });
+    mockSiteListAdapters.mockResolvedValueOnce([
+      {
+        name: "reddit/hot",
+        domain: "www.reddit.com",
+        description: "Reddit 热门帖子",
+        read_only: true,
+        capabilities: ["research", "hot"],
+        input_schema: { type: "object" },
+        example_args: {},
+        example: 'reddit/hot {"subreddit":"rust"}',
+        source_kind: "imported" as const,
+      },
+    ]);
+
+    await inputTextarea(
+      textarea,
+      [
+        "site: reddit",
+        "name: hot",
+        "description: Reddit 热门帖子",
+        "domain: www.reddit.com",
+        "pipeline:",
+        "  - navigate: https://www.reddit.com",
+        "  - evaluate: |",
+        "      (() => [])()",
+      ].join("\n"),
+    );
+    await clickButton(findButton(container, "导入到 Lime 标准"));
+    await flushEffects();
+
+    expect(mockSiteImportAdapterYamlBundle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        yaml_bundle: expect.stringContaining("site: reddit"),
+      }),
+    );
+    expect(mockSiteGetAdapterCatalogStatus).toHaveBeenCalledTimes(2);
+    expect(mockSiteListAdapters).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain(
+      "已按 Lime 标准导入 1 项外部适配器，当前生效 1 项",
+    );
+    expect(container.textContent).toContain("外部导入");
+    expect(container.textContent).toContain("reddit/hot");
   });
 
   it("输入 JSON 后注入站点脚本目录应调用 bootstrap 桥接", async () => {

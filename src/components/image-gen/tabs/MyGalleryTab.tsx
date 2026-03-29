@@ -5,8 +5,8 @@
  */
 
 import { ImageGallery } from "@/components/content-creator/material/ImageGallery";
+import { convertLocalFileSrc } from "@/lib/api/fileSystem";
 import type { PosterMaterial } from "@/types/poster-material";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { Images } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -359,7 +359,7 @@ export function MyGalleryTab({ projectId, onNavigate }: MyGalleryTabProps) {
     }
 
     const imageUrl = material.filePath
-      ? convertFileSrc(material.filePath)
+      ? convertLocalFileSrc(material.filePath)
       : material.metadata?.thumbnail || "";
     if (!imageUrl) {
       toast.error("该素材缺少可用图片地址，无法插入");

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { safeInvoke } from "@/lib/dev-bridge";
+import { safeInvoke, safeListen } from "@/lib/dev-bridge";
 import {
   cancelPluginTask,
   disablePlugin,
@@ -8,6 +8,8 @@ import {
   getPluginStatus,
   getPlugins,
   getPluginTask,
+  listenPluginInstallProgress,
+  listenPluginTaskEvent,
   listInstalledPlugins,
   listPluginTasks,
   reloadPlugins,
@@ -17,6 +19,7 @@ import {
 
 vi.mock("@/lib/dev-bridge", () => ({
   safeInvoke: vi.fn(),
+  safeListen: vi.fn(),
 }));
 
 describe("plugins API", () => {
@@ -68,5 +71,36 @@ describe("plugins API", () => {
     await expect(unloadPlugin("demo")).resolves.toBeUndefined();
     await expect(uninstallPlugin("plugin-1")).resolves.toBe(true);
     await expect(cancelPluginTask("task-1")).resolves.toBe(true);
+  });
+
+  it("应代理插件事件监听", async () => {
+    vi.mocked(safeListen)
+      .mockImplementationOnce(async (_event, handler) => {
+        handler({
+          payload: {
+            stage: "downloading",
+            percent: 42,
+            message: "下载中",
+          },
+        });
+        return vi.fn();
+      })
+      .mockImplementationOnce(async (_event, handler) => {
+        handler({ payload: undefined });
+        return vi.fn();
+      });
+
+    const progressListener = vi.fn();
+    const taskListener = vi.fn();
+
+    await listenPluginInstallProgress(progressListener);
+    await listenPluginTaskEvent(taskListener);
+
+    expect(progressListener).toHaveBeenCalledWith({
+      stage: "downloading",
+      percent: 42,
+      message: "下载中",
+    });
+    expect(taskListener).toHaveBeenCalledTimes(1);
   });
 });

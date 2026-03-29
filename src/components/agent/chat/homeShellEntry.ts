@@ -1,5 +1,8 @@
 import { buildClawAgentParams } from "@/lib/workspace/navigation";
-import type { AgentPageParams } from "@/types/page";
+import type {
+  AgentPageParams,
+  AgentSiteSkillLaunchParams,
+} from "@/types/page";
 import type { CreationMode } from "./components/types";
 import type { MessageImage } from "./types";
 import type { ChatToolPreferences } from "./utils/chatToolPreferences";
@@ -14,6 +17,7 @@ export interface AgentChatWorkspaceBootstrap {
   theme?: string;
   initialCreationMode?: CreationMode;
   openBrowserAssistOnMount?: boolean;
+  initialSiteSkillLaunch?: AgentSiteSkillLaunchParams;
   newChatAt?: number;
 }
 
@@ -24,6 +28,7 @@ export interface HomeShellEnterWorkspacePayload {
   initialRequestMetadata?: Record<string, unknown>;
   autoRunInitialPromptOnMount?: boolean;
   openBrowserAssistOnMount?: boolean;
+  initialSiteSkillLaunch?: AgentSiteSkillLaunchParams;
   toolPreferences?: ChatToolPreferences;
   themeOverride?: string;
 }
@@ -70,19 +75,28 @@ export function resolveHomeShellWorkspaceEntry(
   const hasPrompt = Boolean(payload.prompt?.trim());
   const hasImages = Boolean(payload.images?.length);
   const hasContentId = Boolean(payload.contentId?.trim());
+  const hasSiteSkillLaunch = Boolean(
+    payload.initialSiteSkillLaunch?.adapterName?.trim(),
+  );
   const toolPreferences = payload.toolPreferences ?? defaultToolPreferences;
   const targetTheme = payload.themeOverride ?? activeTheme;
   const openBrowserAssistOnMount = payload.openBrowserAssistOnMount;
   const autoRunInitialPromptOnMount = payload.autoRunInitialPromptOnMount;
 
-  if (!openBrowserAssistOnMount && !projectId) {
+  if (!openBrowserAssistOnMount && !hasSiteSkillLaunch && !projectId) {
     return {
       ok: false,
       reason: "missing_project",
     };
   }
 
-  if (!openBrowserAssistOnMount && !hasPrompt && !hasImages && !hasContentId) {
+  if (
+    !openBrowserAssistOnMount &&
+    !hasSiteSkillLaunch &&
+    !hasPrompt &&
+    !hasImages &&
+    !hasContentId
+  ) {
     return {
       ok: false,
       reason: "empty_payload",
@@ -102,6 +116,9 @@ export function resolveHomeShellWorkspaceEntry(
       ? { autoRunInitialPromptOnMount }
       : {}),
     openBrowserAssistOnMount,
+    ...(payload.initialSiteSkillLaunch
+      ? { initialSiteSkillLaunch: payload.initialSiteSkillLaunch }
+      : {}),
     newChatAt: nextNewChatAt,
   } satisfies AgentPageParams;
 
@@ -121,6 +138,9 @@ export function resolveHomeShellWorkspaceEntry(
       theme: targetTheme,
       initialCreationMode: creationMode,
       openBrowserAssistOnMount,
+      ...(payload.initialSiteSkillLaunch
+        ? { initialSiteSkillLaunch: payload.initialSiteSkillLaunch }
+        : {}),
       newChatAt: nextNewChatAt,
     },
   };

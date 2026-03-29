@@ -76,7 +76,7 @@ describe("service skill automation draft", () => {
     expect(initialValues.payload_kind).toBe("agent_turn");
     expect(initialValues.schedule_kind).toBe("cron");
     expect(initialValues.cron_expr).toBe("00 09 * * *");
-    expect(initialValues.prompt).toContain("[服务型技能] 每日趋势摘要");
+    expect(initialValues.prompt).toContain("[技能任务] 每日趋势摘要");
     expect(initialValues.prompt).toContain("[自动化执行要求]");
     expect(initialValues.agent_request_metadata).toEqual(
       expect.objectContaining({

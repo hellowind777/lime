@@ -207,9 +207,6 @@ export function useWorkspaceResetRuntime({
     }
 
     let disposed = false;
-    const toastId = initialSessionName
-      ? "openclaw-agent-handoff"
-      : "agent-new-chat";
 
     void (async () => {
       const newSessionId = await createFreshSession(initialSessionName);
@@ -218,16 +215,10 @@ export function useWorkspaceResetRuntime({
       }
 
       if (newSessionId) {
-        toast.success(
-          initialSessionName
-            ? `已创建新任务：${initialSessionName}`
-            : "已创建新任务",
-          { id: toastId },
-        );
         return;
       }
 
-      toast.error("创建新任务失败，请重试。", { id: toastId });
+      toast.error("创建新任务失败，请重试。");
     })();
 
     return () => {

@@ -29,6 +29,7 @@ export interface BaseComposerProps {
   rows?: number;
   autoFocus?: boolean;
   allowSendWhileLoading?: boolean;
+  allowEmptySend?: boolean;
   children: (context: BaseComposerRenderContext) => React.ReactNode;
 }
 
@@ -52,14 +53,15 @@ export const BaseComposer: React.FC<BaseComposerProps> = ({
   rows = 1,
   autoFocus = false,
   allowSendWhileLoading = false,
+  allowEmptySend = false,
   children,
 }) => {
   const internalTextareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaRef = externalTextareaRef || internalTextareaRef;
 
   const hasContent = useMemo(() => {
-    return text.trim().length > 0 || hasAdditionalContent;
-  }, [hasAdditionalContent, text]);
+    return allowEmptySend || text.trim().length > 0 || hasAdditionalContent;
+  }, [allowEmptySend, hasAdditionalContent, text]);
 
   const canSend =
     hasContent && !disabled && (!isLoading || allowSendWhileLoading);

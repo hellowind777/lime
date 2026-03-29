@@ -1,8 +1,6 @@
 import React from "react";
 import type { MessageImage } from "../../types";
 import type { Character } from "@/lib/api/memory";
-import type { Skill } from "@/lib/api/skills";
-import type { ServiceSkillHomeItem } from "@/components/agent/chat/service-skills/types";
 import type {
   AsterSessionExecutionRuntime,
   QueuedTurnSnapshot,
@@ -11,6 +9,7 @@ import type { TaskFile } from "../TaskFiles";
 import { InputbarComposerSection } from "./components/InputbarComposerSection";
 import { InputbarOverlayShell } from "./components/InputbarOverlayShell";
 import { InputbarSurface } from "./components/InputbarSurface";
+import type { SkillSelectionSourceProps } from "./components/skillSelectionBindings";
 import type { A2UISubmissionNoticeData } from "./components/A2UISubmissionNotice";
 import type {
   A2UIResponse,
@@ -24,8 +23,9 @@ import { type InputbarToolStates } from "./hooks/useInputbarToolState";
 import { useInputbarController } from "./hooks/useInputbarController";
 import type { TeamDefinition } from "../../utils/teamDefinitions";
 import type { WorkspaceSettings } from "@/types/workspace";
+import type { AgentAccessMode } from "../../hooks/agentChatStorage";
 
-interface InputbarProps {
+interface InputbarProps extends SkillSelectionSourceProps {
   input: string;
   setInput: (value: string) => void;
   onSend: (
@@ -58,22 +58,8 @@ interface InputbarProps {
   overlayAccessory?: React.ReactNode;
   /** 角色列表（用于 @ 引用） */
   characters?: Character[];
-  /** 技能列表（用于 @ 引用） */
-  skills?: Skill[];
-  /** 服务型技能列表（用于 @ 引用） */
-  serviceSkills?: ServiceSkillHomeItem[];
-  /** 技能列表加载状态 */
-  isSkillsLoading?: boolean;
   /** 选择角色回调 */
   onSelectCharacter?: (character: Character) => void;
-  /** 选择服务型技能回调 */
-  onSelectServiceSkill?: (skill: ServiceSkillHomeItem) => void;
-  /** 跳转到设置页安装技能 */
-  onNavigateToSettings?: () => void;
-  /** 导入本地技能 */
-  onImportSkill?: () => void | Promise<void>;
-  /** 刷新技能 */
-  onRefreshSkills?: () => void | Promise<void>;
   providerType?: string;
   setProviderType?: (type: string) => void;
   model?: string;
@@ -85,6 +71,8 @@ interface InputbarProps {
   setExecutionStrategy?: (
     strategy: "react" | "code_orchestrated" | "auto",
   ) => void;
+  accessMode?: AgentAccessMode;
+  setAccessMode?: (mode: AgentAccessMode) => void;
   toolStates?: Partial<InputbarToolStates>;
   onToolStatesChange?: (states: InputbarToolStates) => void;
   activeTheme?: string;
@@ -126,9 +114,9 @@ export const Inputbar: React.FC<InputbarProps> = ({
   onTaskFileClick,
   overlayAccessory,
   characters = [],
-  skills = [],
-  serviceSkills = [],
-  isSkillsLoading = false,
+  skills,
+  serviceSkills,
+  isSkillsLoading,
   onSelectCharacter,
   onSelectServiceSkill,
   onNavigateToSettings,
@@ -143,6 +131,8 @@ export const Inputbar: React.FC<InputbarProps> = ({
   workspaceId,
   executionStrategy,
   setExecutionStrategy,
+  accessMode,
+  setAccessMode,
   toolStates,
   onToolStatesChange,
   activeTheme,
@@ -191,9 +181,7 @@ export const Inputbar: React.FC<InputbarProps> = ({
     isPendingA2UIFormStale,
     visibleA2UISubmissionNotice,
     isA2UISubmissionNoticeVisible,
-    activeSkill,
-    setActiveSkill,
-    clearActiveSkill,
+    skillSelection,
     setActiveBuiltinCommand,
   } = useInputbarController({
     input,
@@ -220,6 +208,13 @@ export const Inputbar: React.FC<InputbarProps> = ({
     pendingA2UIForm,
     a2uiSubmissionNotice,
     onEnableSuggestedTeam,
+    skills,
+    serviceSkills,
+    isSkillsLoading,
+    onSelectServiceSkill,
+    onNavigateToSettings,
+    onImportSkill,
+    onRefreshSkills,
   });
 
   return (
@@ -257,20 +252,11 @@ export const Inputbar: React.FC<InputbarProps> = ({
         themeWorkbenchQueueItems={themeWorkbenchQueueItems}
         inputAdapter={inputAdapter}
         characters={characters}
-        skills={skills}
-        serviceSkills={serviceSkills}
-        isSkillsLoading={isSkillsLoading}
+        skillSelection={skillSelection}
         textareaRef={textareaRef}
         input={input}
-        activeSkill={activeSkill}
         onSelectCharacter={onSelectCharacter}
-        onSelectSkill={setActiveSkill}
-        onSelectServiceSkill={onSelectServiceSkill}
         onSelectBuiltinCommand={setActiveBuiltinCommand}
-        onClearSkill={clearActiveSkill}
-        onNavigateToSettings={onNavigateToSettings}
-        onImportSkill={onImportSkill}
-        onRefreshSkills={onRefreshSkills}
         selectedTeam={selectedTeam}
         onSelectTeam={onSelectTeam}
         teamWorkspaceSettings={teamWorkspaceSettings}
@@ -292,6 +278,8 @@ export const Inputbar: React.FC<InputbarProps> = ({
         onManageProviders={onManageProviders}
         executionRuntime={executionRuntime}
         isExecutionRuntimeActive={isExecutionRuntimeActive}
+        accessMode={accessMode}
+        setAccessMode={setAccessMode}
         setExecutionStrategy={setExecutionStrategy}
         topExtra={topExtra}
         queuedTurns={queuedTurns}

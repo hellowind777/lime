@@ -3,6 +3,7 @@ import styled from "styled-components";
 import { toast } from "sonner";
 import { createAutomationJob } from "@/lib/api/automation";
 import { prepareClawSolution } from "@/lib/api/clawSolutions";
+import { siteGetAdapterLaunchReadiness } from "@/lib/webview-api";
 import {
   createServiceSkillRun,
   getServiceSkillRun,
@@ -19,7 +20,10 @@ import type { BrowserRuntimePageParams, Page, PageParams } from "@/types/page";
 import { SettingsTabs } from "@/types/settings";
 import { EmptyState } from "./components/EmptyState";
 import type { CreationMode } from "./components/types";
-import { saveChatToolPreferences } from "./utils/chatToolPreferences";
+import {
+  alignChatToolPreferencesWithExecutionStrategy,
+  saveChatToolPreferences,
+} from "./utils/chatToolPreferences";
 import { isTeamRuntimeRecommendation } from "./utils/contextualRecommendations";
 import { resolveClawWorkspaceProviderSelection } from "./utils/clawWorkspaceProviderSelection";
 import { createChatToolPreferencesFromExecutionRuntime } from "./utils/sessionExecutionRuntime";
@@ -66,7 +70,7 @@ import { buildServiceSkillWorkspaceSeed } from "./service-skills/workspaceLaunch
 import {
   buildServiceSkillSiteCapabilityArgs,
   buildServiceSkillSiteCapabilitySaveTitle,
-  isServiceSkillSiteCapabilityBound,
+  isServiceSkillExecutableAsSiteAdapter,
 } from "./service-skills/siteCapabilityBinding";
 
 const PageContainer = styled.div<{ $compact?: boolean }>`
@@ -129,7 +133,6 @@ const MainArea = styled.div<{ $compact?: boolean }>`
     0 24px 72px -36px rgba(15, 23, 42, 0.18),
     0 16px 28px -24px rgba(15, 23, 42, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.76);
-  backdrop-filter: blur(18px);
 `;
 
 const ChatContainer = styled.div`
@@ -372,6 +375,14 @@ export function AgentChatHomeShell({
     () => createChatToolPreferencesFromExecutionRuntime(recentExecutionRuntime),
     [recentExecutionRuntime],
   );
+  const effectiveChatToolPreferences = useMemo(
+    () =>
+      alignChatToolPreferencesWithExecutionStrategy(
+        chatToolPreferences,
+        executionStrategy,
+      ),
+    [chatToolPreferences, executionStrategy],
+  );
   const {
     solutions: clawSolutions,
     isLoading: clawSolutionsLoading,
@@ -380,6 +391,7 @@ export function AgentChatHomeShell({
   } = useClawSolutions(activeTheme === "general");
   const {
     skills: serviceSkills,
+    groups: serviceSkillGroups,
     catalogMeta: serviceSkillCatalogMeta,
     isLoading: serviceSkillsLoading,
     error: serviceSkillsError,
@@ -422,12 +434,24 @@ export function AgentChatHomeShell({
       return;
     }
 
-    toast.error(`加载服务型技能失败：${serviceSkillsError}`);
+    toast.error(`加载技能目录失败：${serviceSkillsError}`);
   }, [activeTheme, serviceSkillsError]);
 
   useEffect(() => {
     syncChatToolPreferencesSource(activeTheme, runtimeChatToolPreferences);
   }, [activeTheme, runtimeChatToolPreferences, syncChatToolPreferencesSource]);
+
+  useEffect(() => {
+    if (chatToolPreferences.task === effectiveChatToolPreferences.task) {
+      return;
+    }
+
+    setChatToolPreferences(effectiveChatToolPreferences);
+  }, [
+    chatToolPreferences.task,
+    effectiveChatToolPreferences,
+    setChatToolPreferences,
+  ]);
 
   const handleRefreshSkills = useCallback(async () => {
     await refreshSkills(true);
@@ -455,7 +479,7 @@ export function AgentChatHomeShell({
         projectId: normalizedProjectId,
         activeTheme,
         creationMode,
-        defaultToolPreferences: chatToolPreferences,
+        defaultToolPreferences: effectiveChatToolPreferences,
         payload,
       });
 
@@ -481,7 +505,7 @@ export function AgentChatHomeShell({
     },
     [
       activeTheme,
-      chatToolPreferences,
+      effectiveChatToolPreferences,
       creationMode,
       currentProjectId,
       rememberProjectId,
@@ -504,7 +528,11 @@ export function AgentChatHomeShell({
             preparation.reasonCode,
           );
           if (setupTab && onNavigate) {
-            onNavigate("settings", { tab: setupTab });
+            if (setupTab === SettingsTabs.Skills) {
+              onNavigate("skills");
+            } else {
+              onNavigate("settings", { tab: setupTab });
+            }
             return;
           }
           toast.error(preparation.readinessMessage);
@@ -513,7 +541,7 @@ export function AgentChatHomeShell({
 
         const launch = resolveClawSolutionLaunch(
           preparation,
-          chatToolPreferences,
+          effectiveChatToolPreferences,
         );
         const targetTheme =
           launch.enterWorkspacePayload.themeOverride ?? activeTheme;
@@ -566,7 +594,7 @@ export function AgentChatHomeShell({
       }
     },
     [
-      chatToolPreferences,
+      effectiveChatToolPreferences,
       currentProjectId,
       handleEnterWorkspace,
       input,
@@ -741,12 +769,75 @@ export function AgentChatHomeShell({
     [activeTheme, createServiceSkillSeededContent, currentProjectId],
   );
 
+  const prepareServiceSkillSiteWorkspacePayload = useCallback(
+    async (
+      skill: ServiceSkillHomeItem,
+      slotValues: ServiceSkillSlotValues,
+      launchReadiness: Awaited<ReturnType<typeof siteGetAdapterLaunchReadiness>>,
+    ): Promise<HomeShellEnterWorkspacePayload> => {
+      if (!isServiceSkillExecutableAsSiteAdapter(skill)) {
+        throw new Error("当前技能未绑定站点执行能力");
+      }
+
+      const normalizedProjectId = normalizeProjectId(currentProjectId);
+      if (
+        skill.readinessRequirements?.requiresProject &&
+        !normalizedProjectId
+      ) {
+        throw new Error("缺少项目工作区，请先选择项目后再启动站点技能。");
+      }
+      const binding = skill.siteCapabilityBinding;
+      const saveMode = binding.saveMode ?? "project_resource";
+      const initialArgs = buildServiceSkillSiteCapabilityArgs(
+        skill,
+        slotValues,
+      );
+      const initialSaveTitle = buildServiceSkillSiteCapabilitySaveTitle(
+        skill,
+        slotValues,
+      );
+      let nextContentId: string | undefined;
+
+      if (saveMode === "current_content" && normalizedProjectId) {
+        const created = await createServiceSkillSeededContent(
+          skill,
+          normalizedProjectId,
+        );
+        nextContentId = created?.id ?? undefined;
+      }
+
+      const seed = buildServiceSkillWorkspaceSeed(
+        skill,
+        skill.themeTarget ?? activeTheme,
+      );
+
+      return {
+        contentId: nextContentId,
+        themeOverride: "general",
+        ...(seed?.requestMetadata
+          ? { initialRequestMetadata: seed.requestMetadata }
+          : {}),
+        initialSiteSkillLaunch: {
+          adapterName: binding.adapterName,
+          args: initialArgs,
+          autoRun: binding.autoRun ?? true,
+          profileKey: launchReadiness.profile_key,
+          targetId: launchReadiness.target_id,
+          requireAttachedSession: true,
+          saveTitle: nextContentId ? undefined : initialSaveTitle,
+          skillTitle: skill.title,
+        },
+      };
+    },
+    [activeTheme, createServiceSkillSeededContent, currentProjectId],
+  );
+
   const handleServiceSkillBrowserRuntimeLaunch = useCallback(
     async (
       skill: ServiceSkillHomeItem,
       slotValues: ServiceSkillSlotValues,
     ): Promise<void> => {
-      if (!isServiceSkillSiteCapabilityBound(skill)) {
+      if (!isServiceSkillExecutableAsSiteAdapter(skill)) {
         return;
       }
 
@@ -765,6 +856,16 @@ export function AgentChatHomeShell({
       }
 
       const binding = skill.siteCapabilityBinding;
+      let launchReadiness:
+        | Awaited<ReturnType<typeof siteGetAdapterLaunchReadiness>>
+        | null = null;
+      try {
+        launchReadiness = await siteGetAdapterLaunchReadiness({
+          adapter_name: binding.adapterName,
+        });
+      } catch {
+        launchReadiness = null;
+      }
       const saveMode = binding.saveMode ?? "project_resource";
       const initialArgs = buildServiceSkillSiteCapabilityArgs(
         skill,
@@ -792,6 +893,14 @@ export function AgentChatHomeShell({
       const navigationParams: BrowserRuntimePageParams = {
         projectId: normalizedProjectId ?? undefined,
         contentId,
+        initialProfileKey:
+          launchReadiness?.status === "ready"
+            ? launchReadiness.profile_key
+            : undefined,
+        initialTargetId:
+          launchReadiness?.status === "ready"
+            ? launchReadiness.target_id
+            : undefined,
         initialAdapterName: binding.adapterName,
         initialArgs,
         initialAutoRun: binding.autoRun ?? false,
@@ -817,8 +926,51 @@ export function AgentChatHomeShell({
 
   const handleServiceSkillLaunch = useCallback(
     async (skill: ServiceSkillHomeItem, slotValues: ServiceSkillSlotValues) => {
-      if (isServiceSkillSiteCapabilityBound(skill)) {
-        await handleServiceSkillBrowserRuntimeLaunch(skill, slotValues);
+      if (isServiceSkillExecutableAsSiteAdapter(skill)) {
+        let launchReadiness: Awaited<
+          ReturnType<typeof siteGetAdapterLaunchReadiness>
+        >;
+        try {
+          launchReadiness = await siteGetAdapterLaunchReadiness({
+            adapter_name: skill.siteCapabilityBinding.adapterName,
+          });
+        } catch (error) {
+          toast.error(`检测浏览器会话失败：${getErrorMessage(error)}`);
+          return;
+        }
+
+        if (launchReadiness.status !== "ready") {
+          toast.error(
+            launchReadiness.report_hint
+              ? `${launchReadiness.message} ${launchReadiness.report_hint}`
+              : launchReadiness.message,
+          );
+          return;
+        }
+
+        let workspacePayload: HomeShellEnterWorkspacePayload;
+        try {
+          workspacePayload = await prepareServiceSkillSiteWorkspacePayload(
+            skill,
+            slotValues,
+            launchReadiness,
+          );
+        } catch (error) {
+          toast.error(`准备站点技能失败：${getErrorMessage(error)}`);
+          return;
+        }
+
+        const entered = handleEnterWorkspace(workspacePayload);
+        if (!entered) {
+          return;
+        }
+
+        recordServiceSkillUsage({
+          skillId: skill.id,
+          runnerType: skill.runnerType,
+        });
+        setServiceSkillDialogOpen(false);
+        setSelectedServiceSkill(null);
         return;
       }
 
@@ -925,7 +1077,7 @@ export function AgentChatHomeShell({
           prompt,
         );
       } catch (error) {
-        toast.error(`准备服务型技能工作区失败：${getErrorMessage(error)}`);
+        toast.error(`准备技能工作区失败：${getErrorMessage(error)}`);
         return;
       }
 
@@ -943,10 +1095,10 @@ export function AgentChatHomeShell({
       setSelectedServiceSkill(null);
     },
     [
-      handleServiceSkillBrowserRuntimeLaunch,
       handleEnterWorkspace,
       input,
       prepareServiceSkillCloudResultWorkspacePayload,
+      prepareServiceSkillSiteWorkspacePayload,
       prepareServiceSkillWorkspacePayload,
       recordServiceSkillUsage,
     ],
@@ -1029,7 +1181,7 @@ export function AgentChatHomeShell({
   const handleAutomationDialogSubmit = useCallback(
     async (payload: AutomationJobDialogSubmit) => {
       if (payload.mode !== "create") {
-        throw new Error("服务型技能入口当前只支持创建新的本地自动化任务");
+        throw new Error("当前技能入口只支持创建新的本地自动化任务");
       }
 
       setAutomationJobSaving(true);
@@ -1123,7 +1275,7 @@ export function AgentChatHomeShell({
       }
 
       const { nextToolPreferences, changed } =
-        enableSubagentPreference(chatToolPreferences);
+        enableSubagentPreference(effectiveChatToolPreferences);
 
       if (changed) {
         setChatToolPreferences(nextToolPreferences);
@@ -1136,7 +1288,7 @@ export function AgentChatHomeShell({
     },
     [
       activeTheme,
-      chatToolPreferences,
+      effectiveChatToolPreferences,
       handleEnterWorkspace,
       setChatToolPreferences,
     ],
@@ -1172,28 +1324,21 @@ export function AgentChatHomeShell({
                     tab: SettingsTabs.Providers,
                   });
                 }}
-                webSearchEnabled={chatToolPreferences.webSearch}
+                webSearchEnabled={effectiveChatToolPreferences.webSearch}
                 onWebSearchEnabledChange={(enabled) =>
                   setChatToolPreferences((previous) => ({
                     ...previous,
                     webSearch: enabled,
                   }))
                 }
-                thinkingEnabled={chatToolPreferences.thinking}
+                thinkingEnabled={effectiveChatToolPreferences.thinking}
                 onThinkingEnabledChange={(enabled) =>
                   setChatToolPreferences((previous) => ({
                     ...previous,
                     thinking: enabled,
                   }))
                 }
-                taskEnabled={chatToolPreferences.task}
-                onTaskEnabledChange={(enabled) =>
-                  setChatToolPreferences((previous) => ({
-                    ...previous,
-                    task: enabled,
-                  }))
-                }
-                subagentEnabled={chatToolPreferences.subagent}
+                subagentEnabled={effectiveChatToolPreferences.subagent}
                 onSubagentEnabledChange={(enabled) =>
                   setChatToolPreferences((previous) => ({
                     ...previous,
@@ -1221,6 +1366,7 @@ export function AgentChatHomeShell({
                     <>
                       <ServiceSkillHomePanel
                         skills={serviceSkills}
+                        groups={serviceSkillGroups}
                         catalogMeta={serviceSkillCatalogMeta}
                         loading={serviceSkillsLoading}
                         onSelect={handleServiceSkillSelect}
@@ -1242,9 +1388,7 @@ export function AgentChatHomeShell({
                 isSkillsLoading={skillsLoading}
                 onSelectServiceSkill={handleServiceSkillSelect}
                 onNavigateToSettings={() => {
-                  onNavigate?.("settings", {
-                    tab: SettingsTabs.Skills,
-                  });
+                  onNavigate?.("skills");
                 }}
                 onRefreshSkills={handleRefreshSkills}
                 onLaunchBrowserAssist={() => {
@@ -1280,6 +1424,7 @@ export function AgentChatHomeShell({
                 }}
                 onLaunch={handleServiceSkillLaunch}
                 onCreateAutomation={handleServiceSkillAutomationSetup}
+                onOpenBrowserRuntime={handleServiceSkillBrowserRuntimeLaunch}
               />
               <AutomationJobDialog
                 open={automationDialogOpen}

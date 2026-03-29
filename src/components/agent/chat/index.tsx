@@ -62,6 +62,7 @@ export function AgentChatPage(props: AgentChatWorkspaceProps) {
     entryBannerMessage,
     newChatAt,
     autoRunInitialPromptOnMount = false,
+    initialSiteSkillLaunch,
     onHasMessagesChange,
     onSessionChange,
     onWorkflowProgressChange,
@@ -75,6 +76,7 @@ export function AgentChatPage(props: AgentChatWorkspaceProps) {
     !(initialUserImages && initialUserImages.length > 0) &&
     !initialSessionName &&
     !entryBannerMessage &&
+    !initialSiteSkillLaunch &&
     !openBrowserAssistOnMount &&
     !fromResources;
   const shouldForceClawWorkspace =
@@ -83,6 +85,7 @@ export function AgentChatPage(props: AgentChatWorkspaceProps) {
       Boolean(initialUserImages?.length) ||
       Boolean(initialSessionName?.trim()) ||
       Boolean(entryBannerMessage?.trim()) ||
+      Boolean(initialSiteSkillLaunch) ||
       openBrowserAssistOnMount);
 
   const [workspaceBootstrap, setWorkspaceBootstrap] =
@@ -176,6 +179,9 @@ export function AgentChatPage(props: AgentChatWorkspaceProps) {
         autoRunInitialPromptOnMount={
           activeBootstrap?.autoRunInitialPromptOnMount ??
           autoRunInitialPromptOnMount
+        }
+        initialSiteSkillLaunch={
+          activeBootstrap?.initialSiteSkillLaunch ?? initialSiteSkillLaunch
         }
         newChatAt={activeBootstrap?.newChatAt ?? newChatAt}
         openBrowserAssistOnMount={

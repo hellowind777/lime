@@ -252,9 +252,44 @@ export function resolveArtifactLanguageFromFile(
   return CODE_LANGUAGE_BY_EXTENSION[extension] || extension;
 }
 
-export function resolveDefaultArtifactViewMode(
+function supportsPreviewFirstProgrammingFlow(
   artifact: Pick<Artifact, "type" | "meta">,
+): boolean {
+  if (
+    artifact.type === "html" ||
+    artifact.type === "svg" ||
+    artifact.type === "react"
+  ) {
+    return true;
+  }
+
+  return (
+    artifact.type === "code" &&
+    ["html", "svg"].includes(
+      String(artifact.meta.language || "")
+        .trim()
+        .toLowerCase(),
+    )
+  );
+}
+
+interface ResolveDefaultArtifactViewModeOptions {
+  preferSourceWhenStreaming?: boolean;
+}
+
+export function resolveDefaultArtifactViewMode(
+  artifact: Pick<Artifact, "type" | "meta" | "status">,
+  options: ResolveDefaultArtifactViewModeOptions = {},
 ): "source" | "preview" {
+  const writePhase = resolveArtifactWritePhase(artifact);
+  if (
+    options.preferSourceWhenStreaming &&
+    (writePhase === "preparing" || writePhase === "streaming") &&
+    supportsPreviewFirstProgrammingFlow(artifact)
+  ) {
+    return "source";
+  }
+
   if (artifact.type === "document") {
     return "preview";
   }

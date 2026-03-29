@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import type { ChatInputAdapter } from "@/components/input-kit/adapters/types";
 import type { Character } from "@/lib/api/memory";
-import type { Skill } from "@/lib/api/skills";
-import type { ServiceSkillHomeItem } from "@/components/agent/chat/service-skills/types";
 import type {
   AsterSessionExecutionRuntime,
   QueuedTurnSnapshot,
@@ -17,11 +15,17 @@ import { ThemeWorkbenchStatusPanel } from "./ThemeWorkbenchStatusPanel";
 import { InputbarModelExtra } from "./InputbarModelExtra";
 import { InputbarVisionCapabilityNotice } from "./InputbarVisionCapabilityNotice";
 import { InputbarExecutionStrategySelect } from "./InputbarExecutionStrategySelect";
+import { InputbarAccessModeSelect } from "./InputbarAccessModeSelect";
 import { StableProcessingNotice } from "../../StableProcessingNotice";
 import { isGeneralResearchTheme } from "../../../utils/generalAgentPrompt";
 import type { TeamDefinition } from "../../../utils/teamDefinitions";
-import { shouldShowStableProcessingNotice } from "../../../utils/stableProcessingExperience";
 import type { WorkspaceSettings } from "@/types/workspace";
+import { useStableProcessingNotice } from "../../../hooks/useStableProcessingNotice";
+import {
+  buildSkillSelectionBindings,
+  type SkillSelectionProps,
+} from "./skillSelectionBindings";
+import type { AgentAccessMode } from "../../../hooks/agentChatStorage";
 import type {
   ThemeWorkbenchGateState,
   ThemeWorkbenchQuickAction,
@@ -35,20 +39,11 @@ interface InputbarComposerSectionProps {
   themeWorkbenchQueueItems: ThemeWorkbenchWorkflowStep[];
   inputAdapter: ChatInputAdapter;
   characters: Character[];
-  skills: Skill[];
-  serviceSkills?: ServiceSkillHomeItem[];
-  isSkillsLoading?: boolean;
+  skillSelection: SkillSelectionProps;
   textareaRef: React.RefObject<HTMLTextAreaElement>;
   input: string;
-  activeSkill?: Skill | null;
   onSelectCharacter?: (character: Character) => void;
-  onSelectSkill: (skill: Skill) => void;
-  onSelectServiceSkill?: (skill: ServiceSkillHomeItem) => void;
   onSelectBuiltinCommand: (command: BuiltinInputCommand | null) => void;
-  onClearSkill?: () => void;
-  onNavigateToSettings?: () => void;
-  onImportSkill?: () => void | Promise<void>;
-  onRefreshSkills?: () => void | Promise<void>;
   selectedTeam?: TeamDefinition | null;
   onSelectTeam?: (team: TeamDefinition | null) => void;
   teamWorkspaceSettings?: WorkspaceSettings | null;
@@ -70,6 +65,8 @@ interface InputbarComposerSectionProps {
   onManageProviders?: () => void;
   executionRuntime?: AsterSessionExecutionRuntime | null;
   isExecutionRuntimeActive?: boolean;
+  accessMode?: AgentAccessMode;
+  setAccessMode?: (mode: AgentAccessMode) => void;
   setExecutionStrategy?: (
     strategy: "react" | "code_orchestrated" | "auto",
   ) => void;
@@ -88,20 +85,11 @@ export const InputbarComposerSection: React.FC<
   themeWorkbenchQueueItems,
   inputAdapter,
   characters,
-  skills,
-  serviceSkills = [],
-  isSkillsLoading,
+  skillSelection,
   textareaRef,
   input,
-  activeSkill,
   onSelectCharacter,
-  onSelectSkill,
-  onSelectServiceSkill,
   onSelectBuiltinCommand,
-  onClearSkill,
-  onNavigateToSettings,
-  onImportSkill,
-  onRefreshSkills,
   selectedTeam,
   onSelectTeam,
   teamWorkspaceSettings,
@@ -122,7 +110,8 @@ export const InputbarComposerSection: React.FC<
   activeTheme,
   onManageProviders,
   executionRuntime,
-  isExecutionRuntimeActive,
+  accessMode,
+  setAccessMode,
   setExecutionStrategy,
   topExtra,
   queuedTurns,
@@ -137,26 +126,26 @@ export const InputbarComposerSection: React.FC<
   const currentPendingImages =
     (inputAdapter.state.attachments as MessageImage[] | undefined) ||
     pendingImages;
+  const { mentionProps: mentionSkillProps, selectorProps: skillSelectorProps } =
+    buildSkillSelectionBindings(skillSelection);
   const resolvedProviderType = inputAdapter.model?.providerType;
   const resolvedModel = inputAdapter.model?.model;
-  const shouldShowStableNotice =
-    !isThemeWorkbenchVariant &&
-    shouldShowStableProcessingNotice({
-      providerType: resolvedProviderType,
-      model: resolvedModel,
-    });
+  const shouldShowStableNotice = useStableProcessingNotice({
+    providerType: resolvedProviderType,
+    model: resolvedModel,
+  });
+  const showStableNotice =
+    !isThemeWorkbenchVariant && shouldShowStableNotice;
   const shouldShowVisionNotice =
     currentPendingImages.length > 0 &&
     Boolean(resolvedProviderType?.trim()) &&
     Boolean(resolvedModel?.trim());
   const resolvedTopExtra =
-    topExtra || shouldShowStableNotice || shouldShowVisionNotice ? (
+    topExtra || showStableNotice || shouldShowVisionNotice ? (
       <>
         {topExtra}
-        {shouldShowStableNotice ? (
+        {showStableNotice ? (
           <StableProcessingNotice
-            providerType={resolvedProviderType}
-            model={resolvedModel}
             scope={activeTools["subagent_mode"] ? "team" : "request"}
             className="mx-3 mb-2"
             testId="inputbar-stable-processing-notice"
@@ -206,17 +195,13 @@ export const InputbarComposerSection: React.FC<
         onStop={inputAdapter.actions.stop}
       />
       <CharacterMention
+        {...mentionSkillProps}
         characters={characters}
-        skills={skills}
-        serviceSkills={serviceSkills}
         inputRef={textareaRef}
         value={input}
         onChange={inputAdapter.actions.setText}
         onSelectCharacter={onSelectCharacter}
-        onSelectSkill={onSelectSkill}
-        onSelectServiceSkill={onSelectServiceSkill}
         onSelectBuiltinCommand={onSelectBuiltinCommand}
-        onNavigateToSettings={onNavigateToSettings}
       />
       <InputbarCore
         textareaRef={textareaRef}
@@ -245,7 +230,6 @@ export const InputbarComposerSection: React.FC<
             : undefined
         }
         toolMode={isThemeWorkbenchVariant ? "attach-only" : "default"}
-        showTranslate={!isThemeWorkbenchVariant}
         showDragHandle={!isThemeWorkbenchVariant}
         visualVariant={isThemeWorkbenchVariant ? "floating" : "default"}
         topExtra={resolvedTopExtra}
@@ -256,16 +240,7 @@ export const InputbarComposerSection: React.FC<
         leftExtra={
           <>
             {showSkillSelector ? (
-              <SkillSelector
-                skills={skills}
-                activeSkill={activeSkill}
-                isLoading={isSkillsLoading}
-                onSelectSkill={onSelectSkill}
-                onClearSkill={onClearSkill}
-                onNavigateToSettings={onNavigateToSettings}
-                onImportSkill={onImportSkill}
-                onRefreshSkills={onRefreshSkills}
-              />
+              <SkillSelector {...skillSelectorProps} />
             ) : null}
             {isGeneralResearchTheme(activeTheme) ? (
               activeTools["subagent_mode"] ? (
@@ -284,6 +259,12 @@ export const InputbarComposerSection: React.FC<
                 />
               ) : null
             ) : null}
+            <InputbarExecutionStrategySelect
+              isFullscreen={isFullscreen}
+              isThemeWorkbenchVariant={isThemeWorkbenchVariant}
+              executionStrategy={executionStrategy}
+              setExecutionStrategy={setExecutionStrategy}
+            />
             <InputbarModelExtra
               isFullscreen={isFullscreen}
               isThemeWorkbenchVariant={isThemeWorkbenchVariant}
@@ -294,17 +275,13 @@ export const InputbarComposerSection: React.FC<
               activeTheme={activeTheme}
               onManageProviders={onManageProviders}
               executionRuntime={executionRuntime}
-              isExecutionRuntimeActive={isExecutionRuntimeActive}
+            />
+            <InputbarAccessModeSelect
+              isFullscreen={isFullscreen}
+              accessMode={accessMode}
+              setAccessMode={setAccessMode}
             />
           </>
-        }
-        rightExtra={
-          <InputbarExecutionStrategySelect
-            isFullscreen={isFullscreen}
-            isThemeWorkbenchVariant={isThemeWorkbenchVariant}
-            executionStrategy={executionStrategy}
-            setExecutionStrategy={setExecutionStrategy}
-          />
         }
       />
     </>

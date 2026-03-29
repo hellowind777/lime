@@ -4,7 +4,6 @@ import {
   Bell,
   Bot,
   FileText,
-  Globe,
   History,
   Pencil,
   Play,
@@ -56,11 +55,6 @@ import type { Project } from "@/lib/api/project";
 import { listProjects } from "@/lib/api/project";
 import type { AgentRun } from "@/lib/api/executionRun";
 import { LatestRunStatusBadge } from "@/components/execution/LatestRunStatusBadge";
-import { BrowserRuntimeDebugPanel } from "@/features/browser-runtime";
-import {
-  getChromeProfileSessions,
-  type ChromeProfileSessionInfo,
-} from "@/lib/webview-api";
 import { AutomationHealthPanel } from "./AutomationHealthPanel";
 import {
   AutomationJobDialog,
@@ -74,6 +68,10 @@ import {
   type AutomationServiceSkillContext,
 } from "./serviceSkillContext";
 import type { AutomationWorkspaceTab } from "@/types/page";
+
+const LEGACY_BROWSER_AUTOMATION_NOTICE =
+  "浏览器自动化已下线，系统不会再自动启动 Chrome。请删除旧任务，并改建为 Agent 对话任务。";
+const LEGACY_BROWSER_AUTOMATION_STATUS = "已下线";
 
 function formatTime(value?: string | null): string {
   if (!value) {
@@ -119,7 +117,9 @@ function executionModeLabel(
 }
 
 function payloadKindLabel(kind: AutomationPayload["kind"]): string {
-  return kind === "browser_session" ? "浏览器会话任务" : "Agent 对话任务";
+  return kind === "browser_session"
+    ? "浏览器自动化（已下线）"
+    : "Agent 对话任务";
 }
 
 function describePayload(payload: AutomationPayload): string {
@@ -127,7 +127,8 @@ function describePayload(payload: AutomationPayload): string {
     return payload.prompt;
   }
 
-  const lines = [`资料: ${payload.profile_key ?? payload.profile_id}`];
+  const lines = [LEGACY_BROWSER_AUTOMATION_NOTICE];
+  lines.push(`资料: ${payload.profile_key ?? payload.profile_id}`);
   if (payload.environment_preset_id) {
     lines.push(`环境预设: ${payload.environment_preset_id}`);
   }
@@ -140,6 +141,10 @@ function describePayload(payload: AutomationPayload): string {
   lines.push(`调试窗口: ${payload.open_window ? "打开" : "关闭"}`);
   lines.push(`流模式: ${payload.stream_mode}`);
   return lines.join("\n");
+}
+
+function isLegacyBrowserAutomation(job?: AutomationJobRecord | null): boolean {
+  return job?.payload.kind === "browser_session";
 }
 
 function parseRunMetadata(run: AgentRun): Record<string, unknown> | null {
@@ -166,10 +171,6 @@ function resolveRunSessionId(run: AgentRun): string | null {
   return typeof metadataSessionId === "string" && metadataSessionId.trim()
     ? metadataSessionId
     : null;
-}
-
-function resolveLatestBrowserRun(runs: AgentRun[]): AgentRun | null {
-  return runs.find((run) => Boolean(resolveRunSessionId(run))) ?? null;
 }
 
 function resolveBrowserLifecycleStatus(run: AgentRun): string | null {
@@ -441,7 +442,7 @@ function deliveryToneClass(
 function describeServiceSkillTaskLine(
   serviceSkillContext: AutomationServiceSkillContext,
 ): string {
-  return `服务项: ${serviceSkillContext.title}`;
+  return `技能项: ${serviceSkillContext.title}`;
 }
 
 function describeServiceSkillSlotPreview(
@@ -510,26 +511,6 @@ const WORKSPACE_TEMPLATES: AutomationWorkspaceTemplate[] = [
     },
   },
   {
-    id: "browser-check",
-    tag: "浏览器巡检",
-    name: "浏览器巡检",
-    description: "定时打开指定页面，执行浏览器任务或等待人工接管。",
-    detail: "适合店铺后台、投放平台和控制台检查。",
-    actionLabel: "使用巡检模板",
-    icon: Globe,
-    initialValues: {
-      name: "浏览器巡检",
-      description: "按固定间隔执行浏览器巡检",
-      payload_kind: "browser_session",
-      schedule_kind: "every",
-      every_secs: "1800",
-      browser_url: "https://",
-      browser_open_window: false,
-      browser_stream_mode: "events",
-      delivery_mode: "none",
-    },
-  },
-  {
     id: "structured-delivery",
     tag: "结果投递",
     name: "结构化投递",
@@ -593,10 +574,6 @@ export function AutomationSettings({
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [jobRuns, setJobRuns] = useState<AgentRun[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [browserSessions, setBrowserSessions] = useState<
-    ChromeProfileSessionInfo[]
-  >([]);
-  const [browserSessionsLoading, setBrowserSessionsLoading] = useState(false);
   const [schedulerSaving, setSchedulerSaving] = useState(false);
   const [jobSaving, setJobSaving] = useState(false);
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
@@ -626,28 +603,9 @@ export function AutomationSettings({
       selectedJobId ? serviceSkillContextByJobId.get(selectedJobId) ?? null : null,
     [selectedJobId, serviceSkillContextByJobId],
   );
-  const selectedBrowserRun = useMemo(
-    () =>
-      selectedJob?.payload.kind === "browser_session"
-        ? resolveLatestBrowserRun(jobRuns)
-        : null,
-    [jobRuns, selectedJob],
-  );
-  const selectedBrowserSessionId = useMemo(
-    () => (selectedBrowserRun ? resolveRunSessionId(selectedBrowserRun) : null),
-    [selectedBrowserRun],
-  );
-  const selectedBrowserInfoMessage = useMemo(
-    () =>
-      selectedBrowserRun ? resolveRunInfoMessage(selectedBrowserRun) : null,
-    [selectedBrowserRun],
-  );
-  const selectedBrowserProfileKey = useMemo(
-    () =>
-      selectedJob?.payload.kind === "browser_session"
-        ? (selectedJob.payload.profile_key ?? "")
-        : "",
-    [selectedJob],
+  const legacyBrowserJobCount = useMemo(
+    () => jobs.filter((job) => isLegacyBrowserAutomation(job)).length,
+    [jobs],
   );
 
   const workspaceNameMap = useMemo(() => {
@@ -732,52 +690,6 @@ export function AutomationSettings({
     }
   }, []);
 
-  const refreshBrowserSessions = useCallback(
-    async (silent: boolean = false) => {
-      if (selectedJob?.payload.kind !== "browser_session") {
-        setBrowserSessions([]);
-        return;
-      }
-      if (!silent) {
-        setBrowserSessionsLoading(true);
-      }
-      try {
-        const sessions = await getChromeProfileSessions();
-        setBrowserSessions(sessions);
-      } catch (error) {
-        if (!silent) {
-          toast.error(
-            `加载浏览器运行会话失败: ${
-              error instanceof Error ? error.message : error
-            }`,
-          );
-        }
-        setBrowserSessions([]);
-      } finally {
-        if (!silent) {
-          setBrowserSessionsLoading(false);
-        }
-      }
-    },
-    [selectedJob],
-  );
-
-  const handleBrowserRuntimeMessage = useCallback(
-    (message: { type: "success" | "error"; text: string }) => {
-      if (message.type === "error") {
-        toast.error(message.text);
-        return;
-      }
-      toast.success(message.text);
-      if (selectedJob?.payload.kind === "browser_session") {
-        void refreshAll(true);
-        void refreshHistory(selectedJob.id);
-        void refreshBrowserSessions(true);
-      }
-    },
-    [refreshAll, refreshBrowserSessions, refreshHistory, selectedJob],
-  );
-
   useEffect(() => {
     void refreshAll();
   }, [refreshAll]);
@@ -820,25 +732,6 @@ export function AutomationSettings({
     }
     void refreshHistory(selectedJobId);
   }, [refreshHistory, selectedJobId, showWorkspacePanels]);
-
-  useEffect(() => {
-    if (!showWorkspacePanels) {
-      setBrowserSessions([]);
-      setBrowserSessionsLoading(false);
-      return;
-    }
-    if (selectedJob?.payload.kind !== "browser_session") {
-      setBrowserSessions([]);
-      setBrowserSessionsLoading(false);
-      return;
-    }
-    void refreshBrowserSessions(true);
-  }, [
-    refreshBrowserSessions,
-    selectedBrowserSessionId,
-    selectedJob,
-    showWorkspacePanels,
-  ]);
 
   async function handleSaveScheduler() {
     if (!schedulerConfig) {
@@ -903,23 +796,19 @@ export function AutomationSettings({
   }
 
   async function handleRunNow(job: AutomationJobRecord) {
+    if (isLegacyBrowserAutomation(job)) {
+      toast.error(LEGACY_BROWSER_AUTOMATION_NOTICE);
+      return;
+    }
+
     setRunningJobId(job.id);
     try {
       const result = await runAutomationJobNow(job.id);
-      if (job.payload.kind === "browser_session") {
-        toast.success(
-          "浏览器任务已启动，后续挂起与恢复状态会随会话控制同步回写。",
-        );
-      } else {
-        toast.success(
-          `执行完成: 成功 ${result.success_count}，失败 ${result.failed_count}，超时 ${result.timeout_count}`,
-        );
-      }
+      toast.success(
+        `执行完成: 成功 ${result.success_count}，失败 ${result.failed_count}，超时 ${result.timeout_count}`,
+      );
       await refreshAll(true);
       await refreshHistory(job.id);
-      if (job.payload.kind === "browser_session") {
-        await refreshBrowserSessions(true);
-      }
     } catch (error) {
       toast.error(
         `执行任务失败: ${error instanceof Error ? error.message : error}`,
@@ -959,8 +848,8 @@ export function AutomationSettings({
   const heroDescription = settingsOnly
     ? "这里只管理全局调度器开关、轮询间隔和执行历史保留。任务创建和运行处理都在左侧自动化工作台完成。"
     : workspaceOnly
-      ? "默认进入任务视图，先创建任务、再处理列表与详情。统计和风险提醒收进单独的概览页。"
-      : "统一管理自动化任务的创建、运行历史和调度器配置。";
+      ? "默认进入任务视图，当前只保留 Agent 对话任务的创建与运行。统计和风险提醒收进单独的概览页。"
+      : "统一管理 Agent 自动化任务的创建、运行历史和调度器配置。";
 
   if (loading || !schedulerConfig) {
     return (
@@ -1172,7 +1061,7 @@ export function AutomationSettings({
                       先创建任务，再处理执行细节
                     </CardTitle>
                     <p className="mt-1 text-sm leading-6 text-slate-500">
-                      默认页只保留任务相关动作。模板负责预填 schedule、payload 和 delivery，统计不再占据首屏。
+                      默认页只保留 Agent 对话任务相关动作。模板负责预填 schedule、payload 和 delivery，浏览器自动化不再提供创建入口。
                     </p>
                   </div>
                   <Button variant="outline" onClick={() => openCreateDialog()}>
@@ -1182,6 +1071,12 @@ export function AutomationSettings({
                 </div>
               </CardHeader>
               <CardContent>
+                {legacyBrowserJobCount > 0 ? (
+                  <div className="mb-4 rounded-[22px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-800">
+                    检测到 {legacyBrowserJobCount} 条旧浏览器自动化任务。系统已停用这类任务，不会再后台启动
+                    Chrome；请删除旧任务，并改用 Agent 对话任务重建。
+                  </div>
+                ) : null}
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                   {WORKSPACE_TEMPLATES.map((template) => {
                     const Icon = template.icon;
@@ -1266,6 +1161,7 @@ export function AutomationSettings({
                                 serviceSkillContext,
                               )
                             : null;
+                          const legacyBrowserJob = isLegacyBrowserAutomation(job);
                           return (
                             <TableRow
                               key={job.id}
@@ -1292,7 +1188,7 @@ export function AutomationSettings({
                                           variant="outline"
                                           className="border-sky-200 bg-sky-50 text-sky-700"
                                         >
-                                          服务技能
+                                          技能任务
                                         </Badge>
                                         <Badge variant="outline">
                                           {serviceSkillContext.runnerLabel}
@@ -1336,6 +1232,11 @@ export function AutomationSettings({
                                     <Badge variant={statusVariant(job.last_status)}>
                                       {statusLabel(job.last_status)}
                                     </Badge>
+                                    {legacyBrowserJob ? (
+                                      <Badge variant="outline">
+                                        {LEGACY_BROWSER_AUTOMATION_STATUS}
+                                      </Badge>
+                                    ) : null}
                                     {!job.enabled ? (
                                       <Badge variant="outline">已停用</Badge>
                                     ) : null}
@@ -1375,10 +1276,16 @@ export function AutomationSettings({
                                       event.stopPropagation();
                                       void handleRunNow(job);
                                     }}
-                                    disabled={runningJobId === job.id}
+                                    disabled={
+                                      runningJobId === job.id || legacyBrowserJob
+                                    }
                                   >
                                     <Play className="mr-1 h-4 w-4" />
-                                    {runningJobId === job.id ? "执行中" : "运行"}
+                                    {legacyBrowserJob
+                                      ? LEGACY_BROWSER_AUTOMATION_STATUS
+                                      : runningJobId === job.id
+                                        ? "执行中"
+                                        : "运行"}
                                   </Button>
                                   <Button
                                     size="sm"
@@ -1458,9 +1365,16 @@ export function AutomationSettings({
                                   selectedJob.workspace_id}
                               </div>
                             </div>
-                            <Badge variant={statusVariant(selectedJob.last_status)}>
-                              {statusLabel(selectedJob.last_status)}
-                            </Badge>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant={statusVariant(selectedJob.last_status)}>
+                                {statusLabel(selectedJob.last_status)}
+                              </Badge>
+                              {isLegacyBrowserAutomation(selectedJob) ? (
+                                <Badge variant="outline">
+                                  {LEGACY_BROWSER_AUTOMATION_STATUS}
+                                </Badge>
+                              ) : null}
+                            </div>
                           </div>
                           <div className="mt-4 space-y-2 text-sm text-slate-500">
                             <div>
@@ -1475,26 +1389,13 @@ export function AutomationSettings({
                             </div>
                             <div>最后错误: {selectedJob.last_error || "-"}</div>
                           </div>
-                          {selectedJob.payload.kind === "browser_session" &&
-                          selectedBrowserRun &&
-                          selectedBrowserInfoMessage ? (
-                            <div
-                              className={`mt-4 rounded-[18px] border px-4 py-3 text-sm leading-6 ${runInfoToneClass(
-                                selectedBrowserRun,
-                              )}`}
-                            >
-                              <div className="flex flex-wrap items-center gap-2 text-xs font-medium uppercase tracking-[0.14em]">
-                                <span>运行态说明</span>
-                                <Badge
-                                  variant={runStatusVariant(selectedBrowserRun)}
-                                >
-                                  {statusLabel(
-                                    runDisplayStatus(selectedBrowserRun),
-                                  )}
-                                </Badge>
+                          {isLegacyBrowserAutomation(selectedJob) ? (
+                            <div className="mt-4 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+                              <div className="font-medium text-amber-900">
+                                浏览器自动化已下线
                               </div>
                               <div className="mt-2">
-                                {selectedBrowserInfoMessage}
+                                {LEGACY_BROWSER_AUTOMATION_NOTICE}
                               </div>
                             </div>
                           ) : null}
@@ -1502,7 +1403,7 @@ export function AutomationSettings({
                             <div className="mt-4 rounded-[18px] border border-sky-200/80 bg-sky-50/70 px-4 py-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="text-sm font-medium text-slate-900">
-                                  服务型技能上下文
+                                  技能任务上下文
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                   <Badge variant="secondary">
@@ -1517,7 +1418,7 @@ export function AutomationSettings({
                               </div>
                               <div className="mt-3 grid gap-2 text-sm text-slate-600 md:grid-cols-2">
                                 <div>
-                                  服务项: {selectedServiceSkillContext.title}
+                                  技能项: {selectedServiceSkillContext.title}
                                 </div>
                                 <div>
                                   目录来源:{" "}
@@ -1709,63 +1610,6 @@ export function AutomationSettings({
                           </div>
                         </div>
 
-                        {selectedJob.payload.kind === "browser_session" ? (
-                          <div className="rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-4">
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <div className="text-base font-semibold text-slate-900">
-                                  浏览器实时接管
-                                </div>
-                                <div className="mt-1 text-sm leading-6 text-slate-500">
-                                  直接复用现有 browser session
-                                  状态机处理人工接管、等待继续和恢复执行。
-                                </div>
-                              </div>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => void refreshBrowserSessions()}
-                                disabled={browserSessionsLoading}
-                              >
-                                <RefreshCw
-                                  className={`mr-2 h-4 w-4 ${
-                                    browserSessionsLoading ? "animate-spin" : ""
-                                  }`}
-                                />
-                                {browserSessionsLoading
-                                  ? "刷新中..."
-                                  : "刷新运行会话"}
-                              </Button>
-                            </div>
-                            <div className="mt-4 grid gap-2 text-sm text-slate-500 md:grid-cols-2">
-                              <div>
-                                最近可接管运行:{" "}
-                                {selectedBrowserRun
-                                  ? formatTime(selectedBrowserRun.started_at)
-                                  : "-"}
-                              </div>
-                              <div>Session: {selectedBrowserSessionId ?? "-"}</div>
-                              <div>
-                                资料 Key: {selectedBrowserProfileKey || "-"}
-                              </div>
-                              <div>当前运行会话数: {browserSessions.length}</div>
-                            </div>
-                            <div className="mt-4">
-                              <BrowserRuntimeDebugPanel
-                                sessions={browserSessions}
-                                onMessage={handleBrowserRuntimeMessage}
-                                embedded
-                                initialProfileKey={
-                                  selectedBrowserProfileKey || undefined
-                                }
-                                initialSessionId={
-                                  selectedBrowserSessionId || undefined
-                                }
-                              />
-                            </div>
-                          </div>
-                        ) : null}
-
                         <div className="space-y-3">
                           <div className="flex items-center justify-between">
                             <div className="text-sm font-medium text-slate-900">
@@ -1842,7 +1686,7 @@ export function AutomationSettings({
                                     >
                                       <div className="flex flex-wrap items-center gap-2">
                                         <div className="text-xs font-medium text-slate-900">
-                                          服务技能运行上下文
+                                          技能任务运行上下文
                                         </div>
                                         <Badge variant="outline">
                                           {runServiceSkillContext.runnerLabel}

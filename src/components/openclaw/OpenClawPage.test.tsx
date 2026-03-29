@@ -765,6 +765,7 @@ describe("OpenClawPage", () => {
       findButton(mounted.container, "触发升级").click();
       await flushEffects();
     });
+    await flushInstallTimer();
 
     await waitForCondition(
       () =>

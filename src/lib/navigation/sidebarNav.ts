@@ -9,6 +9,7 @@ import {
   Palette,
   Plus,
   Settings,
+  Sparkles,
   Terminal,
   Video,
   Wrench,
@@ -58,6 +59,14 @@ export const MAIN_SIDEBAR_NAV_ITEMS: SidebarNavItemDefinition[] = [
       (currentParams as AgentPageParams | undefined)?.agentEntry !== "new-task",
   },
   {
+    id: "skills",
+    label: "技能",
+    icon: Sparkles,
+    page: "skills",
+    isActive: (currentPage) => currentPage === "skills",
+    configurable: false,
+  },
+  {
     id: "video",
     label: "视频",
     icon: Video,
@@ -75,6 +84,12 @@ export const MAIN_SIDEBAR_NAV_ITEMS: SidebarNavItemDefinition[] = [
   { id: "terminal", label: "终端", icon: Terminal, page: "terminal" },
   { id: "plugins", label: "插件中心", icon: Compass, page: "plugins" },
 ];
+
+export const FIXED_MAIN_SIDEBAR_NAV_ITEMS: SidebarNavItemDefinition[] =
+  MAIN_SIDEBAR_NAV_ITEMS.filter((item) => item.configurable === false);
+
+export const CONFIGURABLE_MAIN_SIDEBAR_NAV_ITEMS: SidebarNavItemDefinition[] =
+  MAIN_SIDEBAR_NAV_ITEMS.filter((item) => item.configurable !== false);
 
 export const FOOTER_SIDEBAR_NAV_ITEMS: SidebarNavItemDefinition[] = [
   {
@@ -131,7 +146,7 @@ export const CONFIGURABLE_FOOTER_SIDEBAR_NAV_ITEMS: SidebarNavItemDefinition[] =
   FOOTER_SIDEBAR_NAV_ITEMS.filter((item) => item.configurable !== false);
 
 export const CONFIGURABLE_SIDEBAR_NAV_ITEMS: SidebarNavItemDefinition[] = [
-  ...MAIN_SIDEBAR_NAV_ITEMS,
+  ...CONFIGURABLE_MAIN_SIDEBAR_NAV_ITEMS,
   ...CONFIGURABLE_FOOTER_SIDEBAR_NAV_ITEMS,
 ];
 

@@ -11,6 +11,7 @@ import type { ThemeType } from "@/components/content-creator/types";
 import type { TeamDefinition } from "../utils/teamDefinitions";
 import type { RuntimeTeamDispatchPreviewSnapshot } from "./runtimeTeamPreview";
 import type { UseRuntimeTeamFormationResult } from "../hooks/useRuntimeTeamFormation";
+import type { AgentAccessMode } from "../hooks/agentChatStorage";
 
 const GENERAL_BROWSER_ASSIST_PROFILE_KEY = "general_browser_assist";
 
@@ -54,6 +55,7 @@ interface BuildWorkspaceRequestMetadataOptions {
   workspaceRequestMetadataBase?: Record<string, unknown>;
   sendOptions?: HandleSendOptions;
   effectiveToolPreferences: ChatToolPreferences;
+  accessMode?: AgentAccessMode;
   mappedTheme: ThemeType;
   isThemeWorkbench: boolean;
   currentGateKey: string;
@@ -200,6 +202,7 @@ export function buildWorkspaceRequestMetadata(
     workspaceRequestMetadataBase,
     sendOptions,
     effectiveToolPreferences,
+    accessMode,
     mappedTheme,
     isThemeWorkbench,
     currentGateKey,
@@ -230,6 +233,7 @@ export function buildWorkspaceRequestMetadata(
         task: effectiveToolPreferences.task,
         subagent: effectiveToolPreferences.subagent,
       },
+      accessMode,
       sessionMode: isThemeWorkbench ? "theme_workbench" : "default",
       gateKey: isThemeWorkbench ? currentGateKey : undefined,
       runTitle: themeWorkbenchActiveQueueTitle?.trim() || undefined,

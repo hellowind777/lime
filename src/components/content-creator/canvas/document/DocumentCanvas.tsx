@@ -13,7 +13,12 @@ import React, {
   useRef,
 } from "react";
 import styled from "styled-components";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  searchPixabayImages,
+  searchWebImages,
+  type PixabaySearchResponse,
+  type WebImageSearchResponse,
+} from "@/lib/api/imageSearch";
 import { getStyleGuide, type StyleGuide } from "@/lib/api/memory";
 import type {
   AutoContinueSettings,
@@ -65,35 +70,6 @@ import {
   buildTextStylizePrompt,
   resolveTextStylizeSourceLabel,
 } from "@/lib/style-guide";
-
-interface WebImageSearchResponse {
-  total: number;
-  provider: string;
-  hits: Array<{
-    id: string;
-    thumbnail_url?: string;
-    content_url?: string;
-    width?: number;
-    height?: number;
-    name?: string;
-    host_page_url?: string;
-  }>;
-}
-
-interface PixabaySearchResponse {
-  total: number;
-  total_hits?: number;
-  hits: Array<{
-    id: number;
-    preview_url?: string;
-    large_image_url?: string;
-    image_width?: number;
-    image_height?: number;
-    tags?: string;
-    page_url?: string;
-    user?: string;
-  }>;
-}
 
 const Container = styled.div`
   display: flex;
@@ -532,16 +508,11 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
         }
 
         try {
-          const webResp = await invoke<WebImageSearchResponse>(
-            "search_web_images",
-            {
-              req: {
-                query,
-                page: 1,
-                perPage: 6,
-              },
-            },
-          );
+          const webResp = await searchWebImages({
+            query,
+            page: 1,
+            perPage: 6,
+          });
           const fromWeb = webResp.hits
             .map((hit) =>
               mapWebHitToInsertable(hit, webResp.provider || "pexels"),
@@ -555,16 +526,11 @@ export const DocumentCanvas: React.FC<DocumentCanvasProps> = memo(
         }
 
         try {
-          const pixabayResp = await invoke<PixabaySearchResponse>(
-            "search_pixabay_images",
-            {
-              req: {
-                query,
-                page: 1,
-                perPage: 6,
-              },
-            },
-          );
+          const pixabayResp = await searchPixabayImages({
+            query,
+            page: 1,
+            perPage: 6,
+          });
           const fromPixabay = pixabayResp.hits
             .map((hit) => mapPixabayHitToInsertable(hit))
             .find(Boolean);

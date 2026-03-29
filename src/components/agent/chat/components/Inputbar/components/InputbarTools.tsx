@@ -1,19 +1,11 @@
 import React from "react";
 import {
-  Paperclip,
   Lightbulb,
   Globe,
   Code2,
-  ListChecks,
   Workflow,
 } from "lucide-react";
-import { ToolButton } from "../styles";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Divider, ToolButton } from "../styles";
 import { isGeneralResearchTheme } from "../../../utils/generalAgentPrompt";
 
 interface InputbarToolsProps {
@@ -35,120 +27,69 @@ export const InputbarTools: React.FC<InputbarToolsProps> = ({
   toolMode = "default",
   activeTheme,
 }) => {
-  const modeLabel =
-    executionStrategy === "auto"
-      ? "Auto"
-      : executionStrategy === "code_orchestrated"
-        ? "Plan"
-        : "ReAct";
   const strategyEnabled =
-    executionStrategy !== "react" || activeTools["execution_strategy"];
+    executionStrategy === "code_orchestrated" ||
+    activeTools["execution_strategy"];
   const isGeneralTheme = isGeneralResearchTheme(activeTheme);
 
   return (
-    <TooltipProvider>
-      <div className="flex items-center">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <ToolButton onClick={() => onToolClick?.("attach")}>
-              <Paperclip />
-            </ToolButton>
-          </TooltipTrigger>
-          <TooltipContent side="top">上传文件</TooltipContent>
-        </Tooltip>
+    <div className="flex items-center flex-wrap gap-2">
+      {toolMode === "default" ? (
+        <>
+          <ToolButton
+            type="button"
+            onClick={() => onToolClick?.("thinking")}
+            className={activeTools["thinking"] ? "active" : ""}
+            aria-pressed={activeTools["thinking"]}
+            title={`深度思考${activeTools["thinking"] ? "已开启" : "已关闭"}`}
+          >
+            <Lightbulb />
+            <span>思考</span>
+          </ToolButton>
 
-        {toolMode === "default" ? (
-          <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ToolButton
-                  onClick={() => onToolClick?.("thinking")}
-                  className={activeTools["thinking"] ? "active" : ""}
-                >
-                  <Lightbulb
-                    className={activeTools["thinking"] ? "text-yellow-500" : ""}
-                  />
-                </ToolButton>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                深度思考 {activeTools["thinking"] ? "(已开启)" : ""}
-              </TooltipContent>
-            </Tooltip>
+          <ToolButton
+            type="button"
+            onClick={() => onToolClick?.("web_search")}
+            className={activeTools["web_search"] ? "active" : ""}
+            aria-pressed={activeTools["web_search"]}
+            title={`联网搜索${activeTools["web_search"] ? "已开启" : "已关闭"}`}
+          >
+            <Globe />
+            <span>搜索</span>
+          </ToolButton>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ToolButton
-                  onClick={() => onToolClick?.("web_search")}
-                  className={activeTools["web_search"] ? "active" : ""}
-                >
-                  <Globe
-                    className={activeTools["web_search"] ? "text-blue-500" : ""}
-                  />
-                </ToolButton>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                联网搜索 {activeTools["web_search"] ? "(已开启)" : ""}
-              </TooltipContent>
-            </Tooltip>
+          {isGeneralTheme ? (
+            <>
+              <ToolButton
+                type="button"
+                onClick={() => onToolClick?.("subagent_mode")}
+                className={activeTools["subagent_mode"] ? "active" : ""}
+                aria-pressed={activeTools["subagent_mode"]}
+                title={`多代理偏好${activeTools["subagent_mode"] ? "已开启" : "已关闭"}`}
+              >
+                <Workflow />
+                <span>多代理</span>
+              </ToolButton>
+            </>
+          ) : null}
 
-            {isGeneralTheme ? (
-              <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <ToolButton
-                      onClick={() => onToolClick?.("task_mode")}
-                      className={activeTools["task_mode"] ? "active" : ""}
-                    >
-                      <ListChecks
-                        className={
-                          activeTools["task_mode"] ? "text-emerald-500" : ""
-                        }
-                      />
-                    </ToolButton>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    后台任务 {activeTools["task_mode"] ? "(偏好已开启)" : ""}
-                  </TooltipContent>
-                </Tooltip>
-
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <ToolButton
-                      onClick={() => onToolClick?.("subagent_mode")}
-                      className={activeTools["subagent_mode"] ? "active" : ""}
-                    >
-                      <Workflow
-                        className={
-                          activeTools["subagent_mode"] ? "text-fuchsia-500" : ""
-                        }
-                      />
-                    </ToolButton>
-                  </TooltipTrigger>
-                  <TooltipContent side="top">
-                    多代理 {activeTools["subagent_mode"] ? "(偏好已开启)" : ""}
-                  </TooltipContent>
-                </Tooltip>
-              </>
-            ) : null}
-
-            {showExecutionStrategy && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <ToolButton
-                    onClick={() => onToolClick?.("execution_strategy")}
-                    className={strategyEnabled ? "active" : ""}
-                  >
-                    <Code2
-                      className={strategyEnabled ? "text-emerald-500" : ""}
-                    />
-                  </ToolButton>
-                </TooltipTrigger>
-                <TooltipContent side="top">执行模式: {modeLabel}</TooltipContent>
-              </Tooltip>
-            )}
-          </>
-        ) : null}
-      </div>
-    </TooltipProvider>
+          {showExecutionStrategy ? (
+            <>
+              <Divider />
+              <ToolButton
+                type="button"
+                onClick={() => onToolClick?.("execution_strategy")}
+                className={strategyEnabled ? "active" : ""}
+                aria-pressed={strategyEnabled}
+                title={`Plan 模式${strategyEnabled ? "已开启" : "已关闭"}`}
+              >
+                <Code2 />
+                <span>Plan</span>
+              </ToolButton>
+            </>
+          ) : null}
+        </>
+      ) : null}
+    </div>
   );
 };

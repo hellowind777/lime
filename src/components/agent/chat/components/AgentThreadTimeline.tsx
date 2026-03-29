@@ -4,7 +4,6 @@ import {
   Bot,
   ChevronDown,
   Clock3,
-  FileText,
   ListChecks,
   Loader2,
   ShieldAlert,
@@ -37,10 +36,8 @@ import { ActionRequestA2UIPreviewCard } from "./ActionRequestA2UIPreviewCard";
 import { A2UITaskCard, A2UITaskLoadingCard } from "./A2UITaskCard";
 import { ToolCallItem } from "./ToolCallDisplay";
 import { DecisionPanel } from "./DecisionPanel";
-import {
-  resolveTimelineArtifactNavigation,
-  type ArtifactTimelineOpenTarget,
-} from "../utils/artifactTimelineNavigation";
+import { AgentThreadTimelineArtifactCard } from "./AgentThreadTimelineArtifactCard";
+import type { ArtifactTimelineOpenTarget } from "../utils/artifactTimelineNavigation";
 
 interface AgentThreadTimelineProps {
   turn: AgentThreadTurn;
@@ -72,6 +69,67 @@ function shortenInlineText(
   }
 
   return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function normalizeComparableThinkingText(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function resolveReasoningDisplayText(
+  item: Extract<AgentThreadItem, { type: "reasoning" }>,
+): {
+  summaryText: string;
+  bodyText: string;
+  combinedText: string;
+} {
+  const summaryText = (item.summary || [])
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const bodyText = item.text.trim();
+
+  if (!summaryText) {
+    return {
+      summaryText: "",
+      bodyText,
+      combinedText: bodyText,
+    };
+  }
+
+  if (!bodyText) {
+    return {
+      summaryText,
+      bodyText: "",
+      combinedText: summaryText,
+    };
+  }
+
+  if (
+    normalizeComparableThinkingText(summaryText) ===
+    normalizeComparableThinkingText(bodyText)
+  ) {
+    return {
+      summaryText,
+      bodyText: "",
+      combinedText: summaryText,
+    };
+  }
+
+  return {
+    summaryText,
+    bodyText,
+    combinedText: `${summaryText}\n\n${bodyText}`,
+  };
+}
+
+function resolveThinkingDisplayText(
+  item: Extract<AgentThreadItem, { type: "reasoning" | "turn_summary" }>,
+): string {
+  if (item.type === "reasoning") {
+    return resolveReasoningDisplayText(item).combinedText;
+  }
+
+  return item.text.trim() ? item.text : "";
 }
 
 function formatTimestamp(value?: string): string | null {
@@ -329,7 +387,11 @@ function ThinkingItemCard({
 }: {
   item: Extract<AgentThreadItem, { type: "reasoning" | "turn_summary" }>;
 }) {
-  const parsedContent = useMemo(() => parseAIResponse(item.text, false), [item.text]);
+  const displayText = useMemo(() => resolveThinkingDisplayText(item), [item]);
+  const parsedContent = useMemo(
+    () => parseAIResponse(displayText, false),
+    [displayText],
+  );
   const hasStructuredPreview = parsedContent.hasA2UI || parsedContent.hasPending;
 
   const content = hasStructuredPreview ? (
@@ -378,8 +440,16 @@ function ThinkingItemCard({
       })}
     </div>
   ) : (
-    <MarkdownRenderer content={item.text} />
+    <MarkdownRenderer content={displayText} />
   );
+  const statusLabel =
+    item.type === "turn_summary"
+      ? item.status === "in_progress"
+        ? "处理中"
+        : null
+      : item.status === "in_progress"
+        ? "思考中"
+        : null;
 
   return (
     <div className="py-1.5">
@@ -392,8 +462,8 @@ function ThinkingItemCard({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          {item.status === "in_progress" ? (
-            <div className="mb-1 text-xs text-slate-500">思考中</div>
+          {statusLabel ? (
+            <div className="mb-1 text-xs text-slate-500">{statusLabel}</div>
           ) : null}
           <div className="text-sm leading-7 text-slate-800">{content}</div>
         </div>
@@ -481,26 +551,7 @@ function renderThinkingItemDetails(item: AgentThreadItem) {
     return <InlinePlanBlock content={item.text} isComplete={item.status !== "in_progress"} />;
   }
 
-  if (item.type === "reasoning") {
-    return (
-      <div className="py-1.5">
-        <div className="flex items-start gap-2.5">
-          <div className="flex h-5 w-5 shrink-0 items-center justify-center text-slate-400">
-            {item.status === "in_progress" ? (
-              <Loader2 className="h-4 w-4 animate-spin text-sky-600" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-          </div>
-          <div className="min-w-0 flex-1 text-sm leading-7 text-slate-800">
-            <MarkdownRenderer content={item.text} />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (item.type === "turn_summary") {
+  if (item.type === "reasoning" || item.type === "turn_summary") {
     return <ThinkingItemCard item={item} />;
   }
 
@@ -511,6 +562,198 @@ function renderThinkingItemDetails(item: AgentThreadItem) {
   return null;
 }
 
+function isThinkingTimelineItem(
+  item: AgentThreadItem,
+): item is Extract<
+  AgentThreadItem,
+  { type: "plan" | "reasoning" | "turn_summary" | "context_compaction" }
+> {
+  return (
+    item.type === "plan" ||
+    item.type === "reasoning" ||
+    item.type === "turn_summary" ||
+    item.type === "context_compaction"
+  );
+}
+
+function normalizeToolMarker(value: string | undefined): string {
+  return (value || "").replace(/[\s_-]+/g, "").trim().toLowerCase();
+}
+
+function isBrowserTimelineItem(item: AgentThreadItem): boolean {
+  if (item.type !== "tool_call") {
+    return false;
+  }
+
+  const normalized = normalizeToolMarker(item.tool_name);
+  return [
+    "browser",
+    "page",
+    "runtime",
+    "dom",
+    "cdp",
+    "playwright",
+    "navigate",
+    "screenshot",
+    "snapshot",
+    "click",
+    "hover",
+    "presskey",
+    "type",
+    "selectoption",
+    "drag",
+    "evaluate",
+    "goto",
+  ].some((marker) => normalized.includes(marker));
+}
+
+function isToolExecutionTimelineItem(item: AgentThreadItem): boolean {
+  return (
+    item.type === "tool_call" ||
+    item.type === "command_execution" ||
+    item.type === "web_search"
+  );
+}
+
+function extractCompactThinkingParts(item: Extract<
+  AgentThreadItem,
+  { type: "plan" | "reasoning" | "turn_summary" | "context_compaction" }
+>) {
+  if (item.type === "context_compaction") {
+    const title =
+      item.stage === "completed" || item.status === "completed"
+        ? "压了上下文"
+        : "正在压上下文";
+    const detail =
+      item.detail?.trim() ||
+      (item.stage === "completed" || item.status === "completed"
+        ? "把前面的对话压成摘要了，后面接着做。"
+        : "在把前面的对话压成摘要，马上继续。");
+    return { title, detail };
+  }
+
+  if (item.type === "plan") {
+    return {
+      title: item.status === "in_progress" ? "还在排步骤" : "定了这些步骤",
+      detail: item.text.trim(),
+    };
+  }
+
+  if (item.type === "reasoning") {
+    const { summaryText, bodyText, combinedText } = resolveReasoningDisplayText(item);
+    const previewSource = summaryText || combinedText;
+    const lines = previewSource
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const [title = item.status === "in_progress" ? "思考中" : "已完成思考", ...rest] =
+      lines;
+    const detail = [rest.join("\n").trim(), bodyText].filter(Boolean).join("\n\n");
+
+    const parsed = parseAIResponse(combinedText, false);
+    if (parsed.hasA2UI || parsed.hasPending) {
+      return null;
+    }
+
+    return {
+      title,
+      detail,
+    };
+  }
+
+  if (item.type === "turn_summary") {
+    const displayText = resolveThinkingDisplayText(item);
+    const parsed = parseAIResponse(displayText, false);
+    if (parsed.hasA2UI || parsed.hasPending) {
+      return null;
+    }
+
+    const lines = displayText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const [title = item.status === "in_progress" ? "处理中" : "当前进展", ...rest] =
+      lines;
+
+    return {
+      title,
+      detail: rest.join("\n").trim(),
+    };
+  }
+
+  const displayText = resolveThinkingDisplayText(item);
+  const parsed = parseAIResponse(displayText, false);
+  if (parsed.hasA2UI || parsed.hasPending) {
+    return null;
+  }
+
+  const lines = displayText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const [title = item.status === "in_progress" ? "思考中" : "已完成思考", ...rest] =
+    lines;
+
+  return {
+    title,
+    detail: rest.join("\n").trim(),
+  };
+}
+
+function GroupedThinkingRow({
+  item,
+  groupMarker = "·",
+}: {
+  item: Extract<
+    AgentThreadItem,
+    { type: "plan" | "reasoning" | "turn_summary" | "context_compaction" }
+  >;
+  groupMarker?: string;
+}) {
+  const compact = extractCompactThinkingParts(item);
+
+  if (!compact) {
+    return renderThinkingItemDetails(item);
+  }
+
+  const ToneIcon =
+    item.type === "plan"
+      ? item.status === "in_progress"
+        ? Loader2
+        : ListChecks
+      : item.status === "in_progress"
+        ? Loader2
+        : Sparkles;
+
+  return (
+    <div className="flex items-start gap-2 py-1.5">
+      <span className="pt-0.5 font-mono text-xs text-slate-400">
+        {groupMarker}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-2">
+          <ToneIcon
+            className={cn(
+              "mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400",
+              item.status === "in_progress" && "animate-spin text-sky-600",
+            )}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm leading-6 text-slate-700">
+              {compact.title}
+            </div>
+            {compact.detail ? (
+              <div className="mt-0.5 text-sm leading-6 text-slate-500">
+                <MarkdownRenderer content={compact.detail} />
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function renderGroupItemDetails(
   item: AgentThreadItem,
   onFileClick?: (fileName: string, content: string) => void,
@@ -518,24 +761,14 @@ function renderGroupItemDetails(
   onOpenSavedSiteContent?: (target: SiteSavedContentTarget) => void,
   onOpenSubagentSession?: (sessionId: string) => void,
   onPermissionResponse?: (response: ConfirmResponse) => void,
+  options?: {
+    groupedToolCall?: boolean;
+    groupMarker?: string;
+  },
 ) {
   const toolCall = toToolCallState(item);
   const actionRequest = toActionRequired(item);
   const timestamp = formatTimestamp(item.completed_at || item.updated_at);
-  const resolveArtifactSourceLabel = (source: string): string => {
-    switch (source) {
-      case "tool_result":
-        return "处理结果";
-      case "tool_start":
-        return "开始处理";
-      case "message_content":
-        return "消息内容";
-      case "artifact_snapshot":
-        return "快照同步";
-      default:
-        return source;
-    }
-  };
   const resolveSubagentStatusLabel = (
     statusLabel: string | undefined,
     status: AgentThreadItem["status"],
@@ -583,74 +816,20 @@ function renderGroupItemDetails(
         defaultExpanded={item.status !== "completed"}
         onFileClick={onFileClick}
         onOpenSavedSiteContent={onOpenSavedSiteContent}
+        grouped={options?.groupedToolCall}
+        groupMarker={options?.groupMarker}
       />
     );
   }
 
   if (item.type === "file_artifact") {
-    const navigation = resolveTimelineArtifactNavigation(item);
-    const blockTargets = navigation?.blockTargets || [];
-    const shouldOpenFocusedBlock =
-      Boolean(onOpenArtifactFromTimeline) && blockTargets.length === 1;
-
     return (
-      <div className="py-1.5">
-        <button
-          type="button"
-          className="w-full rounded-md text-left transition-colors hover:bg-slate-50"
-          onClick={() => {
-            if (onOpenArtifactFromTimeline && navigation) {
-              onOpenArtifactFromTimeline(
-                shouldOpenFocusedBlock ? blockTargets[0] : navigation.rootTarget,
-              );
-              return;
-            }
-
-            onFileClick?.(item.path, item.content || "");
-          }}
-        >
-          <div className="flex items-start gap-2.5">
-            <div className="flex h-5 w-5 shrink-0 items-center justify-center text-slate-400">
-              <FileText className="h-4 w-4" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm leading-6 text-slate-900">{item.path}</div>
-                <Badge variant={resolveStatusBadgeVariant(item.status)}>
-                  {resolveArtifactSourceLabel(item.source)}
-                </Badge>
-                {timestamp ? (
-                  <span className="text-xs text-slate-400">{timestamp}</span>
-                ) : null}
-              </div>
-              {item.content?.trim() ? (
-                <div className="mt-1.5 line-clamp-4 whitespace-pre-wrap text-xs leading-6 text-slate-500">
-                  {item.content}
-                </div>
-              ) : (
-                <div className="mt-1.5 text-xs text-slate-500">
-                  点击在画布中打开文件
-                </div>
-              )}
-            </div>
-          </div>
-        </button>
-
-        {onOpenArtifactFromTimeline && blockTargets.length > 1 ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            {blockTargets.slice(0, 4).map((target) => (
-              <button
-                key={`${item.id}:${target.blockId}`}
-                type="button"
-                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 transition hover:border-sky-200 hover:bg-sky-50 hover:text-sky-700"
-                onClick={() => onOpenArtifactFromTimeline(target)}
-              >
-                跳到 block {target.blockId}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      <AgentThreadTimelineArtifactCard
+        item={item}
+        timestamp={timestamp}
+        onFileClick={onFileClick}
+        onOpenArtifactFromTimeline={onOpenArtifactFromTimeline}
+      />
     );
   }
 
@@ -735,6 +914,36 @@ function renderGroupItemDetails(
   );
 }
 
+function renderTimelineItemDetails(
+  item: AgentThreadItem,
+  onFileClick?: (fileName: string, content: string) => void,
+  onOpenArtifactFromTimeline?: (target: ArtifactTimelineOpenTarget) => void,
+  onOpenSavedSiteContent?: (target: SiteSavedContentTarget) => void,
+  onOpenSubagentSession?: (sessionId: string) => void,
+  onPermissionResponse?: (response: ConfirmResponse) => void,
+  options?: {
+    groupedToolCall?: boolean;
+    groupMarker?: string;
+  },
+) {
+  if (isThinkingTimelineItem(item)) {
+    if (options?.groupedToolCall) {
+      return <GroupedThinkingRow item={item} groupMarker={options.groupMarker} />;
+    }
+    return renderThinkingItemDetails(item);
+  }
+
+  return renderGroupItemDetails(
+    item,
+    onFileClick,
+    onOpenArtifactFromTimeline,
+    onOpenSavedSiteContent,
+    onOpenSubagentSession,
+    onPermissionResponse,
+    options,
+  );
+}
+
 function resolveCompactTechnicalSummary(block: AgentThreadOrderedBlock): string {
   return `处理了 ${block.items.length} 个步骤`;
 }
@@ -783,7 +992,7 @@ function resolveFocusBlockIndex(params: {
   if (pendingAction?.uiKind === "browser_preflight") {
     const browserIndex = findLastBlockIndex(
       blocks,
-      (block) => block.kind === "browser",
+      (block) => block.items.some((item) => isBrowserTimelineItem(item)),
     );
     if (browserIndex >= 0) {
       return browserIndex;
@@ -839,7 +1048,9 @@ function resolveExpandedBlockIndexes(params: {
   if (focusBlockIndex >= 0) {
     const focusBlock = blocks[focusBlockIndex];
     const completedThinkingBlock =
-      focusBlock?.kind === "thinking" && focusBlock.status === "completed";
+      Boolean(focusBlock) &&
+      focusBlock.status === "completed" &&
+      focusBlock.items.every((item) => isThinkingTimelineItem(item));
     const shouldExpandFocus =
       focusBlock?.status !== "completed" ||
       (!completedThinkingBlock && turn.status === "running") ||
@@ -875,18 +1086,10 @@ function normalizeBlockPreviewLine(
   }
 
   if (
-    kind === "file" &&
+    kind === "artifact" &&
     !hasAnyPrefix(trimmed, ["看了 ", "读了 ", "写了 ", "改了 ", "动了 ", "产出了 "])
   ) {
-    return `看了 ${trimmed}`;
-  }
-
-  if (kind === "command" && !hasAnyPrefix(trimmed, ["执行了 ", "跑了 ", "运行了 "])) {
-    return `执行了 ${trimmed}`;
-  }
-
-  if (kind === "search" && !hasAnyPrefix(trimmed, ["搜了 ", "查了 ", "搜索了 ", "检索了 "])) {
-    return `搜了 ${trimmed}`;
+    return `产出了 ${trimmed}`;
   }
 
   if (
@@ -908,12 +1111,26 @@ function normalizeBlockPreviewLine(
 }
 
 function resolveBlockSummaryLines(block: AgentThreadOrderedBlock): string[] {
+  const isTurnSummaryOnlyBlock =
+    block.items.length > 0 &&
+    block.items.every((item) => item.type === "turn_summary");
+  const isThinkingOnlyBlock = block.items.every((item) =>
+    isThinkingTimelineItem(item),
+  );
   const normalizedPreviewLines = block.previewLines
     .map((line) => normalizeBlockPreviewLine(block.kind, line))
     .filter((line) => line.trim().length > 0)
     .map((line) => shortenInlineText(line, 92) || line);
 
-  if (block.kind === "thinking") {
+  if (isTurnSummaryOnlyBlock) {
+    if (normalizedPreviewLines.length > 0) {
+      return normalizedPreviewLines;
+    }
+
+    return [block.status === "in_progress" ? "处理中" : "当前进展"];
+  }
+
+  if (isThinkingOnlyBlock) {
     const headline = block.status === "in_progress" ? "思考中" : "已完成思考";
     if (normalizedPreviewLines.length > 0) {
       return [
@@ -923,6 +1140,10 @@ function resolveBlockSummaryLines(block: AgentThreadOrderedBlock): string[] {
     }
 
     return [headline];
+  }
+
+  if (block.kind === "process" && block.items.length > 1) {
+    return [block.title, ...normalizedPreviewLines];
   }
 
   if (normalizedPreviewLines.length > 0) {
@@ -946,6 +1167,29 @@ function resolveBlockSummaryLines(block: AgentThreadOrderedBlock): string[] {
   }
 
   return [block.title];
+}
+
+function resolveProcessMixLabel(block: AgentThreadOrderedBlock): string | null {
+  if (block.kind !== "process" || block.items.length <= 1) {
+    return null;
+  }
+
+  const toolCount = block.items.filter((item) =>
+    isToolExecutionTimelineItem(item),
+  ).length;
+  const thinkingCount = block.items.filter((item) =>
+    isThinkingTimelineItem(item),
+  ).length;
+
+  const parts: string[] = [];
+  if (toolCount > 0) {
+    parts.push(`${toolCount} 个工具步骤`);
+  }
+  if (thinkingCount > 0) {
+    parts.push(`${thinkingCount} 条思路`);
+  }
+
+  return parts.length > 0 ? parts.join("，") : null;
 }
 
 function resolveThreadInlineStatusHint(params: {
@@ -1085,7 +1329,9 @@ function TimelineBlockCard({
   focusRequestKey?: number;
 }) {
   const dataTestId = `agent-thread-block:${index + 1}:${block.kind}`;
-  const isThinkingBlock = block.kind === "thinking";
+  const isThinkingOnlyBlock = block.items.every((item) =>
+    isThinkingTimelineItem(item),
+  );
   const summaryLines = resolveBlockSummaryLines(block);
   const headline = summaryLines[0] || block.title;
   const supportingLines = summaryLines.slice(1, 3);
@@ -1093,18 +1339,21 @@ function TimelineBlockCard({
   const hasFocusedItem = Boolean(
     focusedItemId && block.items.some((item) => item.id === focusedItemId),
   );
+  const shouldRenderGroupedToolRows =
+    block.kind === "process" && block.items.length > 1;
   const detailEntries = block.items.flatMap((item) => {
-    const content =
-      block.kind === "thinking"
-        ? renderThinkingItemDetails(item)
-        : renderGroupItemDetails(
-            item,
-            onFileClick,
-            onOpenArtifactFromTimeline,
-            onOpenSavedSiteContent,
-            onOpenSubagentSession,
-            onPermissionResponse,
-          );
+    const content = renderTimelineItemDetails(
+      item,
+      onFileClick,
+      onOpenArtifactFromTimeline,
+      onOpenSavedSiteContent,
+      onOpenSubagentSession,
+      onPermissionResponse,
+      {
+        groupedToolCall: shouldRenderGroupedToolRows,
+        groupMarker: block.items[0]?.id === item.id ? "└" : "·",
+      },
+    );
 
     return content ? [{ id: item.id, content }] : [];
   });
@@ -1128,17 +1377,16 @@ function TimelineBlockCard({
   }, [focusRequestKey, hasFocusedItem]);
 
   const singleItemContent =
-    block.items.length === 1 && (!isThinkingBlock || block.status !== "completed")
-      ? (block.kind === "thinking"
-          ? renderThinkingItemDetails(block.items[0]!)
-          : renderGroupItemDetails(
-              block.items[0]!,
-              onFileClick,
-              onOpenArtifactFromTimeline,
-              onOpenSavedSiteContent,
-              onOpenSubagentSession,
-              onPermissionResponse,
-            ))
+    block.items.length === 1 &&
+    !(isThinkingOnlyBlock && block.status === "completed")
+      ? renderTimelineItemDetails(
+          block.items[0]!,
+          onFileClick,
+          onOpenArtifactFromTimeline,
+          onOpenSavedSiteContent,
+          onOpenSubagentSession,
+          onPermissionResponse,
+        )
       : null;
 
   if (singleItemContent) {
@@ -1146,7 +1394,9 @@ function TimelineBlockCard({
       <div
         className={cn(
           "py-0.5",
-          emphasis === "active" && !isThinkingBlock && "rounded-xl bg-sky-50/45 px-2",
+          emphasis === "active" &&
+            !isThinkingOnlyBlock &&
+            "rounded-xl bg-sky-50/45 px-2",
           emphasis === "quiet" && "opacity-80",
         )}
         data-testid={dataTestId}
@@ -1168,7 +1418,14 @@ function TimelineBlockCard({
 
   const visibleHeadline = headline;
   const visibleSupportingLines =
-    isThinkingBlock && open ? [] : supportingLines;
+    isThinkingOnlyBlock && open ? [] : supportingLines;
+  const summaryCountLabel =
+    block.items.length > 1 ? block.countLabel : null;
+  const processMixLabel = resolveProcessMixLabel(block);
+  const summaryDetailHint =
+    hasDetailEntries && block.items.length > 1 && !open
+      ? processMixLabel || block.rawDetailLabel
+      : null;
   const summaryToneClassName = cn(
     "text-slate-900",
     block.status === "in_progress" && "text-sky-700",
@@ -1183,7 +1440,7 @@ function TimelineBlockCard({
           className={cn(
             "list-none rounded-md px-2 py-1.5",
             hasDetailEntries ? "cursor-pointer" : "cursor-default",
-            emphasis === "active" && !isThinkingBlock && "bg-sky-50/45",
+            emphasis === "active" && !isThinkingOnlyBlock && "bg-sky-50/45",
           )}
           onClick={(event) => {
             if (!hasDetailEntries) {
@@ -1210,6 +1467,16 @@ function TimelineBlockCard({
                 >
                   {visibleHeadline}
                 </span>
+                {summaryCountLabel ? (
+                  <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[11px] leading-none text-slate-500">
+                    {summaryCountLabel}
+                  </span>
+                ) : null}
+                {summaryDetailHint ? (
+                  <span className="text-xs leading-5 text-slate-400">
+                    {summaryDetailHint}
+                  </span>
+                ) : null}
               </div>
 
               {visibleSupportingLines.length > 0 ? (

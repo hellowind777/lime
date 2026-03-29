@@ -8,6 +8,7 @@
 import { lazy } from "react";
 import { artifactRegistry } from "@/lib/artifact/registry";
 import type { RendererEntry, ArtifactType } from "@/lib/artifact/types";
+import { DocumentRenderer } from "./DocumentRenderer";
 
 // ============================================================================
 // 渲染器组件导出
@@ -30,8 +31,6 @@ export { BrowserAssistRenderer } from "./BrowserAssistRenderer";
  * 懒加载的代码渲染器
  */
 const LazyCodeRenderer = lazy(() => import("./CodeRenderer"));
-
-const LazyDocumentRenderer = lazy(() => import("./DocumentRenderer"));
 
 /**
  * 懒加载的 HTML 渲染器
@@ -71,7 +70,7 @@ const LIGHTWEIGHT_RENDERER_ENTRIES: RendererEntry[] = [
     type: "document" as ArtifactType,
     displayName: "文档",
     icon: "file-text",
-    component: LazyDocumentRenderer,
+    component: DocumentRenderer,
     canEdit: false,
     fileExtension: "md",
   },

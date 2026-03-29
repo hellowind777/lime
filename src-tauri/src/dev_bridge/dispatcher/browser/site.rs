@@ -1,6 +1,9 @@
 use super::super::get_db;
 use super::{parse_request, DynError};
 use crate::dev_bridge::DevBridgeState;
+use crate::services::site_adapter_import_service::{
+    import_imported_yaml_adapter_bundle_to_default_dir, ImportedYamlCompileOptions,
+};
 use crate::services::site_adapter_registry::{
     apply_site_adapter_catalog_bootstrap, clear_site_adapter_catalog_cache,
     get_site_adapter_catalog_status,
@@ -47,6 +50,18 @@ pub(super) async fn try_handle(
         }
         "site_clear_adapter_catalog_cache" => {
             serde_json::to_value(clear_site_adapter_catalog_cache()?)?
+        }
+        "site_import_adapter_yaml_bundle" => {
+            let request: crate::commands::site_capability_cmd::SiteAdapterImportYamlBundleRequest =
+                parse_request(args)?;
+            serde_json::to_value(import_imported_yaml_adapter_bundle_to_default_dir(
+                &request.yaml_bundle,
+                &ImportedYamlCompileOptions {
+                    read_only: request.read_only,
+                    source_version: request.source_version,
+                },
+                request.catalog_version,
+            )?)?
         }
         "site_run_adapter" | "site_debug_run_adapter" => {
             let request: crate::services::site_capability_service::RunSiteAdapterRequest =

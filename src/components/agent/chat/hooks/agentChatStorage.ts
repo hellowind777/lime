@@ -13,6 +13,8 @@ import { normalizeExecutionStrategy } from "./agentChatCoreUtils";
 
 export const DEFAULT_AGENT_PROVIDER = "claude";
 export const DEFAULT_AGENT_MODEL = "claude-sonnet-4-5";
+export type AgentAccessMode = "read-only" | "current" | "full-access";
+export const DEFAULT_AGENT_ACCESS_MODE: AgentAccessMode = "current";
 export const GLOBAL_PROVIDER_PREF_KEY = "agent_pref_provider_global";
 export const GLOBAL_MODEL_PREF_KEY = "agent_pref_model_global";
 export const GLOBAL_MIGRATED_PREF_KEY = "agent_pref_migrated_global";
@@ -170,6 +172,64 @@ export const getExecutionStrategyStorageKey = (
   }
 
   return `aster_execution_strategy_${resolvedWorkspaceId}`;
+};
+
+export const getSessionAccessModeKey = (
+  workspaceId: string | null | undefined,
+  sessionId: string,
+): string => {
+  const resolvedWorkspaceId = workspaceId?.trim();
+  if (!resolvedWorkspaceId) {
+    return `aster_session_access_mode_global_${sessionId}`;
+  }
+  return `aster_session_access_mode_${resolvedWorkspaceId}_${sessionId}`;
+};
+
+export const getAccessModeStorageKey = (
+  workspaceId?: string | null,
+): string | null => {
+  const resolvedWorkspaceId = workspaceId?.trim();
+  if (!resolvedWorkspaceId) {
+    return null;
+  }
+
+  return `aster_access_mode_${resolvedWorkspaceId}`;
+};
+
+export const normalizeAccessMode = (value: unknown): AgentAccessMode => {
+  if (
+    value === "read-only" ||
+    value === "current" ||
+    value === "full-access"
+  ) {
+    return value;
+  }
+  return DEFAULT_AGENT_ACCESS_MODE;
+};
+
+export const resolvePersistedAccessMode = (
+  workspaceId?: string | null,
+): AgentAccessMode => {
+  const storageKey = getAccessModeStorageKey(workspaceId);
+  if (!storageKey) {
+    return DEFAULT_AGENT_ACCESS_MODE;
+  }
+
+  return normalizeAccessMode(
+    loadPersisted<string | null>(storageKey, DEFAULT_AGENT_ACCESS_MODE),
+  );
+};
+
+export const loadSessionAccessMode = (
+  workspaceId: string | null | undefined,
+  sessionId: string,
+): AgentAccessMode | null => {
+  const key = getSessionAccessModeKey(workspaceId, sessionId);
+  const parsed = loadPersisted<string | null>(key, null);
+  if (parsed === null) {
+    return null;
+  }
+  return normalizeAccessMode(parsed);
 };
 
 export const resolvePersistedExecutionStrategy = (

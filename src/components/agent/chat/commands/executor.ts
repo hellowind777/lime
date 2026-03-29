@@ -32,7 +32,6 @@ export async function executeCodexSlashCommand(
     createFreshSession,
     appendAssistantMessage,
     notifyInfo,
-    notifySuccess,
   } = params;
 
   switch (command.definition.key) {
@@ -62,12 +61,7 @@ export async function executeCodexSlashCommand(
         return true;
       }
       const sessionName = command.userInput.trim() || undefined;
-      const nextSessionId = await createFreshSession(sessionName);
-      if (nextSessionId) {
-        notifySuccess(
-          sessionName ? `已创建新任务：${sessionName}` : "已创建新任务",
-        );
-      }
+      await createFreshSession(sessionName);
       return true;
     }
     case "help":

@@ -70,6 +70,36 @@ pub struct SiteAdapterRecommendation {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SiteAdapterLaunchReadinessRequest {
+    pub adapter_name: String,
+    #[serde(default)]
+    pub profile_key: Option<String>,
+    #[serde(default)]
+    pub target_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SiteAdapterLaunchReadinessStatus {
+    Ready,
+    RequiresBrowserRuntime,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteAdapterLaunchReadinessResult {
+    pub status: SiteAdapterLaunchReadinessStatus,
+    pub adapter: String,
+    pub domain: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub report_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RunSiteAdapterRequest {
     pub adapter_name: String,
     #[serde(default)]
@@ -86,6 +116,10 @@ pub struct RunSiteAdapterRequest {
     pub project_id: Option<String>,
     #[serde(default)]
     pub save_title: Option<String>,
+    #[serde(default)]
+    pub require_attached_session: Option<bool>,
+    #[serde(default)]
+    pub skill_title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +206,14 @@ struct SiteAdapterRecommendationCandidate {
     profile_key: Option<String>,
     target_id: Option<String>,
     score: u32,
+}
+
+#[derive(Debug, Clone)]
+struct SiteAdapterAttachedLaunchCandidate {
+    profile_key: String,
+    target_id: String,
+    current_url_matches: bool,
+    saved_existing_session: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -282,6 +324,23 @@ pub async fn recommend_site_adapters(
         &attached_contexts,
         limit,
     ))
+}
+
+pub async fn get_site_adapter_launch_readiness(
+    db: &DbConnection,
+    request: SiteAdapterLaunchReadinessRequest,
+) -> Result<SiteAdapterLaunchReadinessResult, String> {
+    let normalized_name = normalize_site_adapter_name(&request.adapter_name);
+    let spec = find_site_adapter_spec(&normalized_name)?
+        .ok_or_else(|| "未找到对应的站点适配器".to_string())?;
+
+    resolve_site_adapter_launch_readiness_for_spec(
+        db,
+        &spec,
+        request.profile_key.as_deref(),
+        request.target_id.as_deref(),
+    )
+    .await
 }
 
 pub fn build_site_result_document_title(adapter_name: &str, custom_title: Option<&str>) -> String {
@@ -586,9 +645,54 @@ pub async fn run_site_adapter(
         }
     };
 
-    let profile_key =
-        match resolve_effective_profile_key(db, request.profile_key.as_deref(), &spec.domain).await
+    let attached_session_readiness = if request.require_attached_session.unwrap_or(false) {
+        match resolve_site_adapter_launch_readiness_for_spec(
+            db,
+            &spec,
+            request.profile_key.as_deref(),
+            request.target_id.as_deref(),
+        )
+        .await
         {
+            Ok(result) => {
+                if result.status != SiteAdapterLaunchReadinessStatus::Ready {
+                    return build_error_result(
+                        &spec,
+                        result
+                            .profile_key
+                            .clone()
+                            .unwrap_or_else(|| requested_profile_key.clone()),
+                        None,
+                        result.target_id.clone(),
+                        entry_url,
+                        "attached_session_required",
+                        &result.message,
+                    );
+                }
+                Some(result)
+            }
+            Err(error) => {
+                return build_error_result(
+                    &spec,
+                    requested_profile_key.clone(),
+                    None,
+                    None,
+                    entry_url,
+                    "internal_error",
+                    &error,
+                );
+            }
+        }
+    } else {
+        None
+    };
+
+    let resolved_request_profile_key = attached_session_readiness
+        .as_ref()
+        .and_then(|result| result.profile_key.as_deref())
+        .or(request.profile_key.as_deref());
+    let profile_key =
+        match resolve_effective_profile_key(db, resolved_request_profile_key, &spec.domain).await {
             Ok(value) => value,
             Err(error) => {
                 return build_error_result(
@@ -617,6 +721,21 @@ pub async fn run_site_adapter(
             );
         }
     };
+    if request.require_attached_session.unwrap_or(false)
+        && transport_route != SiteAdapterTransportRoute::ExistingSession
+    {
+        return build_error_result(
+            &spec,
+            profile_key,
+            None,
+            attached_session_readiness
+                .as_ref()
+                .and_then(|result| result.target_id.clone()),
+            entry_url,
+            "attached_session_required",
+            "当前执行链路没有附着到真实浏览器会话，请先去浏览器工作台连接目标站点后重试。",
+        );
+    }
 
     let wrapped_script = match build_wrapped_adapter_script(&spec.script, &args) {
         Ok(value) => value,
@@ -633,13 +752,16 @@ pub async fn run_site_adapter(
         }
     };
     let timeout_ms = normalize_timeout_ms(request.timeout_ms);
+    let resolved_target_id = attached_session_readiness
+        .and_then(|result| result.target_id)
+        .or_else(|| normalize_requested_target_id(request.target_id.as_deref()));
 
     match transport_route {
         SiteAdapterTransportRoute::ExistingSession => {
             run_existing_session_adapter(
                 &spec,
                 profile_key,
-                request.target_id,
+                resolved_target_id,
                 entry_url,
                 timeout_ms,
                 wrapped_script,
@@ -651,7 +773,7 @@ pub async fn run_site_adapter(
                 db,
                 &spec,
                 profile_key,
-                request.target_id,
+                resolved_target_id,
                 entry_url,
                 timeout_ms,
                 wrapped_script,
@@ -754,6 +876,13 @@ fn validate_adapter_args(spec: &SiteAdapterSpec, args: &Map<String, Value>) -> R
 
 fn normalize_requested_profile_key(profile_key: Option<&str>) -> Option<String> {
     profile_key
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn normalize_requested_target_id(target_id: Option<&str>) -> Option<String> {
+    target_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
@@ -949,6 +1078,199 @@ async fn resolve_effective_profile_key(
         select_auto_profile_key(&profiles, &observers, adapter_domain)
             .unwrap_or_else(|| DEFAULT_PROFILE_KEY.to_string()),
     )
+}
+
+fn build_site_adapter_launch_readiness_result(
+    status: SiteAdapterLaunchReadinessStatus,
+    spec: &SiteAdapterSpec,
+    profile_key: Option<String>,
+    target_id: Option<String>,
+    message: impl Into<String>,
+) -> SiteAdapterLaunchReadinessResult {
+    let report_hint = match status {
+        SiteAdapterLaunchReadinessStatus::Ready => None,
+        SiteAdapterLaunchReadinessStatus::RequiresBrowserRuntime => {
+            build_site_adapter_report_hint("attached_session_required")
+        }
+    };
+
+    SiteAdapterLaunchReadinessResult {
+        status,
+        adapter: spec.name.clone(),
+        domain: spec.domain.clone(),
+        profile_key,
+        target_id,
+        message: message.into(),
+        report_hint,
+    }
+}
+
+fn build_site_adapter_attached_session_required_message(spec: &SiteAdapterSpec) -> String {
+    format!(
+        "当前没有检测到已附着到真实浏览器的 {} 页面，请先去浏览器工作台连接浏览器并打开目标页面。",
+        spec.domain
+    )
+}
+
+fn build_site_adapter_attached_session_missing_target_message(spec: &SiteAdapterSpec) -> String {
+    format!(
+        "已检测到真实浏览器会话，但当前没有命中 {} 的目标标签页；请先打开目标页面后再回到 Claw 执行。",
+        spec.domain
+    )
+}
+
+fn build_site_adapter_attached_session_ready_message(spec: &SiteAdapterSpec) -> String {
+    format!(
+        "已检测到 {} 的真实浏览器页面，Claw 可以直接复用当前会话执行。",
+        spec.domain
+    )
+}
+
+async fn resolve_site_adapter_launch_readiness_for_spec(
+    db: &DbConnection,
+    spec: &SiteAdapterSpec,
+    profile_key: Option<&str>,
+    target_id: Option<&str>,
+) -> Result<SiteAdapterLaunchReadinessResult, String> {
+    let normalized_profile_key = normalize_requested_profile_key(profile_key);
+    let normalized_target_id = normalize_requested_target_id(target_id);
+    let profiles = load_active_browser_profiles(db)?;
+    let status_snapshot = chrome_bridge::chrome_bridge_hub()
+        .get_status_snapshot()
+        .await;
+
+    if let Some(requested_profile_key) = normalized_profile_key.clone() {
+        let transport = load_profile_transport(db, &requested_profile_key)?;
+        if transport == Some(BrowserProfileTransportKind::ManagedCdp) {
+            return Ok(build_site_adapter_launch_readiness_result(
+                SiteAdapterLaunchReadinessStatus::RequiresBrowserRuntime,
+                spec,
+                Some(requested_profile_key),
+                normalized_target_id,
+                "当前资料属于 Lime 托管浏览器，不允许在 Claw 内静默接管执行；请改走浏览器工作台。",
+            ));
+        }
+
+        let observer = status_snapshot
+            .observers
+            .iter()
+            .find(|item| item.profile_key == requested_profile_key);
+        if observer.is_none() {
+            return Ok(build_site_adapter_launch_readiness_result(
+                SiteAdapterLaunchReadinessStatus::RequiresBrowserRuntime,
+                spec,
+                Some(requested_profile_key),
+                normalized_target_id,
+                build_site_adapter_attached_session_required_message(spec),
+            ));
+        }
+
+        if let Some(explicit_target_id) = normalized_target_id.clone() {
+            return Ok(build_site_adapter_launch_readiness_result(
+                SiteAdapterLaunchReadinessStatus::Ready,
+                spec,
+                Some(requested_profile_key),
+                Some(explicit_target_id),
+                build_site_adapter_attached_session_ready_message(spec),
+            ));
+        }
+
+        let tabs = match load_existing_session_tabs(&requested_profile_key).await {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::debug!(
+                    "[site_capability] readiness 读取 existing_session 标签页失败: profile_key={}, error={}",
+                    requested_profile_key,
+                    error
+                );
+                Vec::new()
+            }
+        };
+        let selected_target = select_existing_session_target(&tabs, &spec.domain).map(|tab| tab.id);
+        let is_ready = selected_target.is_some();
+
+        return Ok(build_site_adapter_launch_readiness_result(
+            if is_ready {
+                SiteAdapterLaunchReadinessStatus::Ready
+            } else {
+                SiteAdapterLaunchReadinessStatus::RequiresBrowserRuntime
+            },
+            spec,
+            Some(requested_profile_key),
+            selected_target,
+            if is_ready {
+                build_site_adapter_attached_session_ready_message(spec)
+            } else {
+                build_site_adapter_attached_session_missing_target_message(spec)
+            },
+        ));
+    }
+
+    let mut attached_candidates = Vec::new();
+    for observer in &status_snapshot.observers {
+        let transport = profiles
+            .iter()
+            .find(|profile| profile.profile_key == observer.profile_key)
+            .map(|profile| profile.transport_kind);
+        if transport == Some(BrowserProfileTransportKind::ManagedCdp) {
+            continue;
+        }
+
+        let tabs = match load_existing_session_tabs(&observer.profile_key).await {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::debug!(
+                    "[site_capability] readiness 读取自动附着标签页失败: profile_key={}, error={}",
+                    observer.profile_key,
+                    error
+                );
+                Vec::new()
+            }
+        };
+        let Some(selected_target) = select_existing_session_target(&tabs, &spec.domain) else {
+            continue;
+        };
+
+        attached_candidates.push(SiteAdapterAttachedLaunchCandidate {
+            profile_key: observer.profile_key.clone(),
+            target_id: selected_target.id,
+            current_url_matches: observer_matches_site_domain(observer, &spec.domain),
+            saved_existing_session: transport == Some(BrowserProfileTransportKind::ExistingSession),
+        });
+    }
+
+    if let Some(candidate) = attached_candidates
+        .into_iter()
+        .max_by_key(|item| (item.current_url_matches, item.saved_existing_session))
+    {
+        return Ok(build_site_adapter_launch_readiness_result(
+            SiteAdapterLaunchReadinessStatus::Ready,
+            spec,
+            Some(candidate.profile_key),
+            Some(candidate.target_id),
+            build_site_adapter_attached_session_ready_message(spec),
+        ));
+    }
+
+    let has_attached_observer = status_snapshot.observers.iter().any(|observer| {
+        profiles
+            .iter()
+            .find(|profile| profile.profile_key == observer.profile_key)
+            .map(|profile| profile.transport_kind != BrowserProfileTransportKind::ManagedCdp)
+            .unwrap_or(true)
+    });
+
+    Ok(build_site_adapter_launch_readiness_result(
+        SiteAdapterLaunchReadinessStatus::RequiresBrowserRuntime,
+        spec,
+        None,
+        None,
+        if has_attached_observer {
+            build_site_adapter_attached_session_missing_target_message(spec)
+        } else {
+            build_site_adapter_attached_session_required_message(spec)
+        },
+    ))
 }
 
 fn resolve_transport_route_from_state(
@@ -2174,6 +2496,14 @@ fn looks_like_no_matching_context_message(message: &str) -> bool {
         || normalized.contains("上下文")
 }
 
+fn looks_like_attached_session_required_message(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("附着")
+        || normalized.contains("真实浏览器")
+        || normalized.contains("浏览器工作台")
+        || normalized.contains("attached session")
+}
+
 fn normalize_site_adapter_error_code(
     error_code: Option<&str>,
     error_message: Option<&str>,
@@ -2191,6 +2521,14 @@ fn normalize_site_adapter_error_code(
         || looks_like_auth_required_message(normalized_message)
     {
         return Some("auth_required".to_string());
+    }
+
+    if matches!(
+        normalized_code.as_deref(),
+        Some("attached_session_required")
+    ) || looks_like_attached_session_required_message(normalized_message)
+    {
+        return Some("attached_session_required".to_string());
     }
 
     if matches!(
@@ -2225,6 +2563,10 @@ fn looks_like_navigation_timeout_error(error: &str) -> bool {
 
 fn build_site_adapter_report_hint(error_code: &str) -> Option<String> {
     match error_code {
+        "attached_session_required" => Some(
+            "Claw 不会在后台偷偷启动浏览器；请先进入浏览器工作台连接真实浏览器并打开目标站点页面，再返回 Claw 重试。"
+                .to_string(),
+        ),
         "auth_required" => Some(
             "请先确认当前浏览器资料已经登录目标站点，再重试；如果仍失败，请附上当前页面 URL 和登录状态。"
                 .to_string(),
@@ -2337,10 +2679,86 @@ mod tests {
     }
 
     #[test]
+    fn should_expose_selected_bundled_market_finance_and_community_adapters() {
+        let linux_do_hot = get_site_adapter("linux-do/hot").expect("linux-do/hot should resolve");
+        assert_eq!(linux_do_hot.source_kind.as_deref(), Some("bundled"));
+        assert_eq!(linux_do_hot.source_version.as_deref(), Some("2026-03-28"));
+        assert_eq!(
+            linux_do_hot
+                .example_args
+                .get("period")
+                .and_then(Value::as_str),
+            Some("weekly")
+        );
+        assert_eq!(
+            linux_do_hot
+                .example_args
+                .get("limit")
+                .and_then(Value::as_i64),
+            Some(10)
+        );
+
+        let linux_do_categories =
+            get_site_adapter("linux-do/categories").expect("linux-do/categories should resolve");
+        assert_eq!(linux_do_categories.source_kind.as_deref(), Some("bundled"));
+        assert_eq!(
+            linux_do_categories.source_version.as_deref(),
+            Some("2026-03-28")
+        );
+        assert_eq!(
+            linux_do_categories
+                .example_args
+                .get("limit")
+                .and_then(Value::as_i64),
+            Some(10)
+        );
+
+        let yahoo =
+            get_site_adapter("yahoo-finance/quote").expect("yahoo-finance/quote should resolve");
+        assert_eq!(yahoo.source_kind.as_deref(), Some("bundled"));
+        assert_eq!(yahoo.source_version.as_deref(), Some("2026-03-28"));
+        assert_eq!(
+            yahoo.example_args.get("symbol").and_then(Value::as_str),
+            Some("AAPL")
+        );
+
+        let smzdm = get_site_adapter("smzdm/search").expect("smzdm/search should resolve");
+        assert_eq!(smzdm.source_kind.as_deref(), Some("bundled"));
+        assert_eq!(smzdm.source_version.as_deref(), Some("2026-03-28"));
+        assert_eq!(
+            smzdm.example_args.get("query").and_then(Value::as_str),
+            Some("Mac mini")
+        );
+        assert_eq!(
+            smzdm.example_args.get("limit").and_then(Value::as_i64),
+            Some(5)
+        );
+    }
+
+    #[test]
     fn should_search_site_adapters_by_keyword() {
         let adapters = search_site_adapters("issue");
         assert_eq!(adapters.len(), 1);
         assert_eq!(adapters[0].name, "github/issues");
+    }
+
+    #[test]
+    fn should_search_selected_bundled_adapters_by_domain_and_capability() {
+        let community = search_site_adapters("linux.do");
+        assert!(community
+            .iter()
+            .any(|adapter| adapter.name == "linux-do/hot"));
+        assert!(community
+            .iter()
+            .any(|adapter| adapter.name == "linux-do/categories"));
+
+        let finance = search_site_adapters("finance");
+        assert!(finance
+            .iter()
+            .any(|adapter| adapter.name == "yahoo-finance/quote"));
+
+        let deals = search_site_adapters("deals");
+        assert!(deals.iter().any(|adapter| adapter.name == "smzdm/search"));
     }
 
     #[test]
@@ -2717,6 +3135,81 @@ mod tests {
     }
 
     #[test]
+    fn should_build_attached_session_required_report_hint() {
+        let hint = build_site_adapter_report_hint("attached_session_required")
+            .expect("attached_session_required 应返回提示");
+        assert!(hint.contains("不会在后台偷偷启动浏览器"));
+    }
+
+    #[tokio::test]
+    async fn should_report_requires_browser_runtime_when_no_attached_session_exists() {
+        let db = setup_test_db();
+
+        let readiness = get_site_adapter_launch_readiness(
+            &db,
+            SiteAdapterLaunchReadinessRequest {
+                adapter_name: "github/search".to_string(),
+                profile_key: None,
+                target_id: None,
+            },
+        )
+        .await
+        .expect("readiness should resolve");
+
+        assert_eq!(
+            readiness.status,
+            SiteAdapterLaunchReadinessStatus::RequiresBrowserRuntime
+        );
+        assert!(readiness.message.contains("浏览器工作台"));
+    }
+
+    #[tokio::test]
+    async fn should_block_managed_profile_when_attached_session_is_required() {
+        let db = setup_test_db();
+        {
+            let conn = lock_db(&db).expect("lock db should succeed");
+            BrowserProfileDao::upsert(
+                &conn,
+                &UpsertBrowserProfileInput {
+                    id: None,
+                    profile_key: "managed-github".to_string(),
+                    name: "托管 GitHub".to_string(),
+                    description: Some("托管浏览器".to_string()),
+                    site_scope: Some("github.com".to_string()),
+                    launch_url: Some("https://github.com".to_string()),
+                    transport_kind: BrowserProfileTransportKind::ManagedCdp,
+                    profile_dir: "/tmp/managed-github".to_string(),
+                    managed_profile_dir: Some("/tmp/managed-github".to_string()),
+                },
+            )
+            .expect("managed profile should save");
+        }
+
+        let result = run_site_adapter(
+            &db,
+            RunSiteAdapterRequest {
+                adapter_name: "github/search".to_string(),
+                args: serde_json::json!({"query":"mcp"}),
+                profile_key: Some("managed-github".to_string()),
+                target_id: None,
+                timeout_ms: Some(5_000),
+                content_id: None,
+                project_id: None,
+                save_title: None,
+                require_attached_session: Some(true),
+                skill_title: Some("GitHub 仓库线索检索".to_string()),
+            },
+        )
+        .await;
+
+        assert!(!result.ok);
+        assert_eq!(
+            result.error_code.as_deref(),
+            Some("attached_session_required")
+        );
+    }
+
+    #[test]
     fn should_save_existing_site_result_to_project_as_document() {
         let db = setup_test_db();
         let active_adapter = get_site_adapter("github/search").expect("github/search should exist");
@@ -2741,6 +3234,8 @@ mod tests {
                 content_id: None,
                 project_id: None,
                 save_title: None,
+                require_attached_session: None,
+                skill_title: None,
             },
             result: SiteAdapterRunResult {
                 ok: true,
@@ -2815,6 +3310,8 @@ mod tests {
                 content_id: None,
                 project_id: None,
                 save_title: None,
+                require_attached_session: None,
+                skill_title: None,
             },
             result: SiteAdapterRunResult {
                 ok: false,
@@ -2866,6 +3363,8 @@ mod tests {
             content_id: None,
             project_id: Some(workspace.id.clone()),
             save_title: Some("自动保存的 GitHub MCP 搜索结果".to_string()),
+            require_attached_session: None,
+            skill_title: None,
         };
         let result = SiteAdapterRunResult {
             ok: true,
@@ -2926,6 +3425,8 @@ mod tests {
             content_id: None,
             project_id: Some("project-1".to_string()),
             save_title: None,
+            require_attached_session: None,
+            skill_title: None,
         };
         let result = SiteAdapterRunResult {
             ok: false,
@@ -2995,6 +3496,8 @@ mod tests {
                 content_id: None,
                 project_id: None,
                 save_title: None,
+                require_attached_session: None,
+                skill_title: None,
             },
         )
         .await;
@@ -3055,6 +3558,8 @@ mod tests {
                 content_id: Some(existing.id.clone()),
                 project_id: None,
                 save_title: Some("不会用于当前主稿".to_string()),
+                require_attached_session: None,
+                skill_title: None,
             },
             result: SiteAdapterRunResult {
                 ok: true,
@@ -3154,6 +3659,8 @@ mod tests {
             content_id: Some(existing.id.clone()),
             project_id: None,
             save_title: Some("不应覆盖当前主稿标题".to_string()),
+            require_attached_session: None,
+            skill_title: None,
         };
         let result = SiteAdapterRunResult {
             ok: true,

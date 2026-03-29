@@ -73,11 +73,13 @@ describe("service skill prompt composer", () => {
       userInput: "重点关注过去 24 小时的新增热点。",
     });
 
-    expect(prompt).toContain("[服务型技能] 每日趋势摘要");
+    expect(prompt).toContain("[技能任务] 每日趋势摘要");
     expect(prompt).toContain("- 行业关键词: AI Agent，创作者工具");
     expect(prompt).toContain("[补充要求] 重点关注过去 24 小时的新增热点。");
     expect(prompt).toContain("现在什么最热");
     expect(prompt).toContain("当前为客户端起步版");
+    expect(prompt).toContain("单轮最多追问 1 个最关键问题");
+    expect(prompt).toContain("不要一次性索要全部缺失参数");
   });
 
   it("应为 automation 生成独立执行要求", () => {
@@ -92,6 +94,7 @@ describe("service skill prompt composer", () => {
     expect(prompt).toContain("[自动化执行要求]");
     expect(prompt).toContain("对比上轮变化");
     expect(prompt).not.toContain("当前为客户端起步版");
+    expect(prompt).toContain("单轮最多追问 1 个最关键问题");
   });
 
   it("远端目录缺少 promptTemplateKey 时应回退到 skillKey 推断模板", () => {

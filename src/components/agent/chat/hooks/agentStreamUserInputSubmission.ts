@@ -81,6 +81,7 @@ export async function submitAgentStreamUserInput(
       getRequiredWorkspaceId: env.getRequiredWorkspaceId,
       getSyncedSessionExecutionStrategy: env.getSyncedSessionExecutionStrategy,
       getSyncedSessionRecentPreferences: env.getSyncedSessionRecentPreferences,
+      effectiveAccessMode: env.accessMode,
       content,
       images,
       skipUserMessage,

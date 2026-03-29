@@ -196,7 +196,6 @@ export interface CanvasWorkbenchLayoutProps {
     target: CanvasWorkbenchPreviewTarget,
     options?: {
       stackedWorkbenchTrigger?: ReactNode;
-      artifactDocumentLayoutMode?: "full" | "canvas-only";
       onArtifactDocumentControllerChange?: (
         controller: ArtifactWorkbenchDocumentController | null,
       ) => void;
@@ -501,6 +500,7 @@ export const CanvasWorkbenchLayout = memo(function CanvasWorkbenchLayout({
   const [stackedWorkbenchWidth, setStackedWorkbenchWidth] = useState<number | null>(
     null,
   );
+  const [documentInspectorCollapsed, setDocumentInspectorCollapsed] = useState(true);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [artifactDocumentController, setArtifactDocumentController] =
     useState<ArtifactWorkbenchDocumentController | null>(null);
@@ -817,6 +817,10 @@ export const CanvasWorkbenchLayout = memo(function CanvasWorkbenchLayout({
     setArtifactDocumentController(null);
   }, [selectedEntry]);
 
+  useEffect(() => {
+    setDocumentInspectorCollapsed(true);
+  }, [selectedEntry?.key, artifactDocumentController?.document?.artifactId]);
+
   const currentTarget = useMemo<CanvasWorkbenchPreviewTarget>(() => {
     if (activeTab === "team" && teamView?.enabled) {
       return {
@@ -1054,6 +1058,23 @@ export const CanvasWorkbenchLayout = memo(function CanvasWorkbenchLayout({
     const showDocumentInspector = Boolean(
       selectedEntry?.source === "artifact" && artifactDocumentController?.document,
     );
+    const documentTitle =
+      artifactDocumentController?.document?.title?.trim() ||
+      selectedEntry?.title ||
+      "当前文稿";
+    const documentSummary =
+      artifactDocumentController?.document?.summary?.trim() ||
+      "当前选中的结构化文稿已接入右侧工作台，按需展开查看概览、来源、版本与编辑。";
+    const versionCount = artifactDocumentController?.versionHistory.length || 0;
+    const sourceCount = artifactDocumentController?.sourceLinks.length || 0;
+    const diffCount =
+      artifactDocumentController?.currentVersionDiff?.changedBlocks.length || 0;
+    const currentVersionLabel = artifactDocumentController?.currentVersion
+      ? `v${artifactDocumentController.currentVersion.versionNo}`
+      : null;
+    const documentInspectorButtonLabel = documentInspectorCollapsed
+      ? "展开当前文稿检查器"
+      : "折叠当前文稿检查器";
 
     return (
       <div className="space-y-4">
@@ -1121,28 +1142,65 @@ export const CanvasWorkbenchLayout = memo(function CanvasWorkbenchLayout({
         </section>
 
         {showDocumentInspector && artifactDocumentController ? (
-          <ArtifactWorkbenchDocumentInspector
-            controller={artifactDocumentController}
-            testId="canvas-workbench-document-inspector"
-            containerClassName={cn(
-              WORKBENCH_PANEL_CLASSNAME,
-              "min-h-0 overflow-hidden bg-slate-50/80",
-            )}
-            tabsClassName="flex h-full min-h-0 flex-col p-4"
-            header={
-              <div className="mb-4 rounded-[20px] border border-slate-200 bg-white px-4 py-3">
+          <section className={cn(WORKBENCH_PANEL_CLASSNAME, "overflow-hidden bg-slate-50/80")}>
+            <button
+              type="button"
+              aria-label={documentInspectorButtonLabel}
+              aria-expanded={!documentInspectorCollapsed}
+              aria-controls="canvas-workbench-document-inspector-panel"
+              onClick={() =>
+                setDocumentInspectorCollapsed((current) => !current)
+              }
+              className="flex w-full items-start justify-between gap-3 border-b border-slate-200/80 bg-white/70 px-4 py-3 text-left transition-colors hover:bg-white"
+            >
+              <div className="min-w-0 flex-1">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
                   当前文稿
                 </div>
-                <div className="mt-1 text-sm font-semibold text-slate-900">
-                  概览、来源、版本与编辑统一收口
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <div className="truncate text-sm font-semibold text-slate-900">
+                    {documentTitle}
+                  </div>
+                  {currentVersionLabel ? (
+                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+                      {currentVersionLabel}
+                    </span>
+                  ) : null}
                 </div>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  当前选中的结构化文稿不再在左侧重复展开，所有上下文与编辑入口都固定在这里。
+                <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">
+                  {documentSummary}
                 </p>
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                  <span>来源 {sourceCount}</span>
+                  <span>版本 {versionCount}</span>
+                  <span>差异 {diffCount}</span>
+                </div>
               </div>
-            }
-          />
+              <div className="flex items-center gap-1 pt-1 text-slate-500">
+                <span className="text-[11px] font-medium">
+                  {documentInspectorCollapsed ? "展开" : "收起"}
+                </span>
+                {documentInspectorCollapsed ? (
+                  <ChevronRight className="h-4 w-4 shrink-0" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 shrink-0" />
+                )}
+              </div>
+            </button>
+
+            {documentInspectorCollapsed ? (
+              <div className="px-4 py-3 text-xs leading-5 text-slate-500">
+                默认先收起概览、来源、版本与编辑，避免小屏进入时直接挤占画布空间；需要时再展开查看。
+              </div>
+            ) : (
+              <ArtifactWorkbenchDocumentInspector
+                controller={artifactDocumentController}
+                testId="canvas-workbench-document-inspector"
+                containerClassName="min-h-0 overflow-hidden bg-slate-50/80"
+                tabsClassName="flex h-full min-h-0 flex-col p-4"
+              />
+            )}
+          </section>
         ) : null}
       </div>
     );
@@ -1694,7 +1752,6 @@ export const CanvasWorkbenchLayout = memo(function CanvasWorkbenchLayout({
           )
         : renderPreview(currentTarget, {
             stackedWorkbenchTrigger,
-            artifactDocumentLayoutMode: "canvas-only",
             onArtifactDocumentControllerChange:
               handleArtifactDocumentControllerChange,
           })}

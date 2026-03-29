@@ -18,8 +18,11 @@ import {
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { sendScreenshotChat } from "@/lib/api/screenshotChat";
+import {
+  onVoiceStartRecording,
+  onVoiceStopRecording,
+} from "@/lib/api/voiceShortcutEvents";
 import { useVoiceSound } from "@/hooks/useVoiceSound";
-import { safeListen } from "@/lib/dev-bridge";
 import "./smart-input.css";
 
 // Lime Logo组件
@@ -212,7 +215,7 @@ export function SmartInputPage() {
 
     (async () => {
       try {
-        unlisten = await safeListen("voice-start-recording", () => {
+        unlisten = await onVoiceStartRecording(() => {
           console.log("[语音输入] 收到开始录音事件");
           startVoiceMode();
         });
@@ -405,7 +408,7 @@ export function SmartInputPage() {
 
     const setupStopListener = async () => {
       try {
-        const unlisten = await safeListen("voice-stop-recording", async () => {
+        const unlisten = await onVoiceStopRecording(async () => {
           console.log("[语音输入] 收到停止录音事件");
 
           // 播放停止录音音效
@@ -510,9 +513,9 @@ export function SmartInputPage() {
     };
 
     const unlistenPromise = setupStopListener();
-    return () => {
-      unlistenPromise.then((unlisten) => unlisten());
-    };
+        return () => {
+          unlistenPromise.then((unlisten) => unlisten());
+        };
   }, [voiceMode, showError]);
 
   // 关闭窗口

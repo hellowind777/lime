@@ -3,6 +3,10 @@ import {
   ActionButtonGroup,
   Container,
   InputBarContainer,
+  InputColumn,
+  InputIconButton,
+  MainRow,
+  MetaSlot,
   StyledTextarea,
   BottomBar,
   LeftSection,
@@ -14,20 +18,23 @@ import {
   ImagePreviewItem,
   ImagePreviewImg,
   ImageRemoveButton,
-  ToolButton,
 } from "../styles";
 import { InputbarTools } from "./InputbarTools";
-import { ArrowUp, Square, X, Languages } from "lucide-react";
-import { BaseComposer } from "@/components/input-kit";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+  ArrowUp,
+  ChevronDown,
+  ChevronUp,
+  ImagePlus,
+  Loader2,
+  Mic,
+  Square,
+  X,
+} from "lucide-react";
+import { BaseComposer } from "@/components/input-kit";
 import type { MessageImage } from "../../../types";
 import type { QueuedTurnSnapshot } from "@/lib/api/agentRuntime";
 import { QueuedTurnsPanel } from "./QueuedTurnsPanel";
+import { useInputbarDictation } from "../hooks/useInputbarDictation";
 
 const INTERACTIVE_TARGET_SELECTOR =
   "button, a, input, textarea, select, option, [role='button'], [contenteditable=''], [contenteditable='true'], [contenteditable='plaintext-only']";
@@ -69,13 +76,12 @@ interface InputbarCoreProps {
   placeholder?: string;
   /** 工具栏模式 */
   toolMode?: "default" | "attach-only";
-  /** 是否显示翻译按钮 */
-  showTranslate?: boolean;
   /** 是否显示顶部拖拽条 */
   showDragHandle?: boolean;
   /** 视觉风格 */
   visualVariant?: "default" | "floating";
   activeTheme?: string;
+  allowEmptySend?: boolean;
   queuedTurns?: QueuedTurnSnapshot[];
   onPromoteQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
   onRemoveQueuedTurn?: (queuedTurnId: string) => void | Promise<boolean>;
@@ -103,17 +109,33 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
   topExtra,
   placeholder,
   toolMode = "default",
-  showTranslate = true,
   showDragHandle = true,
   visualVariant = "default",
   activeTheme,
+  allowEmptySend = false,
   queuedTurns = [],
   onPromoteQueuedTurn,
   onRemoveQueuedTurn,
 }) => {
   const [isComposerExpanded, setIsComposerExpanded] = useState(false);
+  const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
   const inputBarContainerRef = useRef<HTMLDivElement | null>(null);
+  const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const resolvedTextareaRef = externalTextareaRef ?? fallbackTextareaRef;
   const isFloatingVariant = visualVariant === "floating";
+  const {
+    dictationEnabled,
+    dictationState,
+    isDictating,
+    isDictationBusy,
+    isDictationProcessing,
+    handleDictationToggle,
+  } = useInputbarDictation({
+    text,
+    setText,
+    textareaRef: resolvedTextareaRef,
+    disabled,
+  });
   const shouldCollapseFloatingTools =
     isFloatingVariant &&
     toolMode === "attach-only" &&
@@ -139,6 +161,7 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
     isFullscreen ? "flex-1 resize-none" : "",
     isFloatingVariant ? "floating-composer" : "",
     shouldUseCompactFloatingComposer ? "floating-collapsed" : "",
+    isTextareaExpanded ? "composer-expanded" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -148,10 +171,32 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
   ]
     .filter(Boolean)
     .join(" ");
-  const leftSectionClassName = shouldCollapseFloatingTools ? "floating-collapsed" : "";
+  const mainRowClassName = [
+    isFloatingVariant ? "floating-composer" : "",
+    shouldUseCompactFloatingComposer ? "floating-collapsed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const leftSectionClassName = shouldCollapseFloatingTools
+    ? "floating-collapsed"
+    : "";
   const rightSectionClassName = shouldUseCompactFloatingComposer
     ? "floating-collapsed"
     : "";
+  const shouldRenderMetaBar =
+    !shouldUseCompactFloatingComposer &&
+    (Boolean(leftExtra) ||
+      Boolean(rightExtra) ||
+      (toolMode === "default" && !shouldCollapseFloatingTools));
+  const dictationButtonTitle = isDictationProcessing
+    ? dictationState === "polishing"
+      ? "语音润色中"
+      : "语音识别中"
+    : isDictating
+      ? "停止语音输入"
+      : dictationEnabled
+        ? "开始语音输入"
+        : "语音输入未启用";
 
   const handleExpandComposer = useCallback(() => {
     if (!isFloatingVariant || toolMode !== "attach-only") {
@@ -201,6 +246,13 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
     [onRemoveImage],
   );
 
+  const handleToggleTextareaExpanded = useCallback(() => {
+    setIsTextareaExpanded((previous) => !previous);
+    if (isFloatingVariant) {
+      setIsComposerExpanded(true);
+    }
+  }, [isFloatingVariant]);
+
   return (
     <BaseComposer
       text={text}
@@ -213,10 +265,12 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
       isFullscreen={isFullscreen}
       fillHeightWhenFullscreen
       hasAdditionalContent={pendingImages.length > 0}
-      maxAutoHeight={isFloatingVariant ? 160 : 300}
-      textareaRef={externalTextareaRef}
+      maxAutoHeight={isTextareaExpanded ? 320 : isFloatingVariant ? 160 : 120}
+      textareaRef={resolvedTextareaRef}
       onEscape={() => onToolClick("fullscreen")}
       allowSendWhileLoading
+      rows={isTextareaExpanded ? 6 : 1}
+      allowEmptySend={allowEmptySend}
       placeholder={
         placeholder ||
         (isFullscreen
@@ -281,67 +335,118 @@ export const InputbarCore: React.FC<InputbarCoreProps> = ({
                 onRemoveQueuedTurn={onRemoveQueuedTurn}
               />
 
-              <StyledTextarea
-                ref={textareaRef}
-                {...textareaProps}
-                className={textareaClassName}
-              />
-
-              <BottomBar className={bottomBarClassName}>
-                <LeftSection className={leftSectionClassName}>
-                  {leftExtra && (
-                    <div className="flex items-center gap-2 mr-2">{leftExtra}</div>
-                  )}
-                  {!shouldCollapseFloatingTools ? (
-                    <InputbarTools
-                      onToolClick={onToolClick}
-                      activeTools={activeTools}
-                      executionStrategy={executionStrategy}
-                      showExecutionStrategy={showExecutionStrategy}
-                      toolMode={toolMode}
-                      isCanvasOpen={isCanvasOpen}
-                      activeTheme={activeTheme}
-                    />
-                  ) : null}
-                </LeftSection>
-
-                <RightSection className={rightSectionClassName}>
-                  {rightExtra}
-                  {showTranslate ? (
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <ToolButton onClick={() => onToolClick("translate")}>
-                            <Languages size={18} />
-                          </ToolButton>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">翻译</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  ) : null}
-                  <ActionButtonGroup>
-                    {isLoading ? (
-                      <SecondaryActionButton
-                        type="button"
-                        onClick={onStop}
-                        disabled={!onStop}
-                      >
-                        <Square size={14} fill="currentColor" />
-                        <span>停止</span>
-                      </SecondaryActionButton>
-                    ) : null}
-                    <SendButton
+              <MainRow className={mainRowClassName}>
+                <InputIconButton
+                  type="button"
+                  onClick={() => onToolClick("attach")}
+                  aria-label="添加图片"
+                  title="添加图片"
+                >
+                  <ImagePlus size={14} />
+                </InputIconButton>
+                <InputColumn>
+                  <StyledTextarea
+                    ref={textareaRef}
+                    {...textareaProps}
+                    className={textareaClassName}
+                  />
+                </InputColumn>
+                <ActionButtonGroup>
+                  <InputIconButton
+                    type="button"
+                    onClick={handleToggleTextareaExpanded}
+                    disabled={disabled}
+                    className={isTextareaExpanded ? "is-active" : ""}
+                    aria-label={isTextareaExpanded ? "收起输入框" : "展开输入框"}
+                    title={isTextareaExpanded ? "收起输入框" : "展开输入框"}
+                  >
+                    {isTextareaExpanded ? (
+                      <ChevronDown size={14} />
+                    ) : (
+                      <ChevronUp size={14} />
+                    )}
+                  </InputIconButton>
+                  <InputIconButton
+                    type="button"
+                    onClick={() => void handleDictationToggle()}
+                    disabled={disabled || isDictationProcessing}
+                    className={
+                      isDictationProcessing
+                        ? "is-processing"
+                        : isDictating
+                          ? "is-recording"
+                          : ""
+                    }
+                    aria-label={dictationButtonTitle}
+                    title={dictationButtonTitle}
+                  >
+                    {isDictationProcessing ? (
+                      <Loader2 size={14} className="animate-spin" />
+                    ) : isDictating ? (
+                      <Square size={14} fill="currentColor" />
+                    ) : (
+                      <Mic size={14} />
+                    )}
+                  </InputIconButton>
+                  {isLoading ? (
+                    <SecondaryActionButton
                       type="button"
                       onClick={onPrimaryAction}
                       disabled={isPrimaryDisabled}
-                      $hasLabel={isLoading}
                     >
-                      <ArrowUp size={isLoading ? 16 : 20} strokeWidth={3} />
-                      {isLoading ? <span>稍后处理</span> : null}
+                      <span>稍后处理</span>
+                    </SecondaryActionButton>
+                  ) : null}
+                  {isLoading ? (
+                    <InputIconButton
+                      type="button"
+                      onClick={onStop}
+                      disabled={!onStop}
+                      $destructive
+                      aria-label="停止"
+                      title="停止"
+                    >
+                      <Square size={14} fill="currentColor" />
+                    </InputIconButton>
+                  ) : null}
+                  {!isLoading ? (
+                    <SendButton
+                      type="button"
+                      onClick={onPrimaryAction}
+                      disabled={isPrimaryDisabled || isDictationBusy}
+                      aria-label="发送"
+                      title="发送"
+                    >
+                      <ArrowUp size={16} strokeWidth={2.4} />
                     </SendButton>
-                  </ActionButtonGroup>
-                </RightSection>
-              </BottomBar>
+                  ) : null}
+                </ActionButtonGroup>
+              </MainRow>
+
+              {shouldRenderMetaBar ? (
+                <BottomBar className={bottomBarClassName}>
+                  <LeftSection className={leftSectionClassName}>
+                    {leftExtra ? <MetaSlot>{leftExtra}</MetaSlot> : null}
+                    {!shouldCollapseFloatingTools ? (
+                      <InputbarTools
+                        onToolClick={onToolClick}
+                        activeTools={activeTools}
+                        executionStrategy={executionStrategy}
+                        showExecutionStrategy={showExecutionStrategy}
+                        toolMode={toolMode}
+                        isCanvasOpen={isCanvasOpen}
+                        activeTheme={activeTheme}
+                      />
+                    ) : null}
+                  </LeftSection>
+
+                  {rightExtra ? (
+                    <RightSection className={rightSectionClassName}>
+                      <MetaSlot>{rightExtra}</MetaSlot>
+                    </RightSection>
+                  ) : null}
+                </BottomBar>
+              ) : null}
             </InputBarContainer>
           </Container>
         );

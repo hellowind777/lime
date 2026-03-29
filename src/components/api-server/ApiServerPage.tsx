@@ -15,7 +15,6 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import * as Select from "@radix-ui/react-select";
-import { invoke } from "@tauri-apps/api/core";
 import { LogsTab } from "./LogsTab";
 import { ProviderIcon } from "@/icons/providers";
 import { cn } from "@/lib/utils";
@@ -51,29 +50,12 @@ import {
   ProviderWithKeysDisplay,
 } from "@/lib/api/apiKeyProvider";
 import {
+  fetchProviderModelsAuto,
   getModelRegistry,
   getModelsForProvider,
   getProviderAliasConfig,
 } from "@/lib/api/modelRegistry";
 import type { EnhancedModelMetadata } from "@/lib/types/modelRegistry";
-
-// API 获取模型结果类型
-interface FetchModelsResult {
-  models: EnhancedModelMetadata[];
-  source: "Api" | "LocalFallback";
-  error: string | null;
-  request_url?: string | null;
-  diagnostic_hint?: string | null;
-  error_kind?:
-    | "not_found"
-    | "unauthorized"
-    | "forbidden"
-    | "network"
-    | "invalid_response"
-    | "other"
-    | null;
-  should_prompt_error?: boolean;
-}
 
 interface TestState {
   endpoint: string;
@@ -550,10 +532,7 @@ export function ApiServerPage({ hideHeader = false }: ApiServerPageProps) {
           // 3. 如果本地模型注册表没有模型，优先尝试从 Provider API 获取
           if (registryModels.length === 0) {
             try {
-              const result = await invoke<FetchModelsResult>(
-                "fetch_provider_models_auto",
-                { providerId: provider },
-              );
+              const result = await fetchProviderModelsAuto(provider);
               if (result?.error && result.should_prompt_error) {
                 const diagnostics = [
                   result.error,

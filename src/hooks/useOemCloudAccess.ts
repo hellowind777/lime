@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { clearSkillCatalogCache } from "@/lib/api/skillCatalog";
 import { clearServiceSkillCatalogCache } from "@/lib/api/serviceSkills";
 import {
   type ClientPasswordLoginPayload,
@@ -47,6 +48,7 @@ import {
   setStoredOemCloudSessionState,
 } from "@/lib/oemCloudSession";
 import { syncServiceSkillCatalogFromBootstrapPayload } from "@/lib/serviceSkillCatalogBootstrap";
+import { syncSkillCatalogFromBootstrapPayload } from "@/lib/skillCatalogBootstrap";
 import {
   clearSiteAdapterCatalogCache,
   syncSiteAdapterCatalogFromBootstrapPayload,
@@ -386,6 +388,7 @@ export function useOemCloudAccess() {
   const clearCloudState = useCallback((message?: string) => {
     clearStoredOemCloudSessionState();
     clearOemCloudBootstrapSnapshot();
+    clearSkillCatalogCache();
     clearServiceSkillCatalogCache();
     void clearSiteAdapterCatalogCache();
     setSession(null);
@@ -414,6 +417,10 @@ export function useOemCloudAccess() {
 
       setStoredOemCloudSessionState(nextSession);
       setOemCloudBootstrapSnapshot({
+        ...nextBootstrap,
+        session: nextSession,
+      });
+      syncSkillCatalogFromBootstrapPayload({
         ...nextBootstrap,
         session: nextSession,
       });

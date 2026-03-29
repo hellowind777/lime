@@ -11,6 +11,7 @@ import type {
 } from "@/lib/api/executionRun";
 
 interface UseWorkspaceHarnessInventoryRuntimeParams {
+  enabled: boolean;
   chatMode: "agent" | "general" | "creator";
   mappedTheme: string;
   harnessPanelVisible: boolean;
@@ -27,6 +28,7 @@ interface UseWorkspaceHarnessInventoryRuntimeParams {
 }
 
 export function useWorkspaceHarnessInventoryRuntime({
+  enabled,
   chatMode,
   mappedTheme,
   harnessPanelVisible,
@@ -47,6 +49,13 @@ export function useWorkspaceHarnessInventoryRuntime({
   const toolInventoryRequestIdRef = useRef(0);
 
   const refreshToolInventory = useCallback(async () => {
+    if (!enabled) {
+      setToolInventory(null);
+      setToolInventoryLoading(false);
+      setToolInventoryError(null);
+      return;
+    }
+
     const requestId = toolInventoryRequestIdRef.current + 1;
     toolInventoryRequestIdRef.current = requestId;
     setToolInventoryLoading(true);
@@ -80,18 +89,29 @@ export function useWorkspaceHarnessInventoryRuntime({
         setToolInventoryLoading(false);
       }
     }
-  }, [chatMode, harnessRequestMetadata, mappedTheme]);
+  }, [chatMode, enabled, harnessRequestMetadata, mappedTheme]);
 
   useEffect(() => {
-    if (!harnessPanelVisible) {
+    if (enabled) {
+      return;
+    }
+
+    toolInventoryRequestIdRef.current += 1;
+    setToolInventory(null);
+    setToolInventoryLoading(false);
+    setToolInventoryError(null);
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled || !harnessPanelVisible) {
       return;
     }
 
     void refreshToolInventory();
-  }, [harnessPanelVisible, refreshToolInventory]);
+  }, [enabled, harnessPanelVisible, refreshToolInventory]);
 
   const socialMediaHarnessSummary = useMemo(() => {
-    if (!isThemeWorkbench || mappedTheme !== "social-media") {
+    if (!enabled || !isThemeWorkbench || mappedTheme !== "social-media") {
       return null;
     }
 
@@ -126,6 +146,7 @@ export function useWorkspaceHarnessInventoryRuntime({
   }, [
     currentGate.description,
     currentGate.title,
+    enabled,
     harnessPendingCount,
     isThemeWorkbench,
     mappedTheme,

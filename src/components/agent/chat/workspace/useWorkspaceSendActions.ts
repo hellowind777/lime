@@ -15,6 +15,7 @@ import type { SendMessageFn } from "../hooks/agentChatShared";
 import type { MessageImage } from "../types";
 import type { TeamDefinition } from "../utils/teamDefinitions";
 import type { RuntimeTeamDispatchPreviewSnapshot } from "./runtimeTeamPreview";
+import type { AgentAccessMode } from "../hooks/agentChatStorage";
 import {
   buildRuntimeTeamDispatchPreview,
   buildWorkspaceRequestMetadata,
@@ -46,6 +47,7 @@ interface UseWorkspaceSendActionsParams {
   runtimeStyleMessagePrompt: string;
   projectId?: string | null;
   executionStrategy: ExecutionStrategy;
+  accessMode?: AgentAccessMode;
   preferredTeamPresetId?: string | null;
   selectedTeam?: TeamDefinition | null;
   selectedTeamLabel?: string;
@@ -137,6 +139,7 @@ export function useWorkspaceSendActions({
   runtimeStyleMessagePrompt,
   projectId,
   executionStrategy,
+  accessMode,
   preferredTeamPresetId,
   selectedTeam,
   selectedTeamLabel,
@@ -321,6 +324,7 @@ export function useWorkspaceSendActions({
             toolPreferencesOverride: effectiveToolPreferences,
           },
           effectiveToolPreferences,
+          accessMode,
           mappedTheme,
           isThemeWorkbench,
           currentGateKey,
@@ -379,6 +383,7 @@ export function useWorkspaceSendActions({
       isThemeWorkbench,
       mappedTheme,
       messagesCount,
+      accessMode,
       preferredTeamPresetId,
       rollbackAfterSendFailure,
       selectedTeam,

@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { safeListen } from "@/lib/dev-bridge";
+import { onGeminiAuthUrl } from "@/lib/api/providerAuthEvents";
 import { providerPoolApi } from "@/lib/api/providerPool";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,14 +74,11 @@ export function GeminiFormStandalone({
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
-      unlisten = await safeListen<{ auth_url: string; session_id: string }>(
-        "gemini-auth-url",
-        (event) => {
-          console.log("[Gemini OAuth] 收到授权 URL 事件:", event.payload);
-          setAuthUrl(event.payload.auth_url);
-          setSessionId(event.payload.session_id);
-        },
-      );
+      unlisten = await onGeminiAuthUrl((payload) => {
+        console.log("[Gemini OAuth] 收到授权 URL 事件:", payload);
+        setAuthUrl(payload.auth_url);
+        setSessionId(payload.session_id);
+      });
     };
 
     setupListener();

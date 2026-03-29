@@ -1194,61 +1194,69 @@ describe("ThemeWorkbenchSidebar", () => {
   });
 
   it("定位产物失败时应透传后端错误信息", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => {});
     mockRevealSessionFileInFinder.mockRejectedValueOnce(new Error("文件不存在"));
-    const { container } = renderSidebar({
-      activeRunDetail: {
-        id: "run-error-path",
-        source: "skill",
-        source_ref: "social_post_with_cover",
-        session_id: "session-error",
-        status: "success",
-        started_at: "2026-03-06T02:10:03Z",
-        finished_at: "2026-03-06T02:10:08Z",
-        duration_ms: 5000,
-        error_code: null,
-        error_message: null,
-        metadata: JSON.stringify({
-          artifact_paths: ["social-posts/error.md"],
-        }),
-        created_at: "2026-03-06T02:10:03Z",
-        updated_at: "2026-03-06T02:10:08Z",
-      },
-    });
-
-    const workflowTab = container.querySelector(
-      'button[aria-label="打开编排工作台"]',
-    ) as HTMLButtonElement | null;
-    if (workflowTab) {
-      act(() => {
-        workflowTab.click();
+    try {
+      const { container } = renderSidebar({
+        activeRunDetail: {
+          id: "run-error-path",
+          source: "skill",
+          source_ref: "social_post_with_cover",
+          session_id: "session-error",
+          status: "success",
+          started_at: "2026-03-06T02:10:03Z",
+          finished_at: "2026-03-06T02:10:08Z",
+          duration_ms: 5000,
+          error_code: null,
+          error_message: null,
+          metadata: JSON.stringify({
+            artifact_paths: ["social-posts/error.md"],
+          }),
+          created_at: "2026-03-06T02:10:03Z",
+          updated_at: "2026-03-06T02:10:08Z",
+        },
       });
-    }
 
-    const activityToggle = container.querySelector(
-      "button[aria-label='切换活动日志']",
-    ) as HTMLButtonElement | null;
-    if (activityToggle) {
-      act(() => {
-        activityToggle.click();
-      });
-    }
+      const workflowTab = container.querySelector(
+        'button[aria-label="打开编排工作台"]',
+      ) as HTMLButtonElement | null;
+      if (workflowTab) {
+        act(() => {
+          workflowTab.click();
+        });
+      }
 
-    const revealArtifactButton = Array.from(container.querySelectorAll("button")).find(
-      (button) =>
+      const activityToggle = container.querySelector(
+        "button[aria-label='切换活动日志']",
+      ) as HTMLButtonElement | null;
+      if (activityToggle) {
+        act(() => {
+          activityToggle.click();
+        });
+      }
+
+      const revealArtifactButton = Array.from(
+        container.querySelectorAll("button"),
+      ).find((button) =>
         button
           .getAttribute("aria-label")
           ?.startsWith("定位产物路径-social-posts/error.md"),
-    );
-    expect(revealArtifactButton).toBeTruthy();
-    if (revealArtifactButton) {
-      await act(async () => {
-        revealArtifactButton.click();
-        await Promise.resolve();
-      });
-    }
+      );
+      expect(revealArtifactButton).toBeTruthy();
+      if (revealArtifactButton) {
+        await act(async () => {
+          revealArtifactButton.click();
+          await Promise.resolve();
+        });
+      }
 
-    expect(mockToastError).toHaveBeenCalledWith(
-      expect.stringContaining("文件不存在"),
-    );
+      expect(mockToastError).toHaveBeenCalledWith(
+        expect.stringContaining("文件不存在"),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
   });
 });

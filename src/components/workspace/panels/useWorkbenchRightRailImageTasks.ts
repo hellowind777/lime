@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { searchWebImages } from "@/lib/api/imageSearch";
 import {
   emitImageWorkbenchFocus,
   emitImageWorkbenchRequest,
@@ -140,16 +140,11 @@ export function useWorkbenchRightRailImageTasks({
 
     setSearchMaterialSubmitting(true);
     try {
-      const response = await invoke<WebImageSearchResponseForRail>(
-        "search_web_images",
-        {
-          req: {
-            query: normalizedQuery,
-            page: 1,
-            perPage: 10,
-          },
-        },
-      );
+      const response = (await searchWebImages({
+        query: normalizedQuery,
+        page: 1,
+        perPage: 10,
+      })) as WebImageSearchResponseForRail;
       const count = response.hits?.length ?? 0;
       const total = response.total ?? count;
       const provider = response.provider || "web";

@@ -1,4 +1,14 @@
-import { safeInvoke } from "@/lib/dev-bridge";
+import { safeInvoke, safeListen } from "@/lib/dev-bridge";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+
+export interface PluginInstallProgress {
+  stage: string;
+  percent: number;
+  message: string;
+}
+
+export const PLUGIN_INSTALL_PROGRESS_EVENT = "plugin-install-progress";
+export const PLUGIN_TASK_EVENT = "plugin-task-event";
 
 export interface ListPluginTasksParams {
   taskState?: string | null;
@@ -53,4 +63,23 @@ export async function uninstallPlugin(pluginId: string): Promise<boolean> {
 
 export async function cancelPluginTask(taskId: string): Promise<boolean> {
   return safeInvoke<boolean>("cancel_plugin_task", { taskId });
+}
+
+export async function listenPluginInstallProgress(
+  handler: (payload: PluginInstallProgress) => void,
+): Promise<UnlistenFn> {
+  return safeListen<PluginInstallProgress>(
+    PLUGIN_INSTALL_PROGRESS_EVENT,
+    (event) => {
+      handler(event.payload);
+    },
+  );
+}
+
+export async function listenPluginTaskEvent(
+  handler: () => void | Promise<void>,
+): Promise<UnlistenFn> {
+  return safeListen(PLUGIN_TASK_EVENT, () => {
+    void handler();
+  });
 }

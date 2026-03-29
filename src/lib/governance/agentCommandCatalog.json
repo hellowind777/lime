@@ -30,7 +30,19 @@
     "agent_runtime_resume_subagent",
     "agent_runtime_close_subagent",
     "agent_runtime_update_session",
-    "agent_runtime_delete_session"
+    "agent_runtime_delete_session",
+    "site_list_adapters",
+    "site_recommend_adapters",
+    "site_search_adapters",
+    "site_get_adapter_info",
+    "site_get_adapter_launch_readiness",
+    "site_get_adapter_catalog_status",
+    "site_apply_adapter_catalog_bootstrap",
+    "site_clear_adapter_catalog_cache",
+    "site_import_adapter_yaml_bundle",
+    "site_run_adapter",
+    "site_debug_run_adapter",
+    "site_save_adapter_result"
   ],
   "deprecatedCommandReplacements": {
     "get_agent_process_status": "agent_get_process_status",

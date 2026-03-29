@@ -1,3 +1,4 @@
+import type { AsterExecutionStrategy } from "@/lib/api/agentRuntime";
 import { isGeneralResearchTheme } from "./generalAgentPrompt";
 
 export interface ChatToolPreferences {
@@ -5,6 +6,27 @@ export interface ChatToolPreferences {
   thinking: boolean;
   task: boolean;
   subagent: boolean;
+}
+
+export function isPlanExecutionStrategy(
+  executionStrategy?: AsterExecutionStrategy | null,
+): boolean {
+  return executionStrategy === "code_orchestrated";
+}
+
+export function alignChatToolPreferencesWithExecutionStrategy(
+  preferences: ChatToolPreferences,
+  executionStrategy?: AsterExecutionStrategy | null,
+): ChatToolPreferences {
+  const nextTask = isPlanExecutionStrategy(executionStrategy);
+  if (preferences.task === nextTask) {
+    return preferences;
+  }
+
+  return {
+    ...preferences,
+    task: nextTask,
+  };
 }
 
 export const DEFAULT_CHAT_TOOL_PREFERENCES: ChatToolPreferences = {

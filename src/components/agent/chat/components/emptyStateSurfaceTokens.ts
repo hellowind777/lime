@@ -1,13 +1,13 @@
 export type EmptyStateTone = "slate" | "sky" | "emerald" | "amber";
 
 export const EMPTY_STATE_PANEL_CLASSNAME =
-  "rounded-[26px] border border-slate-200/80 bg-white/84 p-4 shadow-sm shadow-slate-950/5 backdrop-blur-sm md:p-5";
+  "rounded-[26px] border border-slate-200/80 bg-white p-4 shadow-sm shadow-slate-950/5 md:p-5";
 
 export const EMPTY_STATE_PANEL_EMBEDDED_CLASSNAME =
-  "rounded-[22px] border border-white/85 bg-white/76 p-3.5 shadow-sm shadow-slate-950/5 backdrop-blur-sm";
+  "rounded-[22px] border border-slate-200/80 bg-white p-3.5 shadow-sm shadow-slate-950/5";
 
 export const EMPTY_STATE_CARD_SURFACE_CLASSNAME =
-  "overflow-hidden rounded-[22px] border border-white/90 bg-white/82 p-3.5 shadow-sm shadow-slate-950/5 backdrop-blur-sm";
+  "overflow-hidden rounded-[22px] border border-slate-200/80 bg-white p-3.5 shadow-sm shadow-slate-950/5";
 
 export const EMPTY_STATE_BADGE_BASE_CLASSNAME =
   "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-medium shadow-sm shadow-slate-950/5";
@@ -46,17 +46,11 @@ export const EMPTY_STATE_RECOMMENDATION_CARD_CLASSNAME =
 export const EMPTY_STATE_PAGE_CONTAINER_CLASSNAME =
   "relative flex flex-1 flex-col items-stretch justify-start overflow-y-auto bg-[linear-gradient(135deg,rgba(244,250,255,0.94)_0%,rgba(248,250,252,0.98)_44%,rgba(244,250,247,0.96)_100%)] px-3 pb-5 pt-[clamp(8px,1.1vw,12px)] md:px-4";
 
-export const EMPTY_STATE_BACKGROUND_ORB_LEFT_CLASSNAME =
-  "pointer-events-none absolute left-[-4%] top-[-14%] h-[640px] w-[640px] rounded-full bg-[radial-gradient(circle,rgba(16,185,129,0.09)_0%,transparent_70%)]";
-
-export const EMPTY_STATE_BACKGROUND_ORB_RIGHT_CLASSNAME =
-  "pointer-events-none absolute right-[-10%] top-[10%] h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,rgba(56,189,248,0.1)_0%,transparent_72%)]";
-
 export const EMPTY_STATE_CONTENT_WRAPPER_CLASSNAME =
   "relative z-[1] mx-auto flex w-full max-w-[1240px] flex-col items-stretch gap-2.5";
 
 export const EMPTY_STATE_THEME_TABS_CONTAINER_CLASSNAME =
-  "flex w-full max-w-full flex-nowrap justify-start gap-1.5 overflow-x-auto overflow-y-hidden rounded-[20px] border border-slate-200/80 bg-slate-50/80 p-[5px] shadow-[0_10px_24px_-22px_rgba(15,23,42,0.18)] backdrop-blur-sm [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
+  "flex w-full max-w-full flex-nowrap justify-start gap-1.5 overflow-x-auto overflow-y-hidden rounded-[20px] border border-slate-200/80 bg-slate-50 p-[5px] shadow-[0_10px_24px_-22px_rgba(15,23,42,0.18)] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden";
 
 export const EMPTY_STATE_SELECT_TRIGGER_CLASSNAME =
   "h-8 rounded-full border-slate-200/80 bg-white/92 px-3 text-xs text-slate-700 shadow-none transition-colors hover:border-slate-300 hover:bg-white focus:ring-1 focus:ring-slate-200";

@@ -59,6 +59,8 @@
 - **架构概览**：`docs/aiprompts/overview.md`
 - **工程质量**：`docs/aiprompts/quality-workflow.md`
 - **治理收口**：`docs/aiprompts/governance.md`
+- **技能标准**：`docs/aiprompts/skill-standard.md`
+- **站点适配器标准**：`docs/aiprompts/site-adapter-standard.md`
 - **UI 规范**：`docs/aiprompts/design-language.md`
 - **Tauri 命令边界**：`docs/aiprompts/commands.md`
 - **凭证与路径**：`docs/aiprompts/credential-pool.md`

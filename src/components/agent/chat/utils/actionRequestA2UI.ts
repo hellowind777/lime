@@ -3,7 +3,13 @@ import type {
   A2UIFormData,
   A2UIResponse,
 } from "@/components/content-creator/a2ui/types";
-import type { ActionRequired, Question, QuestionOption } from "../types";
+import type {
+  ActionRequired,
+  ActionRequestGovernanceMeta,
+  Question,
+  QuestionOption,
+} from "../types";
+import { governActionRequest } from "./actionRequestGovernance";
 
 type SchemaProperty = Record<string, unknown>;
 type ActionRequestFieldEntry = {
@@ -30,6 +36,7 @@ export interface ActionRequestSubmissionContext {
       field_count: number;
       prompt?: string;
       entries: ActionRequestSubmissionEntry[];
+      governance?: ActionRequestGovernanceMeta;
     };
   };
 }
@@ -370,20 +377,21 @@ export function isActionRequestA2UICompatible(
 export function buildActionRequestA2UI(
   request: ActionRequired,
 ): A2UIResponse | null {
-  if (!isActionRequestA2UICompatible(request)) {
+  const governedRequest = governActionRequest(request);
+  if (!isActionRequestA2UICompatible(governedRequest)) {
     return null;
   }
 
-  const fieldEntries = buildActionRequestFieldEntries(request);
+  const fieldEntries = buildActionRequestFieldEntries(governedRequest);
   if (fieldEntries.length === 0) {
     return null;
   }
 
-  const requestId = sanitizeId(request.requestId);
+  const requestId = sanitizeId(governedRequest.requestId);
   const rootId = `${requestId}_root`;
   const childIds: string[] = [];
   const components: A2UIResponse["components"] = [];
-  const promptText = request.prompt?.trim();
+  const promptText = governedRequest.prompt?.trim();
   const firstFieldLabel =
     "label" in fieldEntries[0].component &&
     typeof fieldEntries[0].component.label === "string"
@@ -417,7 +425,11 @@ export function buildActionRequestA2UI(
   return {
     id: `action-request-${requestId}`,
     root: rootId,
-    data: {},
+    data: governedRequest.governance
+      ? {
+          governance: governedRequest.governance,
+        }
+      : {},
     components,
     submitAction: {
       label: "确认并继续",
@@ -432,7 +444,8 @@ export function normalizeActionRequestFormDataForSubmission(
   request: ActionRequired,
   formData: A2UIFormData,
 ): { userData: unknown; responseText: string } {
-  const fieldEntries = buildActionRequestFieldEntries(request);
+  const governedRequest = governActionRequest(request);
+  const fieldEntries = buildActionRequestFieldEntries(governedRequest);
 
   const record = fieldEntries.reduce<Record<string, unknown>>(
     (accumulator, entry) => {
@@ -529,11 +542,12 @@ export function buildActionRequestSubmissionContext(
   request: ActionRequired,
   userData: unknown,
 ): ActionRequestSubmissionContext | null {
-  if (!isActionRequestA2UICompatible(request)) {
+  const governedRequest = governActionRequest(request);
+  if (!isActionRequestA2UICompatible(governedRequest)) {
     return null;
   }
 
-  const entries = resolveActionRequestSubmissionEntries(request, userData);
+  const entries = resolveActionRequestSubmissionEntries(governedRequest, userData);
   if (entries.length === 0) {
     return null;
   }
@@ -544,13 +558,14 @@ export function buildActionRequestSubmissionContext(
       elicitation_context: {
         source: "action_required",
         mode: "runtime_protocol",
-        form_id: request.requestId,
-        action_type: request.actionType,
+        form_id: governedRequest.requestId,
+        action_type: governedRequest.actionType,
         field_count: entries.length,
-        prompt: isNonEmptyString(request.prompt)
-          ? request.prompt.trim()
+        prompt: isNonEmptyString(governedRequest.prompt)
+          ? governedRequest.prompt.trim()
           : undefined,
         entries,
+        governance: governedRequest.governance,
       },
     },
   };
@@ -644,17 +659,18 @@ function normalizeInitialFormValue(
 export function resolveActionRequestInitialFormData(
   request: ActionRequired,
 ): A2UIFormData {
-  if (!isActionRequestA2UICompatible(request)) {
+  const governedRequest = governActionRequest(request);
+  if (!isActionRequestA2UICompatible(governedRequest)) {
     return {};
   }
 
-  const fieldEntries = buildActionRequestFieldEntries(request);
-  const submittedRecord = resolveSubmittedUserDataRecord(request);
+  const fieldEntries = buildActionRequestFieldEntries(governedRequest);
+  const submittedRecord = resolveSubmittedUserDataRecord(governedRequest);
 
   return fieldEntries.reduce<A2UIFormData>((accumulator, entry, index) => {
     const fallbackQuestion =
-      request.actionType === "ask_user" && request.questions
-        ? request.questions[index]?.question
+      governedRequest.actionType === "ask_user" && governedRequest.questions
+        ? governedRequest.questions[index]?.question
         : undefined;
     const rawValue =
       submittedRecord[entry.fieldKey] ??

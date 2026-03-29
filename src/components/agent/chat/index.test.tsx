@@ -15,6 +15,7 @@ import {
 } from "./utils/browserAssistSession";
 
 const {
+  mockUseDeveloperFeatureFlags,
   mockUseAgentChatUnified,
   mockUseArtifactAutoPreviewSync,
   mockUseThemeContextWorkspace,
@@ -59,6 +60,7 @@ const {
   mockLaunchBrowserSession,
   mockBrowserExecuteAction,
 } = vi.hoisted(() => ({
+  mockUseDeveloperFeatureFlags: vi.fn(),
   mockUseAgentChatUnified: vi.fn(),
   mockUseArtifactAutoPreviewSync: vi.fn(),
   mockUseThemeContextWorkspace: vi.fn(),
@@ -180,6 +182,10 @@ vi.mock("./hooks", () => ({
 
 vi.mock("./hooks/useCompatSubagentRuntime", () => ({
   useCompatSubagentRuntime: mockUseCompatSubagentRuntime,
+}));
+
+vi.mock("@/hooks/useDeveloperFeatureFlags", () => ({
+  useDeveloperFeatureFlags: mockUseDeveloperFeatureFlags,
 }));
 
 vi.mock("./hooks/useSessionFiles", () => ({
@@ -454,7 +460,9 @@ vi.mock("./components/TeamWorkspaceDock", () => ({
       data-shell-visible={shellVisible ? "true" : "false"}
       data-child-count={String(childSubagentSessions?.length ?? 0)}
       data-runtime-status={teamDispatchPreviewState?.status || ""}
-      data-runtime-member-count={String(teamDispatchPreviewState?.members?.length ?? 0)}
+      data-runtime-member-count={String(
+        teamDispatchPreviewState?.members?.length ?? 0,
+      )}
     >
       {onActivateWorkbench ? (
         <button
@@ -537,6 +545,9 @@ vi.mock("jotai", () => ({
     }
     if (atom === mockArtifactsAtom) {
       return mockJotaiState.artifacts;
+    }
+    if (atom === mockSelectedArtifactIdAtom) {
+      return mockJotaiState.selectedArtifactId;
     }
     return [];
   },
@@ -641,9 +652,10 @@ vi.mock("@/lib/api/skills", () => ({
 }));
 
 vi.mock("@/lib/webview-api", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/webview-api")>(
-    "@/lib/webview-api",
-  );
+  const actual =
+    await vi.importActual<typeof import("@/lib/webview-api")>(
+      "@/lib/webview-api",
+    );
 
   return {
     ...actual,
@@ -1186,6 +1198,9 @@ beforeEach(() => {
   mockUseThemeContextWorkspace.mockReturnValue(
     createMockThemeContextWorkspaceState(),
   );
+  mockUseDeveloperFeatureFlags.mockReturnValue({
+    workspaceHarnessEnabled: true,
+  });
   mockInputbar.mockClear();
   mockUseTopicBranchBoard.mockReturnValue({
     branchItems: [
@@ -1248,7 +1263,6 @@ beforeEach(() => {
   sharedSendMessageMock = vi.fn(async () => undefined);
   sharedTriggerAIGuideMock = vi.fn();
   installMockAgentChatUnifiedState(createMockAgentChatUnifiedState());
-
 });
 
 afterEach(() => {
@@ -1498,6 +1512,23 @@ describe("AgentChatPage 侧栏显示控制", () => {
     expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
   });
 
+  it("锁定 general 主题进入 Claw 页面时也应默认收起左侧对话列表", async () => {
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects();
+
+    expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
+
+    clickButton(container, "toggle-history");
+    await flushEffects();
+
+    expect(
+      container.querySelector('[data-testid="chat-sidebar"]'),
+    ).not.toBeNull();
+  });
+
   it("Claw 模式可通过顶栏手动展开侧栏", async () => {
     const container = renderPage();
     await flushEffects();
@@ -1509,6 +1540,35 @@ describe("AgentChatPage 侧栏显示控制", () => {
     expect(
       container.querySelector('[data-testid="chat-sidebar"]'),
     ).not.toBeNull();
+  });
+
+  it("重新进入新的 Claw 对话页时，不应沿用上一次手动展开的侧栏状态", async () => {
+    const mounted = mountPage({
+      theme: "general",
+      lockTheme: true,
+      contentId: "content-a",
+    });
+    await flushEffects();
+
+    expect(
+      mounted.container.querySelector('[data-testid="chat-sidebar"]'),
+    ).toBeNull();
+
+    clickButton(mounted.container, "toggle-history");
+    await flushEffects();
+
+    expect(
+      mounted.container.querySelector('[data-testid="chat-sidebar"]'),
+    ).not.toBeNull();
+
+    mounted.rerender({
+      contentId: "content-b",
+    });
+    await flushEffects();
+
+    expect(
+      mounted.container.querySelector('[data-testid="chat-sidebar"]'),
+    ).toBeNull();
   });
 
   it("showChatPanel=false 时应保持侧栏隐藏", async () => {
@@ -1691,7 +1751,27 @@ describe("AgentChatPage 通用工作台", () => {
     expect(document.body.textContent).toContain("通用助手");
   });
 
-  it("窄屏工作台切到 stacked 时应自动收起话题列表，恢复 split 后重新展示", async () => {
+  it("处理工作台开关关闭时不应显示入口，也不应触发工具库存读取", async () => {
+    mockUseDeveloperFeatureFlags.mockReturnValue({
+      workspaceHarnessEnabled: false,
+    });
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects();
+
+    const navbar = container.querySelector(
+      '[data-testid="chat-navbar"]',
+    ) as HTMLDivElement | null;
+    expect(navbar?.dataset.showHarnessToggle).toBe("false");
+    expect(container.querySelector('[data-testid="toggle-harness"]')).toBeNull();
+    expect(document.body.textContent).not.toContain("处理工作台");
+    expect(mockGetAgentRuntimeToolInventory).not.toHaveBeenCalled();
+  });
+
+  it("窄屏工作台在手动展开侧栏后切到 stacked 时应自动收起，恢复 split 也不应自动重开", async () => {
     mockCanvasWorkbenchLayoutState.renderPreview = true;
 
     const container = renderPage({
@@ -1699,6 +1779,15 @@ describe("AgentChatPage 通用工作台", () => {
       lockTheme: true,
     });
     await flushEffects();
+
+    expect(container.querySelector('[data-testid="chat-sidebar"]')).toBeNull();
+
+    clickButton(container, "toggle-history");
+    await flushEffects();
+
+    expect(
+      container.querySelector('[data-testid="chat-sidebar"]'),
+    ).not.toBeNull();
 
     clickButton(container, "toggle-canvas");
     await flushEffects(4);
@@ -1708,9 +1797,6 @@ describe("AgentChatPage 通用工作台", () => {
         onLayoutModeChange?: (mode: "split" | "stacked") => void;
       } | null;
 
-    expect(
-      container.querySelector('[data-testid="chat-sidebar"]'),
-    ).not.toBeNull();
     expect(
       container.querySelector('[data-testid="canvas-workbench-layout-mock"]'),
     ).not.toBeNull();
@@ -1802,8 +1888,12 @@ describe("AgentChatPage 通用工作台", () => {
         }),
       ]),
     });
-    expect(sendOptions?.requestMetadata?.harness?.turn_team_decision).toBeUndefined();
-    expect(sendOptions?.requestMetadata?.harness?.turn_team_blueprint).toBeUndefined();
+    expect(
+      sendOptions?.requestMetadata?.harness?.turn_team_decision,
+    ).toBeUndefined();
+    expect(
+      sendOptions?.requestMetadata?.harness?.turn_team_blueprint,
+    ).toBeUndefined();
     expect(sendOptions?.assistantDraft).toBeUndefined();
 
     expect(
@@ -2378,6 +2468,105 @@ describe("AgentChatPage 通用工作台", () => {
     expect(mockCanvasWorkbenchLayout).not.toHaveBeenCalled();
   });
 
+  it("默认回退时不应把浏览器协助当作首选 artifact", async () => {
+    installMockAgentChatUnifiedState(
+      createMockAgentChatUnifiedState({
+        messages: [
+          {
+            id: "msg-artifact-doc",
+            role: "assistant",
+            content: "",
+            timestamp: new Date("2026-03-14T03:00:01.000Z"),
+            artifacts: [
+              {
+                id: "artifact-doc-1",
+                type: "document",
+                title: "需求草稿",
+                content: "# 需求草稿",
+                status: "complete",
+                meta: {
+                  filePath: "docs/prd.md",
+                },
+                position: { start: 0, end: 0 },
+                createdAt: 1,
+                updatedAt: 2,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    mockJotaiState.artifacts = [
+      {
+        id: "browser-assist:general",
+        type: "browser_assist",
+        title: "浏览器协助",
+        content: "",
+        status: "complete",
+        meta: {
+          persistOutsideMessages: true,
+          browserAssistScopeKey: resolveBrowserAssistSessionScopeKey(
+            undefined,
+            "session-1",
+          ),
+        },
+        position: { start: 0, end: 0 },
+        createdAt: 3,
+        updatedAt: 4,
+      },
+    ];
+
+    renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(mockJotaiState.selectedArtifactId).toBe("artifact-doc-1");
+    expect(mockSetSelectedArtifactIdAtom).toHaveBeenCalledWith("artifact-doc-1");
+    expect(mockSetSelectedArtifactIdAtom).not.toHaveBeenCalledWith(
+      "browser-assist:general",
+    );
+  });
+
+  it("只有浏览器协助 artifact 时默认不应进入浏览器画布", async () => {
+    mockJotaiState.artifacts = [
+      {
+        id: "browser-assist:general",
+        type: "browser_assist",
+        title: "浏览器协助",
+        content: "",
+        status: "complete",
+        meta: {
+          persistOutsideMessages: true,
+          browserAssistScopeKey: resolveBrowserAssistSessionScopeKey(
+            undefined,
+            "session-1",
+          ),
+        },
+        position: { start: 0, end: 0 },
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+
+    const container = renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(mockJotaiState.selectedArtifactId).toBeNull();
+    expect(mockSetSelectedArtifactIdAtom).not.toHaveBeenCalledWith(
+      "browser-assist:general",
+    );
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat");
+  });
+
   it("浏览器工具刚启动且只有 profile_key 时应自动拉起实时会话并打开浏览器协助画布", async () => {
     mockUseAgentChatUnified.mockImplementation(
       ({ workspaceId }: { workspaceId: string }) => {
@@ -2467,6 +2656,106 @@ describe("AgentChatPage 通用工作台", () => {
             sessionId: "auto-browser-session-1",
             profileKey: "general_browser_assist",
             url: "https://accounts.example.com",
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("浏览器协助自动拉起失败后不应重复自旋重试", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    mockLaunchBrowserSession.mockRejectedValue(
+      new Error("Chrome 启动失败"),
+    );
+    mockUseAgentChatUnified.mockImplementation(
+      ({ workspaceId }: { workspaceId: string }) => {
+        observedWorkspaceIds.push(workspaceId);
+        return {
+          providerType: "kiro",
+          setProviderType: vi.fn(),
+          model: "mock-model",
+          setModel: vi.fn(),
+          executionStrategy: "auto",
+          setExecutionStrategy: vi.fn(),
+          messages: [
+            {
+              id: "msg-browser-user-failed",
+              role: "user",
+              content: "打开浏览器并开始处理登录",
+              timestamp: new Date("2026-03-14T03:10:00.000Z"),
+            },
+            {
+              id: "msg-browser-assistant-failed",
+              role: "assistant",
+              content: "",
+              timestamp: new Date("2026-03-14T03:10:01.000Z"),
+              toolCalls: [
+                {
+                  id: "tool-browser-failed",
+                  name: "mcp__lime-browser__browser_navigate",
+                  arguments: JSON.stringify({
+                    url: "https://accounts.example.com",
+                    profile_key: "general_browser_assist",
+                  }),
+                  status: "running",
+                  startTime: new Date("2026-03-14T03:10:01.100Z"),
+                },
+              ],
+            },
+          ],
+          isSending: true,
+          sendMessage: sharedSendMessageMock,
+          stopSending: vi.fn(async () => undefined),
+          clearMessages: vi.fn(),
+          deleteMessage: vi.fn(),
+          editMessage: vi.fn(),
+          handlePermissionResponse: vi.fn(),
+          triggerAIGuide: sharedTriggerAIGuideMock,
+          topics: [
+            {
+              id: "topic-browser-failed",
+              title: "话题 C",
+              updatedAt: Date.now(),
+            },
+          ],
+          sessionId: "session-browser-failed",
+          switchTopic: sharedSwitchTopicMock,
+          deleteTopic: vi.fn(),
+          renameTopic: vi.fn(),
+          workspacePathMissing: false,
+          fixWorkspacePathAndRetry: vi.fn(),
+          dismissWorkspacePathError: vi.fn(),
+        };
+      },
+    );
+
+    renderPage({
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(16);
+
+    const autoLaunchWarnings = consoleWarnSpy.mock.calls.filter((args) =>
+      String(args[0] ?? "").includes(
+        "[AgentChatPage] 自动拉起浏览器协助实时会话失败",
+      ),
+    );
+
+    expect(mockLaunchBrowserSession).toHaveBeenCalledTimes(1);
+    expect(autoLaunchWarnings).toHaveLength(1);
+    expect(mockJotaiState.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "browser-assist:general",
+          type: "browser_assist",
+          status: "error",
+          error: "Chrome 启动失败",
+          meta: expect.objectContaining({
+            profileKey: "general_browser_assist",
+            url: "https://accounts.example.com",
+            launchState: "failed",
           }),
         }),
       ]),
@@ -2976,6 +3265,8 @@ describe("AgentChatPage 通用工作台", () => {
     });
     await flushEffects(10);
 
+    clickButton(container, "toggle-history");
+    await flushEffects();
     clickButton(container, "resume-topic");
     await flushEffects(12);
 
@@ -3057,7 +3348,9 @@ describe("AgentChatPage 自动引导", () => {
 
     expect(sharedSendMessageMock).toHaveBeenCalledTimes(1);
     const sendCall = getSendMessageCall();
-    expect(sendCall.content).toBe(`/social_post_with_cover ${initialUserPrompt}`);
+    expect(sendCall.content).toBe(
+      `/social_post_with_cover ${initialUserPrompt}`,
+    );
     expect(sendCall.images).toEqual([]);
     expect(sendCall.webSearch).toBe(false);
     expect(sendCall.thinking).toBe(false);
@@ -3101,7 +3394,9 @@ describe("AgentChatPage 自动引导", () => {
 
     expect(sharedSendMessageMock).toHaveBeenCalledTimes(1);
     const sendCall = getSendMessageCall();
-    expect(sendCall.content).toBe(`/social_post_with_cover ${initialUserPrompt}`);
+    expect(sendCall.content).toBe(
+      `/social_post_with_cover ${initialUserPrompt}`,
+    );
     expect(sendCall.images).toEqual([]);
     expect(sendCall.webSearch).toBe(false);
     expect(sendCall.thinking).toBe(false);
@@ -3239,7 +3534,9 @@ describe("AgentChatPage 自动引导", () => {
 
     expect(sharedSendMessageMock).toHaveBeenCalledTimes(1);
     const sendCall = getSendMessageCall();
-    expect(sendCall.content).toBe(`/social_post_with_cover ${initialUserPrompt}`);
+    expect(sendCall.content).toBe(
+      `/social_post_with_cover ${initialUserPrompt}`,
+    );
     expect(sendCall.images).toEqual([]);
     expect(sendCall.webSearch).toBe(false);
     expect(sendCall.thinking).toBe(false);
@@ -3653,7 +3950,13 @@ describe("AgentChatPage 自动引导", () => {
 
     const images = [{ data: "aGVsbG8=", mediaType: "image/png" }];
     act(() => {
-      void latestInputbarProps?.onSend?.(images, false, false, "请看图", "auto");
+      void latestInputbarProps?.onSend?.(
+        images,
+        false,
+        false,
+        "请看图",
+        "auto",
+      );
     });
     await flushEffects(8);
 
@@ -5098,6 +5401,71 @@ describe("AgentChatPage 小说主题工作台", () => {
 });
 
 describe("AgentChatPage legacy 问卷 A2UI", () => {
+  it("主题工作台出现待补充 A2UI 时应保持聊天主区域，不展示左侧工作台侧栏", async () => {
+    mockUseThemeContextWorkspace.mockReturnValue(
+      createMockThemeContextWorkspaceState({
+        enabled: true,
+      }),
+    );
+
+    installMockAgentChatUnifiedState(
+      createMockAgentChatUnifiedState({
+        messages: [
+          {
+            id: "msg-theme-user",
+            role: "user",
+            content: "请继续完善这个方案",
+            timestamp: new Date("2026-03-15T09:00:00.000Z"),
+          },
+          {
+            id: "msg-theme-assistant",
+            role: "assistant",
+            content: `为了继续推进，我需要你先补充以下信息：
+
+1. 目标与对象
+- 这次内容主要面向谁？（客户 / 上级 / 同事）
+- 这次最想达成的目标是什么？
+
+2. 风格与限制
+- 语气偏好：正式严谨 / 友好专业 / 直接高效
+- 是否需要加入明确行动号召？`,
+            timestamp: new Date("2026-03-15T09:00:01.000Z"),
+          },
+        ],
+      }),
+    );
+
+    const container = renderPage({
+      projectId: "project-theme-a2ui",
+      contentId: "content-theme-a2ui",
+      theme: "social-media",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    expect(
+      container
+        .querySelector('[data-testid="layout-transition"]')
+        ?.getAttribute("data-mode"),
+    ).toBe("chat");
+    expect(
+      container.querySelector('[data-testid="theme-workbench-sidebar"]'),
+    ).toBeNull();
+
+    const latestInputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
+      | {
+          pendingA2UIForm?: {
+            data?: Record<string, unknown>;
+          } | null;
+        }
+      | undefined;
+
+    expect(latestInputbarProps?.pendingA2UIForm?.data).toMatchObject({
+      source: "legacy_questionnaire",
+      questionCount: 1,
+    });
+  });
+
   it("应将结构化问卷提升到输入区浮层，并按字段标签提交摘要", async () => {
     mockUseAgentChatUnified.mockImplementation(
       ({ workspaceId }: { workspaceId: string }) => {
@@ -5186,7 +5554,33 @@ describe("AgentChatPage legacy 问卷 A2UI", () => {
     expect(latestInputbarProps?.pendingA2UIForm).toBeTruthy();
     expect(latestInputbarProps?.pendingA2UIForm?.data).toMatchObject({
       source: "legacy_questionnaire",
+      questionCount: 1,
+      governance: expect.objectContaining({
+        originalQuestionCount: 4,
+        deferredQuestionCount: 3,
+      }),
     });
+    expect(latestInputbarProps?.pendingA2UIForm?.components || []).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "ChoicePicker",
+          label: "这次内容主要面向谁？",
+        }),
+      ]),
+    );
+    expect(latestInputbarProps?.pendingA2UIForm?.components || []).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "这次最想达成的目标是什么？",
+        }),
+        expect.objectContaining({
+          label: "语气偏好",
+        }),
+        expect.objectContaining({
+          label: "是否需要加入明确行动号召？",
+        }),
+      ]),
+    );
 
     const componentIdByLabel = Object.fromEntries(
       (latestInputbarProps?.pendingA2UIForm?.components || [])
@@ -5203,19 +5597,12 @@ describe("AgentChatPage legacy 问卷 A2UI", () => {
     act(() => {
       latestInputbarProps?.onA2UISubmit?.({
         [componentIdByLabel["这次内容主要面向谁？"]]: ["客户"],
-        [componentIdByLabel["这次最想达成的目标是什么？"]]:
-          "帮助市场团队统一宣传口径",
-        [componentIdByLabel["语气偏好"]]: ["友好专业"],
-        [componentIdByLabel["是否需要加入明确行动号召？"]]: ["是"],
       });
     });
 
     expect(sharedSendMessageMock).toHaveBeenCalledWith(
       `我的选择：
-- 这次内容主要面向谁？: 客户
-- 这次最想达成的目标是什么？: 帮助市场团队统一宣传口径
-- 语气偏好: 友好专业
-- 是否需要加入明确行动号召？: 是`,
+- 这次内容主要面向谁？: 客户`,
       [],
       false,
       false,
@@ -5228,6 +5615,11 @@ describe("AgentChatPage legacy 问卷 A2UI", () => {
           elicitation_context: expect.objectContaining({
             source: "legacy_questionnaire",
             mode: "compatibility_bridge",
+            question_count: 1,
+            governance: expect.objectContaining({
+              originalQuestionCount: 4,
+              deferredQuestionCount: 3,
+            }),
             entries: expect.arrayContaining([
               expect.objectContaining({
                 label: "这次内容主要面向谁？",
@@ -5238,6 +5630,236 @@ describe("AgentChatPage legacy 问卷 A2UI", () => {
           }),
         },
       }),
+    );
+  });
+
+  it("ask/tool_calls 残留问卷正文也应提升为输入区 A2UI，而不是原样展示", async () => {
+    mockUseAgentChatUnified.mockImplementation(
+      ({ workspaceId }: { workspaceId: string }) => {
+        observedWorkspaceIds.push(workspaceId);
+        return {
+          providerType: "kiro",
+          setProviderType: vi.fn(),
+          model: "mock-model",
+          setModel: vi.fn(),
+          executionStrategy: "auto",
+          setExecutionStrategy: vi.fn(),
+          messages: [
+            {
+              id: "msg-legacy-user",
+              role: "user",
+              content: "请先做网页研究简报",
+              timestamp: new Date("2026-03-15T09:00:00.000Z"),
+            },
+            {
+              id: "msg-legacy-assistant-compat-ask",
+              role: "assistant",
+              content: `我注意到您想让我做“网页研究简报”，但您没有指定具体的研究主题。
+
+我注意到您想让我做“网页研究简报”，但您没有指定具体的研究主题。
+
+在我开始之前，需要先明确几个问题：
+
+ask<arg_key>question</arg_key><arg_key>arg_value>请提供您希望我研究的具体主题。这可以是：
+
+- 一个行业或领域（如“生成式 AI 在医疗领域的应用”）
+- 一个产品或服务（如“Claude API vs 竞品对比”）
+- 一个公司或组织（如“某公司的最新动态”）
+- 一个技术或概念（如“WebAssembly 的新进展”）
+- 其他您关心的主题
+
+另外，请告诉我该研究的主要目的是什么？</arg_value></tool_calls>`,
+              timestamp: new Date("2026-03-15T09:00:01.000Z"),
+            },
+          ],
+          isSending: false,
+          sendMessage: sharedSendMessageMock,
+          stopSending: vi.fn(async () => undefined),
+          clearMessages: vi.fn(),
+          deleteMessage: vi.fn(),
+          editMessage: vi.fn(),
+          handlePermissionResponse: vi.fn(),
+          triggerAIGuide: sharedTriggerAIGuideMock,
+          topics: [
+            {
+              id: "topic-a",
+              title: "话题 A",
+              updatedAt: Date.now(),
+            },
+          ],
+          sessionId: "session-1",
+          switchTopic: sharedSwitchTopicMock,
+          deleteTopic: vi.fn(),
+          renameTopic: vi.fn(),
+          workspacePathMissing: false,
+          fixWorkspacePathAndRetry: vi.fn(),
+          dismissWorkspacePathError: vi.fn(),
+        };
+      },
+    );
+
+    renderPage({
+      projectId: "project-legacy-a2ui-compat-ask",
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    const latestMessageListProps = mockMessageList.mock.calls.at(-1)?.[0] as
+      | {
+          messages?: Array<Record<string, unknown>>;
+        }
+      | undefined;
+    expect(latestMessageListProps?.messages?.[1]?.content).toBe(
+      "已整理为补充信息表单，请在输入区完成填写。",
+    );
+
+    const latestInputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
+      | {
+          pendingA2UIForm?: {
+            data?: Record<string, unknown>;
+            components?: Array<Record<string, unknown>>;
+          } | null;
+        }
+      | undefined;
+
+    expect(latestInputbarProps?.pendingA2UIForm?.data).toMatchObject({
+      source: "legacy_questionnaire",
+      sectionCount: 1,
+      questionCount: 1,
+      governance: expect.objectContaining({
+        originalQuestionCount: 2,
+        deferredQuestionCount: 1,
+      }),
+    });
+    expect(
+      (latestInputbarProps?.pendingA2UIForm?.components || []).some(
+        (component) =>
+          component.component === "TextField" &&
+          component.label === "请提供您希望我研究的具体主题",
+      ),
+    ).toBe(true);
+  });
+
+  it("普通中文澄清问题也应提升为输入区 A2UI，而不是继续停留在正文里", async () => {
+    mockUseAgentChatUnified.mockImplementation(
+      ({ workspaceId }: { workspaceId: string }) => {
+        observedWorkspaceIds.push(workspaceId);
+        return {
+          providerType: "kiro",
+          setProviderType: vi.fn(),
+          model: "mock-model",
+          setModel: vi.fn(),
+          executionStrategy: "auto",
+          setExecutionStrategy: vi.fn(),
+          messages: [
+            {
+              id: "msg-plain-legacy-user",
+              role: "user",
+              content: "围绕这个主题做研究",
+              timestamp: new Date("2026-03-15T09:00:00.000Z"),
+            },
+            {
+              id: "msg-plain-legacy-assistant",
+              role: "assistant",
+              content: `我需要先明确一下：您希望我研究哪个主题？您的消息中提到了“围绕这个主题”，但没有具体说明主题内容。请告诉我：
+
+- 具体的研究主题（例如：某个产品、技术、公司、市场趋势、政策、事件等）
+- 研究目的（例如：投资决策、技术选型、竞争分析、学习了解等）
+- 是否有特定关注点（例如：风险、机会、对比、最新动态等）
+
+一旦您明确了主题，我会：
+1. 使用联网搜索获取最新信息
+2. 整理关键来源和核心发现
+3. 识别风险点和待追踪问题
+4. 输出一版结构化的研究简报`,
+              timestamp: new Date("2026-03-15T09:00:01.000Z"),
+            },
+          ],
+          isSending: false,
+          sendMessage: sharedSendMessageMock,
+          stopSending: vi.fn(async () => undefined),
+          clearMessages: vi.fn(),
+          deleteMessage: vi.fn(),
+          editMessage: vi.fn(),
+          handlePermissionResponse: vi.fn(),
+          triggerAIGuide: sharedTriggerAIGuideMock,
+          topics: [
+            {
+              id: "topic-a",
+              title: "话题 A",
+              updatedAt: Date.now(),
+            },
+          ],
+          sessionId: "session-1",
+          switchTopic: sharedSwitchTopicMock,
+          deleteTopic: vi.fn(),
+          renameTopic: vi.fn(),
+          workspacePathMissing: false,
+          fixWorkspacePathAndRetry: vi.fn(),
+          dismissWorkspacePathError: vi.fn(),
+        };
+      },
+    );
+
+    renderPage({
+      projectId: "project-plain-legacy-a2ui",
+      theme: "general",
+      lockTheme: true,
+    });
+    await flushEffects(10);
+
+    const latestMessageListProps = mockMessageList.mock.calls.at(-1)?.[0] as
+      | {
+          messages?: Array<Record<string, unknown>>;
+        }
+      | undefined;
+    expect(latestMessageListProps?.messages?.[1]?.content).toBe(
+      "已整理为补充信息表单，请在输入区完成填写。",
+    );
+
+    const latestInputbarProps = mockInputbar.mock.calls.at(-1)?.[0] as
+      | {
+          pendingA2UIForm?: {
+            data?: Record<string, unknown>;
+            components?: Array<Record<string, unknown>>;
+          } | null;
+        }
+      | undefined;
+
+    expect(latestInputbarProps?.pendingA2UIForm?.data).toMatchObject({
+      source: "legacy_questionnaire",
+      sectionCount: 1,
+      questionCount: 1,
+      governance: expect.objectContaining({
+        originalQuestionCount: 3,
+        deferredQuestionCount: 2,
+      }),
+    });
+    expect(latestInputbarProps?.pendingA2UIForm?.components || []).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "TextField",
+          label: "具体的研究主题",
+        }),
+      ]),
+    );
+    expect(
+      (latestInputbarProps?.pendingA2UIForm?.components || []).filter(
+        (component) => component.component === "TextField",
+      ),
+    ).toHaveLength(1);
+    expect(latestInputbarProps?.pendingA2UIForm?.components || []).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "TextField",
+          label: "研究目的",
+        }),
+        expect.objectContaining({
+          component: "TextField",
+          label: "是否有特定关注点",
+        }),
+      ]),
     );
   });
 

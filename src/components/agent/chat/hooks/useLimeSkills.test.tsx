@@ -1,3 +1,4 @@
+import React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -63,6 +64,61 @@ async function flushEffects() {
   await act(async () => {
     await Promise.resolve();
   });
+}
+
+interface RerenderHarness extends HookHarness {
+  rerender: () => void;
+}
+
+function mountHookWithInlineErrorRerender(): RerenderHarness {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  let hookValue: ReturnType<typeof useLimeSkills> | null = null;
+  let rerender: (() => void) | null = null;
+
+  function TestComponent() {
+    const [tick, setTick] = React.useState(0);
+    rerender = () => setTick((value) => value + 1);
+    hookValue = useLimeSkills({
+      autoLoad: "immediate",
+      logScope: "InlineErrorScope",
+      onError: (error) => {
+        if (tick < 0) {
+          throw error;
+        }
+      },
+    });
+    return <span data-tick={tick} />;
+  }
+
+  act(() => {
+    root.render(<TestComponent />);
+  });
+
+  return {
+    getValue: () => {
+      if (!hookValue) {
+        throw new Error("hook 尚未初始化");
+      }
+      return hookValue;
+    },
+    rerender: () => {
+      if (!rerender) {
+        throw new Error("rerender 尚未就绪");
+      }
+      act(() => {
+        rerender?.();
+      });
+    },
+    unmount: () => {
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    },
+  };
 }
 
 describe("useLimeSkills", () => {
@@ -136,6 +192,23 @@ describe("useLimeSkills", () => {
 
       expect(mockGetAll).toHaveBeenCalledWith("lime");
       expect(harness.getValue().skills[0]?.key).toBe("remote-skill");
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("调用方每次渲染传入新的 onError 时，不应重复触发自动加载", async () => {
+    const harness = mountHookWithInlineErrorRerender();
+
+    try {
+      await flushEffects();
+      expect(mockGetLocal).toHaveBeenCalledTimes(1);
+
+      harness.rerender();
+      await flushEffects();
+
+      expect(mockGetLocal).toHaveBeenCalledTimes(1);
+      expect(harness.getValue().skills[0]?.key).toBe("local-skill");
     } finally {
       harness.unmount();
     }

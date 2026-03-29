@@ -4,19 +4,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AutomationJobDialog } from "./AutomationJobDialog";
 
-const { mockListBrowserProfiles, mockListBrowserEnvironmentPresets } =
-  vi.hoisted(() => ({
-    mockListBrowserProfiles: vi.fn(),
-    mockListBrowserEnvironmentPresets: vi.fn(),
-  }));
-
-vi.mock("@/features/browser-runtime/api", () => ({
-  browserRuntimeApi: {
-    listBrowserProfiles: mockListBrowserProfiles,
-    listBrowserEnvironmentPresets: mockListBrowserEnvironmentPresets,
-  },
-}));
-
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 beforeEach(() => {
@@ -25,45 +12,6 @@ beforeEach(() => {
       IS_REACT_ACT_ENVIRONMENT?: boolean;
     }
   ).IS_REACT_ACT_ENVIRONMENT = true;
-
-  mockListBrowserProfiles.mockResolvedValue([
-    {
-      id: "profile-1",
-      profile_key: "shop_us",
-      name: "美区店铺资料",
-      description: "主账号",
-      site_scope: "seller.example.com",
-      launch_url: "https://seller.example.com",
-      profile_dir: "/tmp/lime/chrome_profiles/shop_us",
-      created_at: "2026-03-15T00:00:00Z",
-      updated_at: "2026-03-15T00:00:00Z",
-      last_used_at: null,
-      archived_at: null,
-    },
-  ]);
-  mockListBrowserEnvironmentPresets.mockResolvedValue([
-    {
-      id: "preset-1",
-      name: "美区桌面",
-      description: "住宅代理 + 桌面环境",
-      proxy_server: null,
-      timezone_id: "America/Los_Angeles",
-      locale: "en-US",
-      accept_language: "en-US,en;q=0.9",
-      geolocation_lat: null,
-      geolocation_lng: null,
-      geolocation_accuracy_m: null,
-      user_agent: null,
-      platform: null,
-      viewport_width: 1440,
-      viewport_height: 900,
-      device_scale_factor: 2,
-      created_at: "2026-03-15T00:00:00Z",
-      updated_at: "2026-03-15T00:00:00Z",
-      last_used_at: null,
-      archived_at: null,
-    },
-  ]);
 });
 
 afterEach(() => {
@@ -99,26 +47,24 @@ async function renderDialog(props: {
           (props.mode ?? "edit") === "edit"
             ? {
                 id: "job-1",
-                name: "店铺后台巡检",
-                description: "启动浏览器检查后台状态",
+                name: "每日摘要",
+                description: "生成一份结构化中文摘要",
                 enabled: true,
                 workspace_id: "workspace-default",
                 execution_mode: "intelligent",
                 schedule: { kind: "every", every_secs: 600 },
                 payload: {
-                  kind: "browser_session",
-                  profile_id: "profile-1",
-                  profile_key: "shop_us",
-                  url: "https://seller.example.com/dashboard",
-                  environment_preset_id: "preset-1",
-                  target_id: "target-1",
-                  open_window: false,
-                  stream_mode: "events",
+                  kind: "agent_turn",
+                  prompt: "请输出今日摘要",
+                  system_prompt: null,
+                  web_search: false,
+                  content_id: null,
+                  request_metadata: null,
                 },
                 delivery: {
                   mode: "announce",
                   channel: "local_file",
-                  target: "/tmp/lime/browser-output.json",
+                  target: "/tmp/lime/agent-output.json",
                   best_effort: false,
                   output_schema: "json",
                   output_format: "json",
@@ -221,26 +167,14 @@ describe("AutomationJobDialog", () => {
     });
   }, 10_000);
 
-  it("编辑浏览器任务时应保持 browser_session payload 提交", async () => {
+  it("编辑旧浏览器任务时应展示下线提示并禁用保存", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined);
-    await renderDialog({ onSubmit });
-
-    const submitButton = Array.from(document.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("保存修改"),
-    ) as HTMLButtonElement | undefined;
-
-    expect(submitButton).toBeDefined();
-
-    await act(async () => {
-      submitButton?.click();
-      await Promise.resolve();
-    });
-
-    expect(onSubmit).toHaveBeenCalledWith({
-      mode: "edit",
-      id: "job-1",
-      request: expect.objectContaining({
-        payload: expect.objectContaining({
+    await renderDialog({
+      onSubmit,
+      jobOverride: {
+        name: "浏览器巡检",
+        description: "旧浏览器自动化任务",
+        payload: {
           kind: "browser_session",
           profile_id: "profile-1",
           profile_key: "shop_us",
@@ -249,17 +183,20 @@ describe("AutomationJobDialog", () => {
           target_id: "target-1",
           open_window: false,
           stream_mode: "events",
-        }),
-        delivery: expect.objectContaining({
-          mode: "announce",
-          channel: "local_file",
-          target: "/tmp/lime/browser-output.json",
-          best_effort: false,
-          output_schema: "json",
-          output_format: "json",
-        }),
-      }),
+        },
+      },
     });
+
+    const submitButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("该类型不可保存"),
+    ) as HTMLButtonElement | undefined;
+
+    expect(submitButton).toBeDefined();
+    expect(submitButton?.disabled).toBe(true);
+    expect(document.body.textContent).toContain("浏览器自动化已下线");
+    expect(document.body.textContent).toContain("系统不会再自动启动 Chrome");
+    expect(document.body.textContent).toContain("历史配置快照");
+    expect(onSubmit).not.toHaveBeenCalled();
   }, 10_000);
 
   it("编辑 Google Sheets 输出任务时应保留 channel 与目标串", async () => {
@@ -267,6 +204,14 @@ describe("AutomationJobDialog", () => {
     await renderDialog({
       onSubmit,
       jobOverride: {
+        payload: {
+          kind: "agent_turn",
+          prompt: "整理结构化结果",
+          system_prompt: null,
+          web_search: false,
+          content_id: null,
+          request_metadata: null,
+        },
         delivery: {
           mode: "announce",
           channel: "google_sheets",

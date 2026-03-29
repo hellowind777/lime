@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import type { Artifact } from "@/lib/artifact/types";
 import { ARTIFACT_DOCUMENT_SCHEMA_VERSION } from "@/lib/artifact-document";
-import { buildArtifactFromWrite } from "./messageArtifacts";
+import {
+  buildArtifactFromWrite,
+  resolveDefaultArtifactViewMode,
+} from "./messageArtifacts";
 
 function createArtifact(overrides: Partial<Artifact> = {}): Artifact {
   const content = overrides.content ?? "";
@@ -195,5 +198,43 @@ describe("messageArtifacts.buildArtifactFromWrite", () => {
       ],
     });
     expect(artifact.content).toContain("https://example.com/source");
+  });
+});
+
+describe("messageArtifacts.resolveDefaultArtifactViewMode", () => {
+  it("可预览的编程产物在流式阶段应优先展示源码", () => {
+    const artifact = createArtifact({
+      type: "html",
+      status: "streaming",
+      meta: {
+        filePath: "spring.html",
+        filename: "spring.html",
+        writePhase: "streaming",
+      },
+    });
+
+    expect(
+      resolveDefaultArtifactViewMode(artifact, {
+        preferSourceWhenStreaming: true,
+      }),
+    ).toBe("source");
+  });
+
+  it("可预览的编程产物完成后应自动切回预览", () => {
+    const artifact = createArtifact({
+      type: "html",
+      status: "complete",
+      meta: {
+        filePath: "spring.html",
+        filename: "spring.html",
+        writePhase: "completed",
+      },
+    });
+
+    expect(
+      resolveDefaultArtifactViewMode(artifact, {
+        preferSourceWhenStreaming: true,
+      }),
+    ).toBe("preview");
   });
 });

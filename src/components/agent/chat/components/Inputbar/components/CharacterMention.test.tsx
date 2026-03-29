@@ -339,6 +339,7 @@ function createServiceSkill(
     runnerDescription: "当前先进入工作区生成首版任务方案，后续再接本地自动化。",
     actionLabel: "先做方案",
     automationStatus: null,
+    groupKey: "general",
     ...overrides,
   };
 }
@@ -401,17 +402,19 @@ describe("CharacterMention", () => {
       serviceSkills: [
         createServiceSkill(),
         createServiceSkill({
-          id: "carousel-post-replication",
-          title: "复制轮播帖",
-          entryHint: "拆结构并输出一版可继续改的轮播帖。",
-          aliases: ["轮播帖", "小红书轮播"],
+          id: "github-repo-radar",
+          title: "GitHub 仓库雷达",
+          summary: "围绕仓库与 Issue 快速扫描线索。",
+          entryHint: "补一个关键词，我先帮你扫 GitHub 仓库与讨论。",
+          aliases: ["仓库雷达", "GitHub 搜索"],
+          category: "GitHub",
           runnerType: "instant",
-          defaultExecutorBinding: "agent_turn",
-          runnerLabel: "本地即时执行",
-          runnerTone: "emerald",
-          runnerDescription: "客户端起步版可直接进入工作区执行。",
+          defaultExecutorBinding: "browser_assist",
+          runnerLabel: "浏览器协助",
+          runnerTone: "sky",
+          runnerDescription: "进入真实浏览器执行只读采集。",
           actionLabel: "填写参数",
-          promptTemplateKey: "replication",
+          groupKey: "github",
         }),
       ],
     });
@@ -419,9 +422,10 @@ describe("CharacterMention", () => {
 
     await typeAtAndWait(textarea);
 
-    expect(document.body.textContent).toContain("服务技能");
+    expect(document.body.textContent).toContain("技能组 · 通用技能");
+    expect(document.body.textContent).toContain("技能组 · GitHub");
     expect(document.body.textContent).toContain("每日趋势摘要");
-    expect(document.body.textContent).toContain("复制轮播帖");
+    expect(document.body.textContent).toContain("GitHub 仓库雷达");
   });
 
   it("服务技能过滤应支持命中别名", () => {
@@ -502,12 +506,12 @@ describe("CharacterMention", () => {
 
     await typeSlashAndWait(textarea);
 
-    expect(document.body.textContent).toContain("Codex 命令");
+    expect(document.body.textContent).toContain("Lime 命令");
     expect(document.body.textContent).toContain("/compact");
     expect(document.body.textContent).toContain("/review");
   });
 
-  it("slash 面板选择 Codex 命令时应回填到输入框", async () => {
+  it("slash 面板选择 Lime 命令时应回填到输入框", async () => {
     const onChangeSpy = vi.fn<(value: string) => void>();
     const container = renderHarness({
       onChangeSpy,

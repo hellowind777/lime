@@ -52,16 +52,21 @@ describe("PosterAgentScheduler", () => {
     });
 
     it("应该在 Agent 不存在时返回 null", async () => {
+      const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
       const input: AgentInput = {
         context: {},
       };
 
-      const result = await scheduler.runAgent(
-        "invalid" as PosterAgentId,
-        input,
-      );
+      try {
+        const result = await scheduler.runAgent(
+          "invalid" as PosterAgentId,
+          input,
+        );
 
-      expect(result).toBeNull();
+        expect(result).toBeNull();
+      } finally {
+        consoleWarnSpy.mockRestore();
+      }
     });
   });
 

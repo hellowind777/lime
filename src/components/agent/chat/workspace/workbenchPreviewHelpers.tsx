@@ -4,12 +4,10 @@ import type { Artifact } from "@/lib/artifact/types";
 import type { CanvasWorkbenchPreviewTarget } from "../components/CanvasWorkbenchLayout";
 import type {
   ArtifactWorkbenchDocumentController,
-  ArtifactWorkbenchLayoutMode,
 } from "./artifactWorkbenchDocument";
 
 export interface RenderArtifactWorkbenchPreviewOptions {
   stackedWorkbenchTrigger?: ReactNode;
-  artifactDocumentLayoutMode?: ArtifactWorkbenchLayoutMode;
   onArtifactDocumentControllerChange?: (
     controller: ArtifactWorkbenchDocumentController | null,
   ) => void;

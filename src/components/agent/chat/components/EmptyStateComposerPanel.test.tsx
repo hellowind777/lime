@@ -3,6 +3,14 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EmptyStateComposerPanel } from "./EmptyStateComposerPanel";
+import {
+  createSkillSelectionProps,
+  type SkillSelectionProps,
+} from "./Inputbar/components/skillSelectionBindings";
+import {
+  resetStableProcessingNoticeMemoryForTest,
+  STABLE_PROCESSING_NOTICE_AUTO_HIDE_MS,
+} from "../hooks/useStableProcessingNotice";
 
 vi.mock("./ChatModelSelector", () => ({
   ChatModelSelector: () => <div data-testid="empty-state-model-selector" />,
@@ -62,8 +70,24 @@ afterEach(() => {
     });
     mounted.container.remove();
   }
+  vi.useRealTimers();
+  resetStableProcessingNoticeMemoryForTest();
   vi.clearAllMocks();
 });
+
+function createSkillSelection(
+  overrides: Partial<SkillSelectionProps> = {},
+): SkillSelectionProps {
+  return createSkillSelectionProps({
+    skills: [],
+    onSelectSkill: vi.fn(),
+    onClearSkill: vi.fn(),
+    onNavigateToSettings: vi.fn(),
+    onImportSkill: vi.fn(),
+    onRefreshSkills: vi.fn(),
+    ...overrides,
+  });
+}
 
 function renderPanel(
   props?: Partial<React.ComponentProps<typeof EmptyStateComposerPanel>>,
@@ -83,7 +107,6 @@ function renderPanel(
     model: "gpt-4.1",
     setModel: vi.fn(),
     executionStrategy: "react",
-    executionStrategyLabel: "ReAct",
     setExecutionStrategy: vi.fn(),
     onManageProviders: vi.fn(),
     isGeneralTheme: false,
@@ -103,14 +126,7 @@ function renderPanel(
     onEntryTaskTypeChange: vi.fn(),
     onEntrySlotChange: vi.fn(),
     characters: [],
-    skills: [],
-    activeSkill: null,
-    setActiveSkill: vi.fn(),
-    clearActiveSkill: vi.fn(),
-    isSkillsLoading: false,
-    onNavigateToSettings: vi.fn(),
-    onImportSkill: vi.fn(),
-    onRefreshSkills: vi.fn(),
+    skillSelection: createSkillSelection(),
     showCreationModeSelector: false,
     creationMode: "guided",
     onCreationModeChange: vi.fn(),
@@ -128,8 +144,6 @@ function renderPanel(
     setStylePopoverOpen: vi.fn(),
     thinkingEnabled: false,
     onThinkingEnabledChange: vi.fn(),
-    taskEnabled: false,
-    onTaskEnabledChange: vi.fn(),
     subagentEnabled: false,
     onSubagentEnabledChange: vi.fn(),
     webSearchEnabled: false,
@@ -177,7 +191,6 @@ function renderStatefulPanel(
         model="gpt-4.1"
         setModel={vi.fn()}
         executionStrategy="react"
-        executionStrategyLabel="ReAct"
         setExecutionStrategy={vi.fn()}
         onManageProviders={vi.fn()}
         isGeneralTheme
@@ -197,14 +210,7 @@ function renderStatefulPanel(
         onEntryTaskTypeChange={vi.fn()}
         onEntrySlotChange={vi.fn()}
         characters={[]}
-        skills={[]}
-        activeSkill={null}
-        setActiveSkill={vi.fn()}
-        clearActiveSkill={vi.fn()}
-        isSkillsLoading={false}
-        onNavigateToSettings={vi.fn()}
-        onImportSkill={vi.fn()}
-        onRefreshSkills={vi.fn()}
+        skillSelection={createSkillSelection()}
         showCreationModeSelector={false}
         creationMode="guided"
         onCreationModeChange={vi.fn()}
@@ -222,8 +228,6 @@ function renderStatefulPanel(
         setStylePopoverOpen={vi.fn()}
         thinkingEnabled={false}
         onThinkingEnabledChange={vi.fn()}
-        taskEnabled={false}
-        onTaskEnabledChange={vi.fn()}
         subagentEnabled={subagentEnabled}
         onSubagentEnabledChange={setSubagentEnabled}
         webSearchEnabled={false}
@@ -246,6 +250,31 @@ function renderStatefulPanel(
 }
 
 describe("EmptyStateComposerPanel", () => {
+  it("首页空态输入区应保留技能下拉，但与 @ 面板共用同一技能入口", () => {
+    const container = renderPanel({
+      isGeneralTheme: true,
+      skillSelection: createSkillSelection({
+        skills: [
+          {
+            key: "writer",
+            name: "写作助手",
+            description: "用于写作",
+            directory: "writer",
+            installed: true,
+            sourceKind: "builtin",
+          },
+        ],
+      }),
+    });
+
+    expect(
+      container.querySelector('[data-testid="empty-state-character-mention"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="empty-state-skill-selector"]'),
+    ).toBeTruthy();
+  });
+
   it("应将 onPaste 绑定到输入框", () => {
     const onPaste = vi.fn();
     const container = renderPanel({ onPaste });
@@ -272,10 +301,10 @@ describe("EmptyStateComposerPanel", () => {
       onRemoveImage,
     });
 
-    expect(container.querySelector('img[alt="待发送图片 1"]')).toBeTruthy();
+    expect(container.querySelector('img[alt="预览 1"]')).toBeTruthy();
 
     const removeButton = container.querySelector(
-      'button[aria-label="移除待发送图片 1"]',
+      'button[aria-label="移除图片 1"]',
     ) as HTMLButtonElement | null;
 
     expect(removeButton).toBeTruthy();
@@ -360,10 +389,32 @@ describe("EmptyStateComposerPanel", () => {
     ).toBeNull();
 
     const toggleButton = container.querySelector(
-      'button[title="开启多代理偏好"]',
+      'button[title="多代理偏好已关闭"]',
     ) as HTMLButtonElement | null;
 
     expect(toggleButton).toBeTruthy();
+  });
+
+  it("应通过 Plan 开关透传执行策略切换，不再渲染执行模式下拉", () => {
+    const setExecutionStrategy = vi.fn();
+    const container = renderPanel({
+      executionStrategy: "react",
+      setExecutionStrategy,
+    });
+
+    const planToggle = container.querySelector(
+      '[data-testid="inputbar-plan-toggle"]',
+    ) as HTMLButtonElement | null;
+
+    expect(planToggle).toBeTruthy();
+    expect(container.textContent).not.toContain("ReAct");
+    expect(container.textContent).not.toContain("Auto");
+
+    act(() => {
+      planToggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(setExecutionStrategy).toHaveBeenCalledWith("code_orchestrated");
   });
 
   it("即使已经保留 Team 方案，关闭 Team mode 后也不应显示 TeamSelector", () => {
@@ -383,11 +434,12 @@ describe("EmptyStateComposerPanel", () => {
 
     expect(enableButton).toBeNull();
     expect(
-      container.querySelector('button[title="开启多代理偏好"]'),
+      container.querySelector('button[title="多代理偏好已关闭"]'),
     ).toBeTruthy();
   });
 
-  it("命中稳妥模式模型时应在首页输入区前置提示", () => {
+  it("命中稳妥模式模型时应短暂提示后自动收起且不再重复提醒", () => {
+    vi.useFakeTimers();
     const container = renderPanel({
       providerType: "openai",
       model: "glm-4.7",
@@ -400,13 +452,34 @@ describe("EmptyStateComposerPanel", () => {
     ).toBeTruthy();
     expect(container.textContent).toContain("稳妥模式");
     expect(container.textContent).toContain("依次开始同类请求");
+
+    act(() => {
+      vi.advanceTimersByTime(STABLE_PROCESSING_NOTICE_AUTO_HIDE_MS + 1);
+    });
+
+    expect(
+      container.querySelector(
+        '[data-testid="empty-state-stable-processing-notice"]',
+      ),
+    ).toBeNull();
+
+    const nextContainer = renderPanel({
+      providerType: "openai",
+      model: "glm-4.7",
+    });
+
+    expect(
+      nextContainer.querySelector(
+        '[data-testid="empty-state-stable-processing-notice"]',
+      ),
+    ).toBeNull();
   });
 
   it("点击多代理图标后应自动透传 Team 配置面板打开令牌", async () => {
     const container = renderStatefulPanel();
 
     const enableButton = container.querySelector(
-      'button[title="开启多代理偏好"]',
+      'button[title="多代理偏好已关闭"]',
     ) as HTMLButtonElement | null;
 
     expect(enableButton).toBeTruthy();
@@ -441,7 +514,7 @@ describe("EmptyStateComposerPanel", () => {
     ).toBeTruthy();
 
     const toggleButton = container.querySelector(
-      'button[title="关闭多代理偏好"]',
+      'button[title="多代理偏好已开启"]',
     ) as HTMLButtonElement | null;
 
     expect(toggleButton).toBeTruthy();
@@ -458,7 +531,7 @@ describe("EmptyStateComposerPanel", () => {
       container.querySelector('[data-testid="empty-state-team-selector"]'),
     ).toBeNull();
     expect(
-      container.querySelector('button[title="开启多代理偏好"]'),
+      container.querySelector('button[title="多代理偏好已关闭"]'),
     ).toBeTruthy();
   });
 
@@ -479,10 +552,34 @@ describe("EmptyStateComposerPanel", () => {
       container.querySelector('[data-testid="empty-state-team-mode-enable-button"]'),
     ).toBeNull();
     expect(
-      container.querySelector('button[title="开启多代理偏好"]'),
+      container.querySelector('button[title="多代理偏好已关闭"]'),
     ).toBeTruthy();
     expect(enableButton).toBeTruthy();
     expect(enableButton?.textContent).toContain("启用 Team");
     expect(container.textContent).toContain("当前任务更适合 Team 协作");
+  });
+
+  it("应渲染权限模式选择并透传切换", () => {
+    const setAccessMode = vi.fn();
+    const container = renderPanel({
+      accessMode: "current",
+      setAccessMode,
+    });
+
+    const select = container.querySelector(
+      '[data-testid="inputbar-access-mode-select"]',
+    ) as HTMLSelectElement | null;
+
+    expect(select).toBeTruthy();
+    expect(select?.value).toBe("current");
+
+    act(() => {
+      if (select) {
+        select.value = "full-access";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+
+    expect(setAccessMode).toHaveBeenCalledWith("full-access");
   });
 });

@@ -58,6 +58,14 @@ vi.mock("@/lib/serviceSkillCatalogBootstrap", () => ({
   syncServiceSkillCatalogFromBootstrapPayload: vi.fn(),
 }));
 
+vi.mock("@/lib/skillCatalogBootstrap", () => ({
+  syncSkillCatalogFromBootstrapPayload: vi.fn(),
+}));
+
+vi.mock("@/lib/api/skillCatalog", () => ({
+  clearSkillCatalogCache: vi.fn(),
+}));
+
 vi.mock("@/lib/siteAdapterCatalogBootstrap", () => ({
   syncSiteAdapterCatalogFromBootstrapPayload: vi.fn(),
   clearSiteAdapterCatalogCache: vi.fn(),

@@ -42,13 +42,19 @@ export function WorkspaceMainArea({
   hasPendingA2UIForm,
   inputbarNode,
 }: WorkspaceMainAreaProps) {
+  const effectiveLayoutMode = hasPendingA2UIForm
+    ? "chat"
+    : forceCanvasMode
+      ? "canvas"
+      : layoutMode;
+
   return (
     <MainArea $compact={compactChrome}>
       {navbarNode}
       {contentSyncNoticeNode}
       <ThemeWorkbenchLayoutShell $bottomInset={shellBottomInset}>
         <LayoutTransitionRenderGate
-          mode={forceCanvasMode ? "canvas" : layoutMode}
+          mode={effectiveLayoutMode}
           chatContent={chatContent}
           canvasContent={canvasContent}
           chatPanelWidth={chatPanelWidth}
@@ -59,9 +65,7 @@ export function WorkspaceMainArea({
       {generalWorkbenchDialog}
       {themeWorkbenchHarnessDialog}
       {showFloatingInputOverlay ? (
-        <ThemeWorkbenchInputOverlay
-          $hasPendingA2UIForm={hasPendingA2UIForm}
-        >
+        <ThemeWorkbenchInputOverlay>
           {inputbarNode}
         </ThemeWorkbenchInputOverlay>
       ) : null}

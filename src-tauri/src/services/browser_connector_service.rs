@@ -8,6 +8,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use tauri::{AppHandle, Manager};
 
 const SETTINGS_SUBDIR: &str = "connectors";
@@ -25,6 +26,12 @@ const SYSTEM_CONNECTOR_DEFINITIONS: [(&str, &str, &str); 5] = [
     ("mail", "邮件", "读取邮件和创建草稿。"),
     ("contacts", "通讯录", "搜索、读取和创建联系人。"),
 ];
+
+const AUTH_STATUS_NOT_DETERMINED: &str = "not_determined";
+const AUTH_STATUS_AUTHORIZED: &str = "authorized";
+const AUTH_STATUS_DENIED: &str = "denied";
+const AUTH_STATUS_ERROR: &str = "error";
+const AUTH_STATUS_UNSUPPORTED: &str = "unsupported";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserConnectorAutoConfig {
@@ -67,6 +74,10 @@ pub struct SystemConnectorSnapshot {
     pub description: String,
     pub enabled: bool,
     pub available: bool,
+    pub visible: bool,
+    pub authorization_status: String,
+    pub last_error: Option<String>,
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,8 +92,22 @@ pub struct BrowserConnectorSettingsSnapshot {
 struct BrowserConnectorSettingsRecord {
     enabled: bool,
     install_root_dir: Option<String>,
-    system_connectors: HashMap<String, bool>,
+    system_connectors: HashMap<String, StoredSystemConnectorState>,
     updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum StoredSystemConnectorState {
+    LegacyBool(bool),
+    Detailed(SystemConnectorStateRecord),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SystemConnectorStateRecord {
+    enabled: bool,
+    authorization_status: String,
+    last_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -96,7 +121,7 @@ impl Default for BrowserConnectorSettingsRecord {
         Self {
             enabled: true,
             install_root_dir: None,
-            system_connectors: default_system_connector_states(),
+            system_connectors: default_system_connector_state_records(),
             updated_at: Utc::now().to_rfc3339(),
         }
     }
@@ -107,6 +132,146 @@ fn default_system_connector_states() -> HashMap<String, bool> {
         .iter()
         .map(|(id, _, _)| ((*id).to_string(), false))
         .collect()
+}
+
+fn default_system_connector_state_records() -> HashMap<String, StoredSystemConnectorState> {
+    default_system_connector_states()
+        .into_iter()
+        .map(|(id, enabled)| (id, StoredSystemConnectorState::LegacyBool(enabled)))
+        .collect()
+}
+
+fn default_connector_record(enabled: bool) -> SystemConnectorStateRecord {
+    SystemConnectorStateRecord {
+        enabled,
+        authorization_status: if cfg!(target_os = "macos") {
+            AUTH_STATUS_NOT_DETERMINED.to_string()
+        } else {
+            AUTH_STATUS_UNSUPPORTED.to_string()
+        },
+        last_error: None,
+    }
+}
+
+fn normalize_connector_record(
+    state: Option<&StoredSystemConnectorState>,
+) -> SystemConnectorStateRecord {
+    match state {
+        Some(StoredSystemConnectorState::LegacyBool(enabled)) => default_connector_record(*enabled),
+        Some(StoredSystemConnectorState::Detailed(record)) => record.clone(),
+        None => default_connector_record(false),
+    }
+}
+
+fn connector_capabilities(id: &str) -> Vec<String> {
+    match id {
+        "reminders" => vec![
+            "list_reminders".to_string(),
+            "create_reminder".to_string(),
+            "update_reminder".to_string(),
+        ],
+        "calendar" => vec![
+            "list_events".to_string(),
+            "create_event".to_string(),
+            "update_event".to_string(),
+        ],
+        "notes" => vec![
+            "list_notes".to_string(),
+            "read_note".to_string(),
+            "create_note".to_string(),
+        ],
+        "mail" => vec![
+            "list_mailboxes".to_string(),
+            "read_messages".to_string(),
+            "create_draft".to_string(),
+        ],
+        "contacts" => vec![
+            "search_contacts".to_string(),
+            "read_contact".to_string(),
+            "create_contact".to_string(),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn connector_probe_script(id: &str) -> Option<&'static str> {
+    match id {
+        "reminders" => Some(r#"tell application id "com.apple.reminders" to count of lists"#),
+        "calendar" => Some(r#"tell application id "com.apple.iCal" to count of calendars"#),
+        "notes" => Some(r#"tell application id "com.apple.Notes" to count of folders"#),
+        "mail" => Some(r#"tell application id "com.apple.mail" to count of mailboxes"#),
+        "contacts" => Some(r#"tell application id "com.apple.AddressBook" to count of people"#),
+        _ => None,
+    }
+}
+
+fn truncate_connector_error(input: &str) -> String {
+    input
+        .trim()
+        .split('\n')
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or(input)
+        .trim()
+        .to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn request_connector_authorization(id: &str) -> Result<SystemConnectorStateRecord, String> {
+    let script = connector_probe_script(id).ok_or_else(|| format!("未知的系统连接器: {id}"))?;
+    let output = Command::new("osascript")
+        .args(["-e", script])
+        .output()
+        .map_err(|error| format!("调用 osascript 失败: {error}"))?;
+
+    if output.status.success() {
+        return Ok(SystemConnectorStateRecord {
+            enabled: true,
+            authorization_status: AUTH_STATUS_AUTHORIZED.to_string(),
+            last_error: None,
+        });
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let combined = format!("{stderr}\n{stdout}");
+    let normalized = combined.to_ascii_lowercase();
+    let last_error = truncate_connector_error(&combined);
+
+    if normalized.contains("not authorized")
+        || normalized.contains("not permitted")
+        || normalized.contains("(-1743)")
+        || normalized.contains("1743")
+    {
+        return Ok(SystemConnectorStateRecord {
+            enabled: false,
+            authorization_status: AUTH_STATUS_DENIED.to_string(),
+            last_error: Some(if last_error.is_empty() {
+                "系统已拒绝该连接器的自动化权限。".to_string()
+            } else {
+                last_error
+            }),
+        });
+    }
+
+    Ok(SystemConnectorStateRecord {
+        enabled: false,
+        authorization_status: AUTH_STATUS_ERROR.to_string(),
+        last_error: Some(if last_error.is_empty() {
+            "系统连接器授权失败。".to_string()
+        } else {
+            last_error
+        }),
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+fn request_connector_authorization(_id: &str) -> Result<SystemConnectorStateRecord, String> {
+    Ok(SystemConnectorStateRecord {
+        enabled: false,
+        authorization_status: AUTH_STATUS_UNSUPPORTED.to_string(),
+        last_error: Some("当前平台暂不支持系统连接器。".to_string()),
+    })
 }
 
 fn browser_connector_settings_path() -> Result<PathBuf, String> {
@@ -135,7 +300,10 @@ fn load_settings_record() -> Result<BrowserConnectorSettingsRecord, String> {
         serde_json::from_str(&content).map_err(|error| format!("解析连接器设置失败: {error}"))?;
 
     for (id, enabled) in default_system_connector_states() {
-        record.system_connectors.entry(id).or_insert(enabled);
+        record
+            .system_connectors
+            .entry(id)
+            .or_insert(StoredSystemConnectorState::LegacyBool(enabled));
     }
 
     Ok(record)
@@ -406,16 +574,28 @@ fn build_settings_snapshot(
         enabled: record.enabled,
         install_root_dir,
         install_dir,
-        system_connectors: SYSTEM_CONNECTOR_DEFINITIONS
-            .iter()
-            .map(|(id, label, description)| SystemConnectorSnapshot {
-                id: (*id).to_string(),
-                label: (*label).to_string(),
-                description: (*description).to_string(),
-                enabled: record.system_connectors.get(*id).copied().unwrap_or(false),
-                available: cfg!(target_os = "macos"),
-            })
-            .collect(),
+        system_connectors: if cfg!(target_os = "macos") {
+            SYSTEM_CONNECTOR_DEFINITIONS
+                .iter()
+                .map(|(id, label, description)| {
+                    let connector_record =
+                        normalize_connector_record(record.system_connectors.get(*id));
+                    SystemConnectorSnapshot {
+                        id: (*id).to_string(),
+                        label: (*label).to_string(),
+                        description: (*description).to_string(),
+                        enabled: connector_record.enabled,
+                        available: true,
+                        visible: true,
+                        authorization_status: connector_record.authorization_status,
+                        last_error: connector_record.last_error,
+                        capabilities: connector_capabilities(id),
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
     }
 }
 
@@ -454,7 +634,23 @@ pub fn update_system_connector_enabled(
     }
 
     let mut record = load_settings_record()?;
-    record.system_connectors.insert(id.to_string(), enabled);
+    let next_state = if enabled {
+        request_connector_authorization(id)?
+    } else {
+        let mut current = normalize_connector_record(record.system_connectors.get(id));
+        current.enabled = false;
+        current.last_error = None;
+        if !cfg!(target_os = "macos") {
+            current.authorization_status = AUTH_STATUS_UNSUPPORTED.to_string();
+        } else if current.authorization_status == AUTH_STATUS_ERROR {
+            current.authorization_status = AUTH_STATUS_NOT_DETERMINED.to_string();
+        }
+        current
+    };
+    record.system_connectors.insert(
+        id.to_string(),
+        StoredSystemConnectorState::Detailed(next_state),
+    );
     record.updated_at = Utc::now().to_rfc3339();
     save_settings_record(&record)?;
     Ok(build_settings_snapshot(&record))
@@ -519,5 +715,38 @@ mod tests {
         assert_eq!(status.status, "update_available");
         assert_eq!(status.installed_version.as_deref(), Some("1.0.0"));
         assert_eq!(status.bundled_version, "1.1.0");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn settings_snapshot_should_expose_visible_system_connectors_on_macos() {
+        let record = BrowserConnectorSettingsRecord::default();
+        let snapshot = build_settings_snapshot(&record);
+
+        assert_eq!(
+            snapshot.system_connectors.len(),
+            SYSTEM_CONNECTOR_DEFINITIONS.len()
+        );
+        assert!(snapshot
+            .system_connectors
+            .iter()
+            .all(|connector| connector.visible));
+        assert!(snapshot
+            .system_connectors
+            .iter()
+            .all(|connector| connector.available));
+        assert!(snapshot
+            .system_connectors
+            .iter()
+            .all(|connector| !connector.capabilities.is_empty()));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn settings_snapshot_should_hide_system_connectors_on_non_macos() {
+        let record = BrowserConnectorSettingsRecord::default();
+        let snapshot = build_settings_snapshot(&record);
+
+        assert!(snapshot.system_connectors.is_empty());
     }
 }

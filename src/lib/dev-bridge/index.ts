@@ -9,6 +9,7 @@
 export {
   invokeViaHttp,
   isDevBridgeAvailable,
+  hasDevBridgeEventListenerCapability,
   healthCheck,
   getBridgeStatus,
 } from "./http-client";

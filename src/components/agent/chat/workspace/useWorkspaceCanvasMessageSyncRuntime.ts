@@ -11,7 +11,7 @@ import {
   createInitialNovelState,
   countWords as countNovelWords,
 } from "@/components/content-creator/canvas/novel/types";
-import type { LayoutMode, ThemeType } from "@/components/content-creator/types";
+import type { ThemeType } from "@/components/content-creator/types";
 import type { Message } from "../types";
 import { isCanvasStateEmpty } from "./themeWorkbenchHelpers";
 
@@ -23,7 +23,6 @@ interface UseWorkspaceCanvasMessageSyncRuntimeParams {
   messages: Message[];
   processedMessageIdsRef: MutableRefObject<Set<string>>;
   setCanvasState: Dispatch<SetStateAction<CanvasStateUnion | null>>;
-  setLayoutMode: Dispatch<SetStateAction<LayoutMode>>;
 }
 
 function extractDocumentContent(
@@ -66,8 +65,7 @@ function looksLikeSerializedNovelState(content: string): boolean {
 
   return (
     jsonCandidate.includes('"title"') &&
-    (jsonCandidate.includes('"number"') ||
-      jsonCandidate.includes('"chapters"'))
+    (jsonCandidate.includes('"number"') || jsonCandidate.includes('"chapters"'))
   );
 }
 
@@ -79,7 +77,6 @@ export function useWorkspaceCanvasMessageSyncRuntime({
   messages,
   processedMessageIdsRef,
   setCanvasState,
-  setLayoutMode,
 }: UseWorkspaceCanvasMessageSyncRuntimeParams) {
   const upsertNovelCanvasState = useCallback(
     (previous: CanvasStateUnion | null, content: string): CanvasStateUnion => {
@@ -92,7 +89,9 @@ export function useWorkspaceCanvasMessageSyncRuntime({
       }
 
       const targetChapterId =
-        previous.currentChapterId || previous.chapters[0]?.id || crypto.randomUUID();
+        previous.currentChapterId ||
+        previous.chapters[0]?.id ||
+        crypto.randomUUID();
       const now = Date.now();
 
       if (previous.chapters.length === 0) {
@@ -194,7 +193,6 @@ export function useWorkspaceCanvasMessageSyncRuntime({
         currentVersionId: newVersion.id,
       };
     });
-    setLayoutMode("chat-canvas");
   }, [
     canvasState,
     isContentCreationMode,
@@ -203,7 +201,6 @@ export function useWorkspaceCanvasMessageSyncRuntime({
     messages,
     processedMessageIdsRef,
     setCanvasState,
-    setLayoutMode,
     upsertNovelCanvasState,
   ]);
 

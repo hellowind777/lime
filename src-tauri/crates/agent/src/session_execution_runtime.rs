@@ -1,7 +1,9 @@
 use crate::session_query::read_session;
 use crate::session_update::persist_session_extension_data;
 use aster::session::extension_data::{ExtensionData, ExtensionState};
-use aster::session::{Session, SessionRuntimeSnapshot, TurnOutputSchemaRuntime, TurnStatus};
+use aster::session::{
+    Session, SessionRuntimeSnapshot, TurnContextOverride, TurnOutputSchemaRuntime, TurnStatus,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -21,6 +23,92 @@ pub enum SessionExecutionRuntimeSource {
     RuntimeSnapshot,
     TurnContext,
     ModelChange,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionExecutionRuntimeAccessMode {
+    ReadOnly,
+    Current,
+    FullAccess,
+}
+
+impl ExtensionState for SessionExecutionRuntimeAccessMode {
+    const EXTENSION_NAME: &'static str = "lime_recent_access_mode";
+    const VERSION: &'static str = "v0";
+}
+
+impl SessionExecutionRuntimeAccessMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::Current => "current",
+            Self::FullAccess => "full-access",
+        }
+    }
+
+    pub fn approval_policy(&self) -> &'static str {
+        match self {
+            Self::FullAccess => "never",
+            Self::ReadOnly | Self::Current => "on-request",
+        }
+    }
+
+    pub fn sandbox_policy(&self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::Current => "workspace-write",
+            Self::FullAccess => "danger-full-access",
+        }
+    }
+
+    pub fn from_access_mode_text(value: Option<&str>) -> Option<Self> {
+        match value.map(str::trim) {
+            Some("read-only") => Some(Self::ReadOnly),
+            Some("current") => Some(Self::Current),
+            Some("full-access") => Some(Self::FullAccess),
+            _ => None,
+        }
+    }
+
+    pub fn from_runtime_policies(
+        _approval_policy: Option<&str>,
+        sandbox_policy: Option<&str>,
+    ) -> Option<Self> {
+        match sandbox_policy.map(str::trim) {
+            Some("read-only") => Some(Self::ReadOnly),
+            Some("workspace-write") => Some(Self::Current),
+            Some("danger-full-access") => Some(Self::FullAccess),
+            _ => None,
+        }
+    }
+
+    fn from_extension_data(extension_data: &ExtensionData) -> Option<Self> {
+        <Self as ExtensionState>::from_extension_data(extension_data)
+    }
+
+    fn from_session(session: &Session) -> Option<Self> {
+        Self::from_extension_data(&session.extension_data)
+    }
+
+    fn to_extension_data(&self, extension_data: &mut ExtensionData) -> Result<(), String> {
+        <Self as ExtensionState>::to_extension_data(self, extension_data)
+            .map_err(|error| error.to_string())
+    }
+
+    fn into_updated_extension_data(self, session: &Session) -> Result<ExtensionData, String> {
+        let mut extension_data = session.extension_data.clone();
+        self.to_extension_data(&mut extension_data)?;
+        Ok(extension_data)
+    }
+
+    fn from_turn_context_override(turn_context: &TurnContextOverride) -> Option<Self> {
+        Self::from_runtime_policies(
+            turn_context.approval_policy.as_deref(),
+            turn_context.sandbox_policy.as_deref(),
+        )
+        .or_else(|| extract_recent_access_mode_from_metadata(&turn_context.metadata))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -212,6 +300,8 @@ pub struct SessionExecutionRuntime {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_turn_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub recent_access_mode: Option<SessionExecutionRuntimeAccessMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recent_preferences: Option<SessionExecutionRuntimePreferences>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recent_team_selection: Option<SessionExecutionRuntimeRecentTeamSelection>,
@@ -339,6 +429,17 @@ fn extract_recent_preferences_from_metadata(
         task: task.unwrap_or(false),
         subagent: subagent.unwrap_or(false),
     })
+}
+
+fn extract_recent_access_mode_from_metadata(
+    metadata: &std::collections::HashMap<String, Value>,
+) -> Option<SessionExecutionRuntimeAccessMode> {
+    let harness = metadata.get("harness").and_then(Value::as_object);
+    let access_mode = harness
+        .and_then(|value| extract_text_from_object(value, &["access_mode", "accessMode"]))
+        .or_else(|| extract_text_from_metadata(metadata, &["access_mode", "accessMode"]));
+
+    SessionExecutionRuntimeAccessMode::from_access_mode_text(access_mode.as_deref())
 }
 
 fn extract_recent_team_roles_from_values(
@@ -479,6 +580,35 @@ pub fn extract_recent_content_id_from_runtime_snapshot(
     extract_recent_harness_context_from_runtime_snapshot(snapshot).content_id
 }
 
+fn extract_recent_access_mode_from_runtime_snapshot(
+    snapshot: &SessionRuntimeSnapshot,
+) -> Option<SessionExecutionRuntimeAccessMode> {
+    snapshot
+        .threads
+        .iter()
+        .flat_map(|thread| thread.turns.iter())
+        .filter_map(|turn| {
+            let access_mode = turn
+                .context_override
+                .as_ref()
+                .and_then(SessionExecutionRuntimeAccessMode::from_turn_context_override)?;
+            Some((turn.updated_at, access_mode))
+        })
+        .max_by_key(|(updated_at, _)| *updated_at)
+        .map(|(_, access_mode)| access_mode)
+}
+
+pub async fn persist_session_recent_access_mode(
+    session_id: &str,
+    recent_access_mode: SessionExecutionRuntimeAccessMode,
+) -> Result<(), String> {
+    let session = read_session(session_id, false, "读取会话 recent_access_mode 失败").await?;
+    let extension_data = recent_access_mode.into_updated_extension_data(&session)?;
+    persist_session_extension_data(session_id, extension_data, "持久化会话 recent_access_mode")
+        .await?;
+    Ok(())
+}
+
 pub async fn persist_session_recent_preferences(
     session_id: &str,
     preferences: SessionExecutionRuntimePreferences,
@@ -547,6 +677,7 @@ pub fn build_session_execution_runtime(
         mode: None,
         latest_turn_id: None,
         latest_turn_status: None,
+        recent_access_mode: None,
         recent_preferences: None,
         recent_team_selection: None,
         recent_theme: None,
@@ -563,6 +694,7 @@ pub fn build_session_execution_runtime(
         runtime.recent_gate_key = recent_harness_context.gate_key;
         runtime.recent_run_title = recent_harness_context.run_title;
         runtime.recent_content_id = recent_harness_context.content_id;
+        runtime.recent_access_mode = extract_recent_access_mode_from_runtime_snapshot(snapshot);
 
         if let Some(latest_turn) = resolve_latest_turn(snapshot) {
             runtime.latest_turn_id = Some(latest_turn.id.clone());
@@ -596,6 +728,11 @@ pub fn build_session_execution_runtime(
         }
     }
 
+    if runtime.recent_access_mode.is_none() {
+        runtime.recent_access_mode =
+            session.and_then(SessionExecutionRuntimeAccessMode::from_session);
+    }
+
     if runtime.recent_preferences.is_none() {
         runtime.recent_preferences =
             session.and_then(SessionExecutionRuntimePreferences::from_session);
@@ -610,6 +747,7 @@ pub fn build_session_execution_runtime(
         && runtime.provider_name.is_none()
         && runtime.model_name.is_none()
         && runtime.output_schema_runtime.is_none()
+        && runtime.recent_access_mode.is_none()
         && runtime.recent_preferences.is_none()
         && runtime.recent_team_selection.is_none()
         && runtime.recent_theme.is_none()
@@ -627,9 +765,9 @@ pub fn build_session_execution_runtime(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_session_execution_runtime, SessionExecutionRuntimePreferences,
-        SessionExecutionRuntimeRecentTeamRole, SessionExecutionRuntimeRecentTeamSelection,
-        SessionExecutionRuntimeSource,
+        build_session_execution_runtime, SessionExecutionRuntimeAccessMode,
+        SessionExecutionRuntimePreferences, SessionExecutionRuntimeRecentTeamRole,
+        SessionExecutionRuntimeRecentTeamSelection, SessionExecutionRuntimeSource,
     };
     use aster::model::ModelConfig;
     use aster::session::{
@@ -810,6 +948,73 @@ mod tests {
                 task: false,
                 subagent: true,
             })
+        );
+    }
+
+    #[test]
+    fn keeps_recent_access_mode_from_latest_turn_context_override() {
+        let now = Utc::now();
+        let latest_turn = TurnRuntime {
+            id: "turn-access".to_string(),
+            session_id: "session-access".to_string(),
+            thread_id: "thread-1".to_string(),
+            status: TurnStatus::Completed,
+            input_text: Some("hello".to_string()),
+            error_message: None,
+            context_override: Some(TurnContextOverride {
+                approval_policy: Some("never".to_string()),
+                sandbox_policy: Some("danger-full-access".to_string()),
+                ..TurnContextOverride::default()
+            }),
+            output_schema_runtime: None,
+            created_at: now - Duration::seconds(10),
+            started_at: Some(now - Duration::seconds(10)),
+            completed_at: Some(now - Duration::seconds(1)),
+            updated_at: now,
+        };
+        let snapshot = SessionRuntimeSnapshot {
+            session_id: "session-access".to_string(),
+            threads: vec![ThreadRuntimeSnapshot {
+                thread: ThreadRuntime::new(
+                    "thread-1",
+                    "session-access",
+                    PathBuf::from("/tmp/workspace"),
+                ),
+                turns: vec![latest_turn],
+                items: Vec::new(),
+            }],
+        };
+
+        let runtime =
+            build_session_execution_runtime("session-access", None, None, Some(&snapshot), None)
+                .expect("runtime");
+
+        assert_eq!(
+            runtime.recent_access_mode,
+            Some(SessionExecutionRuntimeAccessMode::FullAccess)
+        );
+    }
+
+    #[test]
+    fn falls_back_to_session_recent_access_mode_when_runtime_snapshot_missing() {
+        let mut session = Session::default();
+        session.id = "session-access-fallback".to_string();
+        SessionExecutionRuntimeAccessMode::ReadOnly
+            .to_extension_data(&mut session.extension_data)
+            .expect("persist access mode");
+
+        let runtime = build_session_execution_runtime(
+            "session-access-fallback",
+            Some(&session),
+            Some("react".to_string()),
+            None,
+            None,
+        )
+        .expect("runtime");
+
+        assert_eq!(
+            runtime.recent_access_mode,
+            Some(SessionExecutionRuntimeAccessMode::ReadOnly)
         );
     }
 

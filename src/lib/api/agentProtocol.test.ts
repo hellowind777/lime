@@ -19,6 +19,8 @@ describe("agentProtocol", () => {
           modelPreference: "gpt-5.4",
           thinking: true,
           webSearch: false,
+          approvalPolicy: "on-request",
+          sandboxPolicy: "workspace-write",
           executionStrategy: "react",
           autoContinue: {
             enabled: true,
@@ -46,6 +48,8 @@ describe("agentProtocol", () => {
         provider_preference: "openai",
         model_preference: "gpt-5.4",
         thinking_enabled: true,
+        approval_policy: "on-request",
+        sandbox_policy: "workspace-write",
         execution_strategy: "react",
         web_search: false,
         auto_continue: {
@@ -88,6 +92,8 @@ describe("agentProtocol", () => {
         provider_preference: undefined,
         model_preference: undefined,
         thinking_enabled: undefined,
+        approval_policy: undefined,
+        sandbox_policy: undefined,
         execution_strategy: undefined,
         auto_continue: undefined,
       },
@@ -233,9 +239,41 @@ describe("agentProtocol", () => {
       type: "runtime_status",
       status: {
         phase: "routing",
-        title: "已决定：先深度思考",
+        title: "先深度思考",
         detail: "先做意图理解，再决定是否搜索。",
         checkpoints: ["thinking 已开启", "搜索保持候选状态"],
+      },
+    });
+
+    expect(
+      parseAgentEvent({
+        type: "item_updated",
+        item: {
+          id: "turn-summary-1",
+          thread_id: "thread-1",
+          turn_id: "turn-1",
+          sequence: 1,
+          status: "completed",
+          started_at: "2026-03-29T10:00:00Z",
+          completed_at: "2026-03-29T10:00:01Z",
+          updated_at: "2026-03-29T10:00:01Z",
+          type: "turn_summary",
+          text: "已决定：直接回答优先\n当前请求无需默认升级为搜索或任务。",
+        },
+      }),
+    ).toEqual({
+      type: "item_updated",
+      item: {
+        id: "turn-summary-1",
+        thread_id: "thread-1",
+        turn_id: "turn-1",
+        sequence: 1,
+        status: "completed",
+        started_at: "2026-03-29T10:00:00Z",
+        completed_at: "2026-03-29T10:00:01Z",
+        updated_at: "2026-03-29T10:00:01Z",
+        type: "turn_summary",
+        text: "直接回答优先\n当前请求无需默认升级为搜索或任务。",
       },
     });
 

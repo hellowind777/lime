@@ -185,6 +185,9 @@ describe("HotkeysSettings", () => {
   });
 
   it("加载失败后应支持重试", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     mockGetExperimentalConfig
       .mockRejectedValueOnce(new Error("网络异常"))
       .mockResolvedValue({
@@ -197,16 +200,20 @@ describe("HotkeysSettings", () => {
         },
       });
 
-    const container = renderComponent();
-    await waitForLoad();
+    try {
+      const container = renderComponent();
+      await waitForLoad();
 
-    expect(getText(container)).toContain("加载快捷键失败：网络异常");
+      expect(getText(container)).toContain("加载快捷键失败：网络异常");
 
-    await clickButton(findButtonByText(container, "重试"));
-    await waitForLoad();
+      await clickButton(findButtonByText(container, "重试"));
+      await waitForLoad();
 
-    expect(mockGetExperimentalConfig).toHaveBeenCalledTimes(2);
-    expect(getText(container)).toContain("已审计快捷键");
+      expect(mockGetExperimentalConfig).toHaveBeenCalledTimes(2);
+      expect(getText(container)).toContain("已审计快捷键");
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("应展示未启用、未注册和未绑定指令状态", async () => {

@@ -5,9 +5,7 @@
 /**
  * Mock open function (opens URL in external browser)
  */
-export async function open(path: string, openWith?: string): Promise<void> {
-  console.log("[Mock] Shell open:", path, openWith ? `with: ${openWith}` : "");
-
+export async function open(path: string, _openWith?: string): Promise<void> {
   // 在浏览器开发环境中，直接在当前标签页打开
   if (typeof window !== "undefined") {
     if (path.startsWith("http://") || path.startsWith("https://")) {

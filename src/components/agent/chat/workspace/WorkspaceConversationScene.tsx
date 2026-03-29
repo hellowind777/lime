@@ -26,6 +26,9 @@ interface WorkspaceConversationSceneProps extends WorkspaceMainSceneProps {
   entryBannerVisible: boolean;
   entryBannerMessage?: string;
   onDismissEntryBanner: () => void;
+  serviceSkillExecutionCard?: ComponentProps<
+    typeof WorkspaceChatContent
+  >["serviceSkillExecutionCard"];
   stepProgressProps?: ComponentProps<typeof WorkspaceChatContent>["stepProgressProps"];
   runtimeStyleControlBarProps?: ComponentProps<
     typeof WorkspaceChatContent
@@ -40,6 +43,15 @@ interface WorkspaceConversationSceneProps extends WorkspaceMainSceneProps {
   workspaceAlertVisible: boolean;
   onSelectWorkspaceDirectory: () => void;
   onDismissWorkspaceAlert: () => void;
+  pendingA2UIForm?: ComponentProps<
+    typeof WorkspaceChatContent
+  >["pendingA2UIForm"];
+  onPendingA2UISubmit?: ComponentProps<
+    typeof WorkspaceChatContent
+  >["onPendingA2UISubmit"];
+  a2uiSubmissionNotice?: ComponentProps<
+    typeof WorkspaceChatContent
+  >["a2uiSubmissionNotice"];
   shouldHideThemeWorkbenchInputForTheme: boolean;
   input: ComponentProps<typeof EmptyState>["input"];
   setInput: ComponentProps<typeof EmptyState>["setInput"];
@@ -52,6 +64,8 @@ interface WorkspaceConversationSceneProps extends WorkspaceMainSceneProps {
   setExecutionStrategy?: ComponentProps<
     typeof EmptyState
   >["setExecutionStrategy"];
+  accessMode: ComponentProps<typeof EmptyState>["accessMode"];
+  setAccessMode?: ComponentProps<typeof EmptyState>["setAccessMode"];
   onManageProviders?: ComponentProps<typeof EmptyState>["onManageProviders"];
   toolPreferences: ChatToolPreferences;
   onToolPreferenceChange: (
@@ -129,6 +143,7 @@ export function WorkspaceConversationScene({
   entryBannerVisible,
   entryBannerMessage,
   onDismissEntryBanner,
+  serviceSkillExecutionCard,
   stepProgressProps,
   runtimeStyleControlBarProps,
   showChatLayout,
@@ -140,6 +155,9 @@ export function WorkspaceConversationScene({
   workspaceAlertVisible,
   onSelectWorkspaceDirectory,
   onDismissWorkspaceAlert,
+  pendingA2UIForm,
+  onPendingA2UISubmit,
+  a2uiSubmissionNotice,
   shouldHideThemeWorkbenchInputForTheme,
   inputbarNode,
   input,
@@ -151,6 +169,8 @@ export function WorkspaceConversationScene({
   setModel,
   executionStrategy,
   setExecutionStrategy,
+  accessMode,
+  setAccessMode,
   onManageProviders,
   toolPreferences,
   onToolPreferenceChange,
@@ -228,6 +248,8 @@ export function WorkspaceConversationScene({
     setModel,
     executionStrategy,
     setExecutionStrategy,
+    accessMode,
+    setAccessMode,
     onManageProviders,
     toolPreferences,
     onToolPreferenceChange,
@@ -263,6 +285,7 @@ export function WorkspaceConversationScene({
       entryBannerVisible={entryBannerVisible}
       entryBannerMessage={entryBannerMessage}
       onDismissEntryBanner={onDismissEntryBanner}
+      serviceSkillExecutionCard={serviceSkillExecutionCard}
       stepProgressProps={stepProgressProps}
       runtimeStyleControlBarProps={runtimeStyleControlBarProps}
       showChatLayout={showChatLayout}
@@ -277,6 +300,9 @@ export function WorkspaceConversationScene({
       showWorkspaceAlert={workspaceAlertVisible}
       onSelectWorkspaceDirectory={onSelectWorkspaceDirectory}
       onDismissWorkspaceAlert={onDismissWorkspaceAlert}
+      pendingA2UIForm={pendingA2UIForm}
+      onPendingA2UISubmit={onPendingA2UISubmit}
+      a2uiSubmissionNotice={a2uiSubmissionNotice}
       showInlineInputbar={
         !contextWorkspaceEnabled && !shouldHideThemeWorkbenchInputForTheme
       }

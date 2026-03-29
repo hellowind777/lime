@@ -350,9 +350,15 @@ describe("EmptyState", () => {
       latestCall.onSelectSkill?.(skill);
     });
 
-    const sendButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("开始生成"),
-    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("已挂载 canvas-design");
+
+    const sendButton = container.querySelector(
+      'button[aria-label="发送"]',
+    ) as HTMLButtonElement | null;
     expect(sendButton).toBeTruthy();
 
     act(() => {
@@ -370,6 +376,50 @@ describe("EmptyState", () => {
     expect(onSend).toHaveBeenCalledWith("帮我设计封面", "react", undefined);
   });
 
+  it("首页技能卡应复用统一的技能数量文案", async () => {
+    const container = renderEmptyState({
+      skills: [
+        {
+          key: "writer",
+          name: "写作助手",
+          description: "desc",
+          directory: "writer",
+          installed: true,
+          sourceKind: "builtin",
+        },
+      ],
+      serviceSkills: [
+        {
+          id: "trend-briefing",
+          title: "趋势情报",
+          summary: "输出趋势摘要",
+          category: "研究",
+          outputHint: "摘要",
+          source: "cloud_catalog",
+          runnerType: "instant",
+          defaultExecutorBinding: "browser_assist",
+          executionLocation: "client_default",
+          slotSchema: [],
+          version: "seed-v1",
+          badge: "云目录",
+          recentUsedAt: null,
+          isRecent: false,
+          runnerLabel: "浏览器执行",
+          runnerTone: "emerald",
+          runnerDescription: "复用登录态完成情报任务。",
+          actionLabel: "开始执行",
+          automationStatus: null,
+        },
+      ],
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("2 项技能可挂载");
+  });
+
   it("点击地球按钮应切换联网搜索开关", async () => {
     const onWebSearchEnabledChange = vi.fn<(enabled: boolean) => void>();
     const container = renderEmptyState({
@@ -381,7 +431,7 @@ describe("EmptyState", () => {
     });
 
     const globeToggle = container.querySelector(
-      'button[title="开启联网搜索"]',
+      'button[title="联网搜索已关闭"]',
     ) as HTMLButtonElement | null;
     expect(globeToggle).toBeTruthy();
 
@@ -411,9 +461,9 @@ describe("EmptyState", () => {
       await Promise.resolve();
     });
 
-    const sendButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("开始生成"),
-    );
+    const sendButton = container.querySelector(
+      'button[aria-label="发送"]',
+    ) as HTMLButtonElement | null;
     expect(sendButton).toBeTruthy();
 
     act(() => {
@@ -449,9 +499,9 @@ describe("EmptyState", () => {
       await Promise.resolve();
     });
 
-    const sendButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("开始生成"),
-    );
+    const sendButton = container.querySelector(
+      'button[aria-label="发送"]',
+    ) as HTMLButtonElement | null;
     expect(sendButton).toBeTruthy();
 
     act(() => {
@@ -501,9 +551,9 @@ describe("EmptyState", () => {
       latestCall.onSelectSkill?.(skill);
     });
 
-    const sendButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("开始生成"),
-    );
+    const sendButton = container.querySelector(
+      'button[aria-label="发送"]',
+    ) as HTMLButtonElement | null;
     expect(sendButton).toBeTruthy();
 
     act(() => {
@@ -517,38 +567,40 @@ describe("EmptyState", () => {
     );
   });
 
-  it("通用主题工具栏应包含附件、思考、后台任务与多代理开关", async () => {
+  it("通用主题工具栏应包含附件、思考、Plan 与多代理开关", async () => {
     const onThinkingEnabledChange = vi.fn<(enabled: boolean) => void>();
-    const onTaskEnabledChange = vi.fn<(enabled: boolean) => void>();
     const onSubagentEnabledChange = vi.fn<(enabled: boolean) => void>();
+    const setExecutionStrategy = vi.fn<
+      (strategy: "react" | "code_orchestrated" | "auto") => void
+    >();
     const container = renderEmptyState({
       activeTheme: "general",
       thinkingEnabled: false,
       onThinkingEnabledChange,
-      taskEnabled: false,
-      onTaskEnabledChange,
       subagentEnabled: false,
       onSubagentEnabledChange,
+      executionStrategy: "react",
+      setExecutionStrategy,
     });
     await act(async () => {
       await Promise.resolve();
     });
 
     const attachButton = container.querySelector(
-      'button[title="上传文件"]',
+      'button[title="添加图片"]',
     ) as HTMLButtonElement | null;
     expect(attachButton).toBeTruthy();
 
     const thinkingButton = container.querySelector(
-      'button[title="开启深度思考"]',
+      'button[title="深度思考已关闭"]',
     ) as HTMLButtonElement | null;
     expect(thinkingButton).toBeTruthy();
-    const taskButton = container.querySelector(
-      'button[title="开启后台任务偏好"]',
+    const planButton = container.querySelector(
+      '[data-testid="inputbar-plan-toggle"]',
     ) as HTMLButtonElement | null;
-    expect(taskButton).toBeTruthy();
+    expect(planButton).toBeTruthy();
     const subagentButton = container.querySelector(
-      'button[title="开启多代理偏好"]',
+      'button[title="多代理偏好已关闭"]',
     ) as HTMLButtonElement | null;
     expect(subagentButton).toBeTruthy();
 
@@ -556,14 +608,14 @@ describe("EmptyState", () => {
       thinkingButton?.click();
     });
     act(() => {
-      taskButton?.click();
+      planButton?.click();
     });
     act(() => {
       subagentButton?.click();
     });
 
     expect(onThinkingEnabledChange).toHaveBeenCalledWith(true);
-    expect(onTaskEnabledChange).toHaveBeenCalledWith(true);
+    expect(setExecutionStrategy).toHaveBeenCalledWith("code_orchestrated");
     expect(onSubagentEnabledChange).toHaveBeenCalledWith(true);
   });
 

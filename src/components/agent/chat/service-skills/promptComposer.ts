@@ -108,6 +108,18 @@ function appendServiceSkillAutomationTemplateRequirements(
   }
 }
 
+function appendMinimalClarificationProtocol(lines: string[]): void {
+  lines.push(
+    "[澄清协议] 默认先基于现有信息产出首版结果，不要因为存在次要缺口就暂停。",
+  );
+  lines.push(
+    "[澄清协议] 只有在缺少的信息会显著改变下一步执行结果时，才请求补充；单轮最多追问 1 个最关键问题或 1 个关键字段。",
+  );
+  lines.push(
+    "[澄清协议] 其余可合理假设的信息，先明确假设并继续；不要一次性索要全部缺失参数，不要输出多题问卷。",
+  );
+}
+
 export function resolveServiceSkillSlotValue(
   slot: ServiceSkillSlotDefinition,
   slotValues: ServiceSkillSlotValues,
@@ -125,7 +137,7 @@ function buildServiceSkillPromptLines(
   userInput?: string,
 ): string[] {
   const lines: string[] = [
-    `[服务型技能] ${skill.title}`,
+    `[技能任务] ${skill.title}`,
     `[目录来源] ${skill.source === "cloud_catalog" ? "云目录（客户端起步版）" : "本地目录"}`,
     `[任务形态] ${RUNNER_LABELS[skill.runnerType]}`,
     `[执行位置] ${EXECUTION_LOCATION_LABELS[skill.executionLocation]}`,
@@ -194,6 +206,7 @@ export function composeServiceSkillPrompt({
   const lines = buildServiceSkillPromptLines(skill, slotValues, userInput);
 
   appendServiceSkillTemplateRequirements(lines, skill);
+  appendMinimalClarificationProtocol(lines);
 
   if (skill.runnerType === "instant") {
     lines.push(
@@ -224,6 +237,7 @@ export function composeServiceSkillAutomationPrompt({
   const lines = buildServiceSkillPromptLines(skill, slotValues, userInput);
 
   appendServiceSkillAutomationTemplateRequirements(lines, skill);
+  appendMinimalClarificationProtocol(lines);
 
   if (skill.runnerType === "scheduled") {
     lines.push(

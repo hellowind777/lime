@@ -80,6 +80,10 @@ export interface ChatAppearanceConfig {
   append_selected_text_to_recommendation?: boolean;
 }
 
+export interface DeveloperConfig {
+  workspace_harness_enabled?: boolean;
+}
+
 export interface VoiceConfig {
   tts_service?: "openai" | "azure" | "google" | "edge" | "macos";
   stt_service?: "openai" | "azure" | "google" | "whisper";
@@ -237,6 +241,7 @@ export interface Config {
   voice?: VoiceConfig;
   image_gen?: ImageGenConfig;
   user_profile?: UserProfile;
+  developer?: DeveloperConfig;
   gateway?: GatewayConfig;
   channels?: ChannelsConfig;
   crash_reporting?: CrashReportingConfig;

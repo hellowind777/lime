@@ -16,6 +16,9 @@ export function isServiceSkillSiteCapabilityBound(
   );
 }
 
+export const isServiceSkillExecutableAsSiteAdapter =
+  isServiceSkillSiteCapabilityBound;
+
 export function buildServiceSkillSiteCapabilityArgs(
   skill: ServiceSkillItem,
   slotValues: ServiceSkillSlotValues,

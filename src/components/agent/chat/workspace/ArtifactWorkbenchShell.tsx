@@ -9,10 +9,8 @@ import type { Artifact } from "@/lib/artifact/types";
 import { cn } from "@/lib/utils";
 import type { AgentThreadItem } from "../types";
 import {
-  ArtifactWorkbenchDocumentInspector,
   ArtifactWorkbenchEditSurface,
   type ArtifactWorkbenchDocumentController,
-  type ArtifactWorkbenchLayoutMode,
   useArtifactWorkbenchDocumentController,
 } from "./artifactWorkbenchDocument";
 
@@ -39,7 +37,6 @@ interface ArtifactWorkbenchShellProps {
   onJumpToTimelineItem?: (itemId: string) => void;
   onCloseCanvas: () => void;
   actionsSlot?: React.ReactNode;
-  layoutMode?: ArtifactWorkbenchLayoutMode;
   documentController?: ArtifactWorkbenchDocumentController | null;
 }
 
@@ -54,7 +51,6 @@ function ArtifactWorkbenchShellLayout({
   onPreviewSizeChange,
   onCloseCanvas,
   actionsSlot,
-  layoutMode = "full",
   controller,
 }: Omit<
   ArtifactWorkbenchShellProps,
@@ -67,12 +63,10 @@ function ArtifactWorkbenchShellLayout({
 > & {
   controller: ArtifactWorkbenchDocumentController;
 }) {
-  const showInspector = layoutMode === "full";
-
   return (
     <div
       data-testid="artifact-workbench-shell"
-      data-layout-mode={layoutMode}
+      data-layout-mode="canvas-only"
       className="flex h-full flex-col rounded-[24px] border border-slate-200 bg-white shadow-sm shadow-slate-950/5"
     >
       <ArtifactToolbar
@@ -87,21 +81,11 @@ function ArtifactWorkbenchShellLayout({
         displayBadgeLabel={showPreviousVersionBadge ? "预览上一版本" : undefined}
         actionsSlot={actionsSlot}
       />
-      <div
-        className={cn(
-          "min-h-0 flex-1",
-          showInspector
-            ? controller.canEditDocument
-              ? "grid lg:grid-cols-[minmax(0,1fr)_360px]"
-              : "grid lg:grid-cols-[minmax(0,1fr)_320px]"
-            : "flex flex-col",
-        )}
-      >
+      <div className="min-h-0 flex flex-1 flex-col">
         <div
           ref={controller.rendererViewportRef as React.RefObject<HTMLDivElement>}
           className={cn(
             "relative min-h-0 bg-white",
-            showInspector && "lg:border-r lg:border-slate-200",
             controller.inspectorTab === "edit" && controller.canEditDocument
               ? "overflow-hidden"
               : "overflow-auto",
@@ -133,13 +117,6 @@ function ArtifactWorkbenchShellLayout({
             </>
           )}
         </div>
-        {showInspector ? (
-          <ArtifactWorkbenchDocumentInspector
-            controller={controller}
-            containerClassName="min-h-0 border-t border-slate-200 bg-slate-50/70 lg:border-t-0"
-            tabsClassName="flex h-full min-h-0 flex-col p-4"
-          />
-        ) : null}
       </div>
     </div>
   );
@@ -161,7 +138,6 @@ const LocalArtifactWorkbenchShell = ({
   onJumpToTimelineItem,
   onCloseCanvas,
   actionsSlot,
-  layoutMode = "full",
 }: Omit<ArtifactWorkbenchShellProps, "documentController">) => {
   const controller = useArtifactWorkbenchDocumentController({
     artifact,
@@ -184,7 +160,6 @@ const LocalArtifactWorkbenchShell = ({
       onPreviewSizeChange={onPreviewSizeChange}
       onCloseCanvas={onCloseCanvas}
       actionsSlot={actionsSlot}
-      layoutMode={layoutMode}
       controller={controller}
     />
   );

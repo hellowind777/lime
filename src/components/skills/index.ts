@@ -1,4 +1,5 @@
 export { SkillsPage } from "./SkillsPage";
+export { SkillsWorkspacePage } from "./SkillsWorkspacePage";
 export { SkillCard, getSkillSource, type SkillSource } from "./SkillCard";
 export { RepoManagerPanel } from "./RepoManagerPanel";
 export {

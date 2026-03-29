@@ -4,6 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactWorkbenchShell } from "./ArtifactWorkbenchShell";
 import {
+  ArtifactWorkbenchDocumentInspector,
+  useArtifactWorkbenchDocumentController,
+} from "./artifactWorkbenchDocument";
+import {
   areLightweightRenderersRegistered,
   registerLightweightRenderers,
 } from "@/components/artifact/renderers";
@@ -276,6 +280,57 @@ function renderShell(
   return container;
 }
 
+function renderWorkbench(
+  artifact: Artifact,
+  overrides: Partial<React.ComponentProps<typeof ArtifactWorkbenchShell>> = {},
+) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  function WorkbenchHarness() {
+    const controller = useArtifactWorkbenchDocumentController({
+      artifact,
+      onSaveArtifactDocument: overrides.onSaveArtifactDocument,
+      threadItems: overrides.threadItems,
+      focusedBlockId: overrides.focusedBlockId,
+      blockFocusRequestKey: overrides.blockFocusRequestKey,
+      onJumpToTimelineItem: overrides.onJumpToTimelineItem,
+    });
+
+    return (
+      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_320px]">
+        <ArtifactWorkbenchShell
+          artifact={artifact}
+          artifactOverlay={null}
+          isStreaming={false}
+          showPreviousVersionBadge={false}
+          viewMode="preview"
+          onViewModeChange={() => {}}
+          previewSize="desktop"
+          onPreviewSizeChange={() => {}}
+          onCloseCanvas={() => {}}
+          {...overrides}
+          documentController={controller}
+        />
+        <ArtifactWorkbenchDocumentInspector
+          controller={controller}
+          testId="artifact-workbench-document-inspector"
+          containerClassName="min-h-0 border-l border-slate-200 bg-slate-50/70"
+          tabsClassName="flex h-full min-h-0 flex-col p-4"
+        />
+      </div>
+    );
+  }
+
+  act(() => {
+    root.render(<WorkbenchHarness />);
+  });
+
+  mountedShells.push({ container, root });
+  return container;
+}
+
 function setTextControlValue(
   element: HTMLInputElement | HTMLTextAreaElement,
   value: string,
@@ -318,7 +373,7 @@ afterEach(() => {
 });
 
 describe("ArtifactWorkbenchShell", () => {
-  it("命中文档协议时应展示概览、来源、版本 inspector", async () => {
+  it("运行态 shell 默认只保留正文画布，不再直接渲染 inspector 侧栏", async () => {
     const container = renderShell(createArtifactDocumentArtifact());
 
     await act(async () => {
@@ -328,6 +383,25 @@ describe("ArtifactWorkbenchShell", () => {
     expect(
       container.querySelector('[data-testid="artifact-workbench-shell"]'),
     ).not.toBeNull();
+    expect(
+      container
+        .querySelector('[data-testid="artifact-workbench-shell"]')
+        ?.getAttribute("data-layout-mode"),
+    ).toBe("canvas-only");
+    const buttons = Array.from(container.querySelectorAll("button"));
+    const tabLabels = ["概览", "来源", "版本", "差异", "编辑"];
+    for (const label of tabLabels) {
+      expect(buttons.find((button) => button.textContent?.includes(label))).toBeUndefined();
+    }
+  });
+
+  it("文稿工作台集成 harness 应展示概览、来源、版本 inspector", async () => {
+    const container = renderWorkbench(createArtifactDocumentArtifact());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
     expect(container.textContent).toContain("概览");
     expect(container.textContent).toContain("来源");
     expect(container.textContent).toContain("版本");
@@ -348,31 +422,8 @@ describe("ArtifactWorkbenchShell", () => {
     expect(container.textContent).toContain("block hero-1");
   });
 
-  it("canvas-only 模式应只保留正文画布，不再渲染 inspector 侧栏", async () => {
-    const container = renderShell(createArtifactDocumentArtifact(), {
-      layoutMode: "canvas-only",
-      onSaveArtifactDocument: vi.fn().mockResolvedValue(undefined),
-    });
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    expect(
-      container
-        .querySelector('[data-testid="artifact-workbench-shell"]')
-        ?.getAttribute("data-layout-mode"),
-    ).toBe("canvas-only");
-
-    const tabLabels = ["概览", "来源", "版本", "差异", "编辑"];
-    const buttons = Array.from(container.querySelectorAll("button"));
-    for (const label of tabLabels) {
-      expect(buttons.find((button) => button.textContent?.includes(label))).toBeUndefined();
-    }
-  });
-
   it("恢复为草稿时应展示低压状态说明", async () => {
-    const container = renderShell(
+    const container = renderWorkbench(
       createArtifactDocumentArtifact({
         status: "draft",
         currentVersionStatus: "draft",
@@ -417,7 +468,7 @@ describe("ArtifactWorkbenchShell", () => {
   });
 
   it("恢复稿可从概览直接切到编辑态", async () => {
-    const container = renderShell(
+    const container = renderWorkbench(
       createArtifactDocumentArtifact({
         status: "draft",
         currentVersionStatus: "draft",
@@ -464,7 +515,7 @@ describe("ArtifactWorkbenchShell", () => {
 
   it("恢复稿应支持标记为可阅读并沿保存链回写 ready 状态", async () => {
     const handleSaveArtifactDocument = vi.fn().mockResolvedValue(undefined);
-    const container = renderShell(
+    const container = renderWorkbench(
       createArtifactDocumentArtifact({
         status: "draft",
         currentVersionStatus: "draft",
@@ -522,7 +573,7 @@ describe("ArtifactWorkbenchShell", () => {
   });
 
   it("应支持从来源项与差异项跳转到对应 block", async () => {
-    const container = renderShell(createArtifactDocumentArtifact());
+    const container = renderWorkbench(createArtifactDocumentArtifact());
 
     await act(async () => {
       await Promise.resolve();
@@ -578,7 +629,7 @@ describe("ArtifactWorkbenchShell", () => {
 
   it("提供保存回调时应展示编辑页签，并把更新后的文档回传主链", async () => {
     const handleSaveArtifactDocument = vi.fn().mockResolvedValue(undefined);
-    const container = renderShell(createArtifactDocumentArtifact(), {
+    const container = renderWorkbench(createArtifactDocumentArtifact(), {
       onSaveArtifactDocument: handleSaveArtifactDocument,
     });
 
@@ -652,7 +703,7 @@ describe("ArtifactWorkbenchShell", () => {
   });
 
   it("已归档文档不应继续展示编辑页签", async () => {
-    const container = renderShell(
+    const container = renderWorkbench(
       createArtifactDocumentArtifact({
         status: "archived",
         currentVersionStatus: "archived",
@@ -688,7 +739,7 @@ describe("ArtifactWorkbenchShell", () => {
 
   it("应支持在 workbench 中编辑结构化摘要块并回写 highlights", async () => {
     const handleSaveArtifactDocument = vi.fn().mockResolvedValue(undefined);
-    const container = renderShell(createStructuredEditableArtifact(), {
+    const container = renderWorkbench(createStructuredEditableArtifact(), {
       onSaveArtifactDocument: handleSaveArtifactDocument,
     });
 
@@ -764,7 +815,7 @@ describe("ArtifactWorkbenchShell", () => {
 
   it("编辑态命中关联 timeline 时应支持跳回执行过程", async () => {
     const onJumpToTimelineItem = vi.fn();
-    const container = renderShell(createArtifactDocumentArtifact(), {
+    const container = renderWorkbench(createArtifactDocumentArtifact(), {
       onSaveArtifactDocument: vi.fn().mockResolvedValue(undefined),
       threadItems: createArtifactTimelineItems(),
       onJumpToTimelineItem,
@@ -811,7 +862,7 @@ describe("ArtifactWorkbenchShell", () => {
 
   it("应支持在 workbench 中编辑提示块并回写 tone 与正文", async () => {
     const handleSaveArtifactDocument = vi.fn().mockResolvedValue(undefined);
-    const container = renderShell(createStructuredEditableArtifact(), {
+    const container = renderWorkbench(createStructuredEditableArtifact(), {
       onSaveArtifactDocument: handleSaveArtifactDocument,
     });
 

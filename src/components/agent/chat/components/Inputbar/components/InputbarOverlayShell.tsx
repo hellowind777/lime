@@ -5,11 +5,7 @@ import type {
   A2UIFormData,
   A2UIResponse,
 } from "@/components/content-creator/a2ui/types";
-import {
-  A2UISubmissionNotice,
-  type A2UISubmissionNoticeData,
-} from "./A2UISubmissionNotice";
-import { A2UIFloatingForm } from "./A2UIFloatingForm";
+import type { A2UISubmissionNoticeData } from "./A2UISubmissionNotice";
 import { HintRoutePopup } from "./HintRoutePopup";
 import { TaskFilesPanel } from "./TaskFilesPanel";
 import type { HintRouteItem } from "../hooks/useHintRoutes";
@@ -64,11 +60,11 @@ export const InputbarOverlayShell: React.FC<InputbarOverlayShellProps> = ({
   onToggleTaskFiles,
   onTaskFileClick,
   overlayAccessory,
-  submissionNotice,
-  isSubmissionNoticeVisible,
-  pendingA2UIForm,
-  pendingA2UIFormStale = false,
-  onA2UISubmit,
+  submissionNotice: _submissionNotice,
+  isSubmissionNoticeVisible: _isSubmissionNoticeVisible,
+  pendingA2UIForm: _pendingA2UIForm,
+  pendingA2UIFormStale: _pendingA2UIFormStale = false,
+  onA2UISubmit: _onA2UISubmit,
   fileInputRef,
   onFileSelect,
 }) => (
@@ -91,20 +87,6 @@ export const InputbarOverlayShell: React.FC<InputbarOverlayShellProps> = ({
         />
         {overlayAccessory}
       </SecondaryControlsRow>
-    ) : null}
-    {submissionNotice ? (
-      <A2UISubmissionNotice
-        notice={submissionNotice}
-        visible={isSubmissionNoticeVisible}
-      />
-    ) : null}
-    {pendingA2UIForm && onA2UISubmit ? (
-      <A2UIFloatingForm
-        response={pendingA2UIForm}
-        onSubmit={onA2UISubmit}
-        submitDisabled={pendingA2UIFormStale}
-        isStale={pendingA2UIFormStale}
-      />
     ) : null}
     <input
       ref={fileInputRef}

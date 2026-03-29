@@ -4,6 +4,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillSelector } from "./SkillSelector";
 import type { Skill } from "@/lib/api/skills";
+import type { ServiceSkillHomeItem } from "@/components/agent/chat/service-skills/types";
+import { SKILL_SELECTION_DISPLAY_COPY } from "./skillSelectionDisplay";
 
 const mockToastInfo = vi.fn();
 const mockPopoverState = vi.hoisted(() => ({
@@ -50,13 +52,14 @@ vi.mock("@/components/ui/popover", () => ({
 }));
 
 vi.mock("@/components/ui/command", () => {
-  const Command = ({
-    children,
-    shouldFilter: _shouldFilter,
-    ...props
-  }: React.HTMLAttributes<HTMLDivElement> & { shouldFilter?: boolean }) => (
-    <div {...props}>{children}</div>
-  );
+  const Command = React.forwardRef<
+    HTMLDivElement,
+    React.HTMLAttributes<HTMLDivElement> & { shouldFilter?: boolean }
+  >(({ children, shouldFilter: _shouldFilter, ...props }, ref) => (
+    <div ref={ref} {...props}>
+      {children}
+    </div>
+  ));
 
   const CommandInput = ({
     value,
@@ -148,6 +151,41 @@ function createSkill(name: string, key: string, installed: boolean): Skill {
   };
 }
 
+function createServiceSkill(
+  id: string,
+  title: string,
+): ServiceSkillHomeItem {
+  return {
+    id,
+    title,
+    summary: `${title} 摘要`,
+    category: "情报研究",
+    outputHint: "结构化结果",
+    source: "cloud_catalog",
+    runnerType: "instant",
+    defaultExecutorBinding: "browser_assist",
+    executionLocation: "client_default",
+    defaultArtifactKind: "analysis",
+    version: "seed-v1",
+    themeTarget: "general",
+    slotSchema: [],
+    badge: "云目录",
+    recentUsedAt: null,
+    isRecent: false,
+    runnerLabel: "站点登录态采集",
+    runnerTone: "emerald",
+    runnerDescription: "复用真实登录态执行任务。",
+    actionLabel: "开始执行",
+    automationStatus: null,
+    groupKey: "github",
+    siteCapabilityBinding: {
+      adapterName: "github/search",
+      autoRun: true,
+      saveMode: "project_resource",
+    },
+  };
+}
+
 function renderSkillSelector(
   props?: Partial<React.ComponentProps<typeof SkillSelector>>,
 ) {
@@ -171,14 +209,14 @@ function renderSkillSelector(
   return container;
 }
 
-async function preloadSkillSelectorPanel() {
+async function preloadSharedSkillPanel() {
   await act(async () => {
-    await import("./SkillSelectorPanel");
+    await import("./CharacterMentionPanel");
   });
 }
 
 async function openSkillSelector(container: HTMLElement) {
-  await preloadSkillSelectorPanel();
+  await preloadSharedSkillPanel();
 
   const triggerButton = container.querySelector(
     '[data-testid="skill-selector-trigger"]',
@@ -225,10 +263,16 @@ describe("SkillSelector", () => {
 
     await openSkillSelector(container);
 
-    expect(container.textContent).toContain("不使用技能");
+    expect(container.textContent).toContain("已挂载 研究助手");
+    expect(container.textContent).toContain(
+      SKILL_SELECTION_DISPLAY_COPY.clearActionLabel,
+    );
 
     const clearButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("不使用技能"),
+      (button) =>
+        button.textContent?.includes(
+          SKILL_SELECTION_DISPLAY_COPY.clearActionLabel,
+        ),
     );
     expect(clearButton).toBeTruthy();
 
@@ -261,7 +305,7 @@ describe("SkillSelector", () => {
     expect(mockToastInfo.mock.calls[0]?.[0]).toContain("尚未安装");
     expect(mockToastInfo.mock.calls[0]?.[1]).toMatchObject({
       action: {
-        label: "去安装",
+        label: "去技能中心",
         onClick: onNavigateToSettings,
       },
     });
@@ -311,6 +355,33 @@ describe("SkillSelector", () => {
     expect(onRefreshSkills).toHaveBeenCalledTimes(1);
   });
 
+  it("应复用同一面板渲染服务技能并回调 onSelectServiceSkill", async () => {
+    const onSelectServiceSkill = vi.fn<
+      (skill: ServiceSkillHomeItem) => void
+    >();
+    const serviceSkill = createServiceSkill(
+      "github-repo-radar",
+      "GitHub 仓库线索检索",
+    );
+    const container = renderSkillSelector({
+      serviceSkills: [serviceSkill],
+      onSelectServiceSkill,
+    });
+
+    await openSkillSelector(container);
+
+    const skillButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("GitHub 仓库线索检索"),
+    );
+    expect(skillButton).toBeTruthy();
+
+    act(() => {
+      skillButton?.click();
+    });
+
+    expect(onSelectServiceSkill).toHaveBeenCalledWith(serviceSkill);
+  });
+
   it("加载中且无技能时应显示加载状态", async () => {
     const container = renderSkillSelector({
       isLoading: true,
@@ -321,5 +392,17 @@ describe("SkillSelector", () => {
     await openSkillSelector(container);
 
     expect(container.textContent).toContain("技能加载中");
+  });
+
+  it("未选择技能时应展示统一的空态文案", async () => {
+    const container = renderSkillSelector({
+      skills: [],
+    });
+
+    await openSkillSelector(container);
+
+    expect(container.textContent).toContain(
+      SKILL_SELECTION_DISPLAY_COPY.emptySelectionLabel,
+    );
   });
 });

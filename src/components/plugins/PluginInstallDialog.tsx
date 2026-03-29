@@ -7,7 +7,6 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { safeInvoke } from "@/lib/dev-bridge";
-import { safeListen } from "@/lib/dev-bridge";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   FolderOpen,
@@ -23,6 +22,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  listenPluginInstallProgress,
+  type PluginInstallProgress,
+} from "@/lib/api/plugins";
 
 /** 安装阶段 */
 type InstallStage =
@@ -33,13 +36,6 @@ type InstallStage =
   | "registering"
   | "complete"
   | "failed";
-
-/** 安装进度事件 */
-interface InstallProgress {
-  stage: InstallStage;
-  percent: number;
-  message: string;
-}
 
 /** 安装来源 */
 interface InstallSource {
@@ -111,7 +107,9 @@ export function PluginInstallDialog({
   const [filePath, setFilePath] = useState("");
   const [url, setUrl] = useState("");
   const [installing, setInstalling] = useState(false);
-  const [progress, setProgress] = useState<InstallProgress | null>(null);
+  const [progress, setProgress] = useState<
+    (PluginInstallProgress & { stage: InstallStage }) | null
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<InstalledPlugin | null>(null);
   const [autoInstallTriggered, setAutoInstallTriggered] = useState(false);
@@ -120,12 +118,9 @@ export function PluginInstallDialog({
   useEffect(() => {
     if (!isOpen) return;
 
-    const unlisten = safeListen<InstallProgress>(
-      "plugin-install-progress",
-      (event) => {
-        setProgress(event.payload);
-      },
-    );
+    const unlisten = listenPluginInstallProgress((payload) => {
+      setProgress(payload as PluginInstallProgress & { stage: InstallStage });
+    });
 
     return () => {
       unlisten.then((fn) => fn());

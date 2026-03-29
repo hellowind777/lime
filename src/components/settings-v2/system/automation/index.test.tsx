@@ -11,7 +11,6 @@ const {
   mockGetAutomationHealth,
   mockGetAutomationRunHistory,
   mockListProjects,
-  mockGetChromeProfileSessions,
   mockAutomationJobDialog,
 } = vi.hoisted(() => ({
   mockGetAutomationSchedulerConfig: vi.fn(),
@@ -20,7 +19,6 @@ const {
   mockGetAutomationHealth: vi.fn(),
   mockGetAutomationRunHistory: vi.fn(),
   mockListProjects: vi.fn(),
-  mockGetChromeProfileSessions: vi.fn(),
   mockAutomationJobDialog: vi.fn(),
 }));
 
@@ -39,32 +37,6 @@ vi.mock("@/lib/api/automation", () => ({
 
 vi.mock("@/lib/api/project", () => ({
   listProjects: mockListProjects,
-}));
-
-vi.mock("@/lib/webview-api", () => ({
-  getChromeProfileSessions: mockGetChromeProfileSessions,
-}));
-
-vi.mock("@/features/browser-runtime", () => ({
-  BrowserRuntimeDebugPanel: ({
-    sessions,
-    initialProfileKey,
-    initialSessionId,
-  }: {
-    sessions: Array<{ profile_key: string }>;
-    initialProfileKey?: string;
-    initialSessionId?: string;
-  }) => (
-    <div data-testid="automation-browser-runtime-panel">
-      <span data-testid="browser-runtime-session-count">{sessions.length}</span>
-      <span data-testid="browser-runtime-profile-key">
-        {initialProfileKey ?? "-"}
-      </span>
-      <span data-testid="browser-runtime-session-id">
-        {initialSessionId ?? "-"}
-      </span>
-    </div>
-  ),
 }));
 
 vi.mock("./AutomationHealthPanel", () => ({
@@ -256,19 +228,6 @@ beforeEach(() => {
       name: "默认工作区",
     },
   ]);
-  mockGetChromeProfileSessions.mockResolvedValue([
-    {
-      profile_key: "shop_us",
-      browser_source: "system",
-      browser_path:
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-      profile_dir: "/tmp/lime/chrome_profiles/shop_us",
-      remote_debugging_port: 13001,
-      pid: 12345,
-      started_at: "2026-03-16T00:00:00Z",
-      last_url: "https://seller.example.com/dashboard",
-    },
-  ]);
 });
 
 afterEach(() => {
@@ -305,13 +264,13 @@ async function renderSettings(
 }
 
 describe("AutomationSettings", () => {
-  it("浏览器任务应在详情区挂载实时接管面板", async () => {
+  it("遗留浏览器任务应展示下线提示并移除接管面板", async () => {
     const container = await renderSettings();
 
-    expect(container.textContent).toContain("浏览器实时接管");
+    expect(container.textContent).toContain("浏览器自动化已下线");
+    expect(container.textContent).toContain("系统不会再自动启动 Chrome");
     expect(container.textContent).toContain("等待人工处理");
-    expect(container.textContent).toContain("当前阻塞: 等待你确认是否继续执行");
-    expect(container.textContent).toContain("运行态说明");
+    expect(container.textContent).toContain("已下线");
     expect(container.textContent).toContain("等待你确认是否继续执行");
     expect(container.textContent).toContain("输出契约");
     expect(container.textContent).toContain("最近一次投递结果");
@@ -320,26 +279,9 @@ describe("AutomationSettings", () => {
       "写入本地文件失败: permission denied",
     );
     expect(container.textContent).toContain("投递失败记为任务失败");
-    expect(container.textContent).toContain("输出投递 / 本地文件");
     expect(container.textContent).toContain("投递键: dlv-run-browser-1");
     expect(container.textContent).toContain("执行重试: 0 / 投递尝试: 2");
-    expect(
-      container.querySelector(
-        "[data-testid='automation-browser-runtime-panel']",
-      ),
-    ).not.toBeNull();
-    expect(
-      container.querySelector("[data-testid='browser-runtime-session-count']")
-        ?.textContent,
-    ).toBe("1");
-    expect(
-      container.querySelector("[data-testid='browser-runtime-profile-key']")
-        ?.textContent,
-    ).toBe("shop_us");
-    expect(
-      container.querySelector("[data-testid='browser-runtime-session-id']")
-        ?.textContent,
-    ).toBe("mock-cdp-session-shop_us");
+    expect(container.textContent).not.toContain("浏览器实时接管");
   }, 10_000);
 
   it("应展示 Google Sheets 作为输出目标标签", async () => {
@@ -425,7 +367,6 @@ describe("AutomationSettings", () => {
       container.querySelector("[data-testid='automation-health-panel']"),
     ).toBeNull();
     expect(mockGetAutomationRunHistory).not.toHaveBeenCalled();
-    expect(mockGetChromeProfileSessions).not.toHaveBeenCalled();
   });
 
   it("workspace 模式应显示任务工作台并隐藏调度器编辑", async () => {
@@ -475,13 +416,13 @@ describe("AutomationSettings", () => {
     ).not.toBeNull();
   });
 
-  it("workspace 模式点击模板后应打开预填创建弹窗", async () => {
+  it("workspace 模式点击模板后应打开 Agent 任务预填弹窗", async () => {
     const container = await renderSettings({
       mode: "workspace",
     });
 
     const templateButton = container.querySelector(
-      "[data-testid='automation-template-browser-check']",
+      "[data-testid='automation-template-daily-brief']",
     ) as HTMLButtonElement | null;
 
     expect(templateButton).not.toBeNull();
@@ -494,7 +435,7 @@ describe("AutomationSettings", () => {
     expect(
       container.querySelector("[data-testid='automation-job-dialog']")
         ?.textContent,
-    ).toBe("create:browser_session:every");
+    ).toBe("create:agent_turn:cron");
   });
 
   it("workspace 模式应支持从页面参数直接落到概览 tab", async () => {
@@ -614,7 +555,7 @@ describe("AutomationSettings", () => {
         schedule: { kind: "cron", expr: "0 9 * * *", tz: "Asia/Shanghai" },
         payload: {
           kind: "agent_turn",
-          prompt: "[服务型技能] 每日趋势摘要",
+          prompt: "[技能任务] 每日趋势摘要",
           system_prompt: null,
           web_search: false,
           content_id: "content-service-skill-1",
@@ -726,27 +667,27 @@ describe("AutomationSettings", () => {
       "[data-testid='automation-run-service-skill-summary-run-service-skill-1']",
     );
 
-    expect(serviceSkillSummary?.textContent).toContain("服务技能");
+    expect(serviceSkillSummary?.textContent).toContain("技能任务");
     expect(serviceSkillSummary?.textContent).toContain("定时任务");
     expect(serviceSkillSummary?.textContent).toContain("客户端执行");
     expect(serviceSkillSummary?.textContent).toContain("云目录");
-    expect(serviceSkillSummary?.textContent).toContain("服务项: 每日趋势摘要");
+    expect(serviceSkillSummary?.textContent).toContain("技能项: 每日趋势摘要");
     expect(serviceSkillSummary?.textContent).toContain(
       "参数摘要: 监测平台: X / Twitter · 行业关键词: AI Agent，创作者工具",
     );
     expect(runWindow?.textContent).toContain("下次:");
     expect(runWindow?.textContent).toContain("最近:");
-    expect(runServiceSkillSummary?.textContent).toContain("服务技能运行上下文");
+    expect(runServiceSkillSummary?.textContent).toContain("技能任务运行上下文");
     expect(runServiceSkillSummary?.textContent).toContain("定时任务");
     expect(runServiceSkillSummary?.textContent).toContain("客户端执行");
-    expect(runServiceSkillSummary?.textContent).toContain("服务项: 每日趋势摘要");
+    expect(runServiceSkillSummary?.textContent).toContain("技能项: 每日趋势摘要");
     expect(runServiceSkillSummary?.textContent).toContain(
       "参数摘要: 监测平台: 小红书 · 行业关键词: AI 短视频",
     );
     expect(runServiceSkillSummary?.textContent).toContain(
       "补充要求: 优先记录增速最快的话题。",
     );
-    expect(container.textContent).toContain("服务型技能上下文");
+    expect(container.textContent).toContain("技能任务上下文");
     expect(container.textContent).toContain("每日趋势摘要");
     expect(container.textContent).toContain("定时任务");
     expect(container.textContent).toContain("客户端执行");

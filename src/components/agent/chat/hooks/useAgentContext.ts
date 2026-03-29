@@ -20,12 +20,17 @@ import {
 } from "./agentProjectStorage";
 import {
   getAgentPreferenceKeys,
+  getAccessModeStorageKey,
   getExecutionStrategyStorageKey,
+  getSessionAccessModeKey,
   getSessionModelPreferenceKey,
   loadPersisted,
+  normalizeAccessMode,
+  resolvePersistedAccessMode,
   resolvePersistedExecutionStrategy,
   resolveWorkspaceAgentPreferences,
   savePersisted,
+  type AgentAccessMode,
 } from "./agentChatStorage";
 import { normalizeProjectId } from "../utils/topicProjectResolution";
 import { normalizeExecutionStrategy } from "./agentChatCoreUtils";
@@ -42,6 +47,10 @@ interface UseAgentContextOptions {
     setSessionExecutionStrategy: (
       sessionId: string,
       executionStrategy: AsterExecutionStrategy,
+    ) => Promise<void>;
+    setSessionAccessMode?: (
+      sessionId: string,
+      accessMode: AgentAccessMode,
     ) => Promise<void>;
     setSessionProviderSelection?: (
       sessionId: string,
@@ -81,6 +90,9 @@ export function useAgentContext(options: UseAgentContextOptions) {
     useState<AsterExecutionStrategy>(() =>
       resolvePersistedExecutionStrategy(workspaceId),
     );
+  const [accessMode, setAccessModeState] = useState<AgentAccessMode>(() =>
+    resolvePersistedAccessMode(workspaceId),
+  );
   const [workspacePathMissing, setWorkspacePathMissing] =
     useState<WorkspacePathMissingState | null>(null);
 
@@ -104,6 +116,7 @@ export function useAgentContext(options: UseAgentContextOptions) {
   const syncedSessionExecutionStrategyRef = useRef(
     new Map<string, AsterExecutionStrategy>(),
   );
+  const pendingSessionAccessModeSyncRef = useRef(new Map<string, AgentAccessMode>());
 
   providerTypeRef.current = providerType;
   modelRef.current = model;
@@ -192,6 +205,30 @@ export function useAgentContext(options: UseAgentContextOptions) {
       );
     },
     [],
+  );
+
+  const persistSessionAccessMode = useCallback(
+    (targetSessionId: string, targetAccessMode: AgentAccessMode) => {
+      savePersisted(
+        getSessionAccessModeKey(workspaceId, targetSessionId),
+        normalizeAccessMode(targetAccessMode),
+      );
+    },
+    [workspaceId],
+  );
+
+  const loadSessionAccessMode = useCallback(
+    (targetSessionId: string): AgentAccessMode | null => {
+      const parsed = loadPersisted<string | null>(
+        getSessionAccessModeKey(workspaceId, targetSessionId),
+        null,
+      );
+      if (parsed === null) {
+        return null;
+      }
+      return normalizeAccessMode(parsed);
+    },
+    [workspaceId],
   );
 
   const getSyncedSessionExecutionStrategy = useCallback(
@@ -408,6 +445,51 @@ export function useAgentContext(options: UseAgentContextOptions) {
     [scheduleSessionExecutionStrategySync, sessionIdRef],
   );
 
+  const scheduleSessionAccessModeSync = useCallback(
+    (targetSessionId: string, targetAccessMode: AgentAccessMode) => {
+      const syncAccessMode = runtime.setSessionAccessMode;
+      const trimmedSessionId = targetSessionId.trim();
+      if (!syncAccessMode || !trimmedSessionId) {
+        return;
+      }
+
+      const normalizedAccessMode = normalizeAccessMode(targetAccessMode);
+      const pending = pendingSessionAccessModeSyncRef.current;
+      const alreadyQueued = pending.has(trimmedSessionId);
+      pending.set(trimmedSessionId, normalizedAccessMode);
+      if (alreadyQueued) {
+        return;
+      }
+
+      queueMicrotask(() => {
+        const latestAccessMode = pending.get(trimmedSessionId);
+        pending.delete(trimmedSessionId);
+        if (!latestAccessMode) {
+          return;
+        }
+
+        void syncAccessMode(trimmedSessionId, latestAccessMode).catch((error) => {
+          console.warn("[AsterChat] 更新会话 accessMode 失败:", error);
+        });
+      });
+    },
+    [runtime],
+  );
+
+  const setAccessMode = useCallback(
+    (nextAccessMode: AgentAccessMode) => {
+      const normalized = normalizeAccessMode(nextAccessMode);
+      setAccessModeState(normalized);
+
+      const currentSessionId = sessionIdRef.current;
+      if (currentSessionId) {
+        persistSessionAccessMode(currentSessionId, normalized);
+        scheduleSessionAccessModeSync(currentSessionId, normalized);
+      }
+    },
+    [persistSessionAccessMode, scheduleSessionAccessModeSync, sessionIdRef],
+  );
+
   useEffect(() => {
     const { providerKey, modelKey } = getAgentPreferenceKeys(workspaceId);
     scopedProviderPrefKeyRef.current = providerKey;
@@ -416,6 +498,7 @@ export function useAgentContext(options: UseAgentContextOptions) {
     syncedSessionProviderSelectionRef.current.clear();
     pendingSessionExecutionStrategySyncRef.current.clear();
     syncedSessionExecutionStrategyRef.current.clear();
+    pendingSessionAccessModeSyncRef.current.clear();
 
     const scopedPreferences = resolveWorkspaceAgentPreferences(workspaceId);
     providerTypeRef.current = scopedPreferences.providerType;
@@ -429,11 +512,13 @@ export function useAgentContext(options: UseAgentContextOptions) {
     const resolvedWorkspaceId = workspaceId?.trim();
     if (!resolvedWorkspaceId) {
       setExecutionStrategyState("react");
+      setAccessModeState("current");
       return;
     }
     setExecutionStrategyState(
       resolvePersistedExecutionStrategy(resolvedWorkspaceId),
     );
+    setAccessModeState(resolvePersistedAccessMode(resolvedWorkspaceId));
   }, [workspaceId]);
 
   useEffect(() => {
@@ -451,6 +536,14 @@ export function useAgentContext(options: UseAgentContextOptions) {
     }
     savePersisted(storageKey, executionStrategy);
   }, [executionStrategy, workspaceId]);
+
+  useEffect(() => {
+    const storageKey = getAccessModeStorageKey(workspaceId);
+    if (!storageKey) {
+      return;
+    }
+    savePersisted(storageKey, accessMode);
+  }, [accessMode, workspaceId]);
 
   const triggerAIGuide = useCallback(async (initialPrompt?: string) => {
     const sendMessage = sendMessageRef.current;
@@ -506,9 +599,14 @@ export function useAgentContext(options: UseAgentContextOptions) {
     executionStrategy,
     setExecutionStrategy,
     setExecutionStrategyState,
+    accessMode,
+    setAccessMode,
+    setAccessModeState,
     workspacePathMissing,
     setWorkspacePathMissing,
     getRequiredWorkspaceId,
+    persistSessionAccessMode,
+    loadSessionAccessMode,
     persistSessionModelPreference,
     loadSessionModelPreference,
     applySessionModelPreference,

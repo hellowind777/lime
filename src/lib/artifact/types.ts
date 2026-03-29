@@ -127,10 +127,10 @@ export interface RendererEntry {
   displayName: string;
   /** 图标标识 */
   icon: string;
-  /** 懒加载的渲染器组件 */
-  component: React.LazyExoticComponent<
-    React.ComponentType<ArtifactRendererProps>
-  >;
+  /** 渲染器组件，允许普通组件或懒加载组件 */
+  component:
+    | React.ComponentType<ArtifactRendererProps>
+    | React.ExoticComponent<ArtifactRendererProps>;
   /** 是否支持编辑 */
   canEdit?: boolean;
   /** 下载时的文件扩展名 */

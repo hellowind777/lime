@@ -1,11 +1,9 @@
 import React from "react";
 import { Badge } from "@/components/ui/badge";
+import type { ModelSelectorProps } from "@/components/input-kit";
 import type { AsterSessionExecutionRuntime } from "@/lib/api/agentRuntime";
 import { ChatModelSelector } from "../../ChatModelSelector";
-import {
-  getExecutionRuntimeDisplayLabel,
-  getOutputSchemaRuntimeLabel,
-} from "../../../utils/sessionExecutionRuntime";
+import { getOutputSchemaRuntimeLabel } from "../../../utils/sessionExecutionRuntime";
 
 interface InputbarModelExtraProps {
   isFullscreen?: boolean;
@@ -17,7 +15,7 @@ interface InputbarModelExtraProps {
   activeTheme?: string;
   onManageProviders?: () => void;
   executionRuntime?: AsterSessionExecutionRuntime | null;
-  isExecutionRuntimeActive?: boolean;
+  backgroundPreload?: ModelSelectorProps["backgroundPreload"];
 }
 
 const NOOP_SET_PROVIDER_TYPE = (_type: string) => {};
@@ -33,25 +31,18 @@ export const InputbarModelExtra: React.FC<InputbarModelExtraProps> = ({
   activeTheme,
   onManageProviders,
   executionRuntime = null,
-  isExecutionRuntimeActive = false,
+  backgroundPreload,
 }) => {
   if (isFullscreen || isThemeWorkbenchVariant || !providerType || !model) {
     return null;
   }
 
-  const executionRuntimeLabel = getExecutionRuntimeDisplayLabel(
-    executionRuntime,
-    { active: isExecutionRuntimeActive },
-  );
   const outputSchemaLabel = getOutputSchemaRuntimeLabel(
     executionRuntime?.output_schema_runtime,
   );
-  const executionRuntimeBadgeClass = isExecutionRuntimeActive
-    ? "max-w-[220px] truncate border-emerald-200 bg-emerald-50 text-emerald-900"
-    : "max-w-[220px] truncate text-muted-foreground";
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center flex-wrap gap-2">
       <ChatModelSelector
         providerType={providerType}
         setProviderType={setProviderType || NOOP_SET_PROVIDER_TYPE}
@@ -61,20 +52,12 @@ export const InputbarModelExtra: React.FC<InputbarModelExtraProps> = ({
         compactTrigger
         popoverSide="top"
         onManageProviders={onManageProviders}
+        backgroundPreload={backgroundPreload}
       />
-      {executionRuntimeLabel ? (
-        <Badge
-          variant="outline"
-          className={executionRuntimeBadgeClass}
-          title={executionRuntimeLabel}
-        >
-          {executionRuntimeLabel}
-        </Badge>
-      ) : null}
       {outputSchemaLabel ? (
         <Badge
           variant="outline"
-          className="max-w-[180px] truncate text-muted-foreground"
+          className="h-7 max-w-[180px] rounded-full border-slate-300/70 bg-white/90 px-3 text-[11px] font-medium text-slate-500 shadow-none"
           title={`结构化输出 ${outputSchemaLabel}`}
         >
           结构化输出 {outputSchemaLabel}

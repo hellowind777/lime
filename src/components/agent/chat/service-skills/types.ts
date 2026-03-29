@@ -1,6 +1,9 @@
 import type {
   ServiceSkillCatalog,
   ServiceSkillArtifactKind,
+  ServiceSkillBundleResourceSummary,
+  ServiceSkillBundleStandardCompliance,
+  ServiceSkillBundleSummary,
   ServiceSkillExecutionLocation,
   ServiceSkillExecutorBinding,
   ServiceSkillItem,
@@ -12,11 +15,19 @@ import type {
   ServiceSkillSlotType,
   ServiceSkillSource,
   ServiceSkillSurfaceScope,
+  ServiceSkillType,
 } from "@/lib/api/serviceSkills";
+import type {
+  SkillCatalogExecutionKind,
+  SkillCatalogGroup,
+} from "@/lib/api/skillCatalog";
 
 export type {
   ServiceSkillCatalog,
   ServiceSkillArtifactKind,
+  ServiceSkillBundleResourceSummary,
+  ServiceSkillBundleStandardCompliance,
+  ServiceSkillBundleSummary,
   ServiceSkillExecutionLocation,
   ServiceSkillExecutorBinding,
   ServiceSkillItem,
@@ -28,7 +39,9 @@ export type {
   ServiceSkillSlotType,
   ServiceSkillSource,
   ServiceSkillSurfaceScope,
+  ServiceSkillType,
 };
+export type { SkillCatalogExecutionKind, SkillCatalogGroup };
 
 export type ServiceSkillTone = "slate" | "sky" | "emerald" | "amber";
 
@@ -58,6 +71,8 @@ export interface ServiceSkillCloudRunStatus {
 }
 
 export interface ServiceSkillHomeItem extends ServiceSkillItem {
+  groupKey?: string;
+  executionKind?: SkillCatalogExecutionKind;
   badge: string;
   recentUsedAt: number | null;
   isRecent: boolean;
@@ -74,6 +89,7 @@ export interface ServiceSkillCatalogMeta {
   version: string;
   syncedAt: string;
   itemCount: number;
+  groupCount?: number;
   sourceLabel: string;
   isSeeded: boolean;
 }

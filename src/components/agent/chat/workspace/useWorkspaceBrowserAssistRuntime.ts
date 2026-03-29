@@ -9,12 +9,16 @@ import {
 } from "react";
 import { toast } from "sonner";
 import type { LayoutMode } from "@/components/content-creator/types";
-import { browserExecuteAction, launchBrowserSession } from "@/lib/webview-api";
+import {
+  browserExecuteAction,
+  launchBrowserSession,
+  siteRunAdapter,
+  type SiteAdapterRunResult,
+} from "@/lib/webview-api";
 import type { Artifact } from "@/lib/artifact/types";
-import type {
-  BrowserAssistSessionState,
-  Message,
-} from "../types";
+import type { AgentSiteSkillLaunchParams } from "@/types/page";
+import type { BrowserAssistSessionState, Message } from "../types";
+import { resolveArtifactWritePhase } from "../utils/messageArtifacts";
 import {
   areBrowserAssistSessionStatesEqual,
   clearBrowserAssistSessionState,
@@ -40,6 +44,16 @@ import {
   resolveBrowserAssistArtifactScopeKey,
 } from "./browserAssistArtifact";
 
+function normalizeBrowserAssistState(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() || "";
+}
+
+function isFailedBrowserAssistLaunchState(
+  value: string | null | undefined,
+): boolean {
+  return normalizeBrowserAssistState(value) === "failed";
+}
+
 function hasActiveBrowserAssistSession(
   sessionState: BrowserAssistSessionState | null,
 ): boolean {
@@ -51,8 +65,56 @@ function hasActiveBrowserAssistSession(
     return false;
   }
 
-  const lifecycleState = sessionState.lifecycleState?.trim().toLowerCase();
+  const lifecycleState = normalizeBrowserAssistState(
+    sessionState.lifecycleState,
+  );
   return !["failed", "closed", "terminated"].includes(lifecycleState || "");
+}
+
+function shouldAutoOpenGeneralStreamingArtifact(artifact: Artifact): boolean {
+  const writePhase = resolveArtifactWritePhase(artifact);
+  return (
+    artifact.type !== "browser_assist" &&
+    (artifact.status === "streaming" ||
+      writePhase === "preparing" ||
+      writePhase === "streaming")
+  );
+}
+
+function shouldAutoOpenPassiveBrowserAssist(
+  artifact: Artifact | null,
+  launching: boolean,
+): boolean {
+  if (launching) {
+    return true;
+  }
+
+  if (!artifact) {
+    return false;
+  }
+
+  const meta = asRecord(artifact.meta);
+  const launchState = readFirstString(meta ? [meta] : [], [
+    "launchState",
+    "launch_state",
+  ]);
+
+  return (
+    artifact.status === "pending" ||
+    normalizeBrowserAssistState(launchState) === "launching"
+  );
+}
+
+function shouldAutoOpenBrowserAssistCanvas(
+  artifact: Artifact | null,
+  launching: boolean,
+  sessionState: BrowserAssistSessionState | null,
+): boolean {
+  if (shouldAutoOpenPassiveBrowserAssist(artifact, launching)) {
+    return true;
+  }
+
+  return Boolean(sessionState?.sessionId?.trim());
 }
 
 type EnsureBrowserAssistCanvasHandler = (
@@ -63,13 +125,28 @@ type EnsureBrowserAssistCanvasHandler = (
   },
 ) => Promise<boolean>;
 
+export interface SiteSkillExecutionState {
+  phase: "running" | "success" | "error" | "blocked";
+  adapterName: string;
+  skillTitle?: string;
+  profileKey?: string;
+  targetId?: string;
+  sourceUrl?: string;
+  message: string;
+  reportHint?: string;
+  result?: SiteAdapterRunResult;
+}
+
 interface UseWorkspaceBrowserAssistRuntimeParams {
   activeTheme: string;
   projectId?: string | null;
   sessionId?: string | null;
+  contentId?: string | null;
   input: string;
   initialUserPrompt?: string;
   openBrowserAssistOnMount: boolean;
+  initialSiteSkillLaunch?: AgentSiteSkillLaunchParams;
+  siteSkillLaunchNonce?: number;
   artifacts: Artifact[];
   messages: Message[];
   currentCanvasArtifact: Artifact | null;
@@ -82,6 +159,7 @@ interface UseWorkspaceBrowserAssistRuntimeParams {
 
 interface WorkspaceBrowserAssistRuntimeResult {
   browserAssistLaunching: boolean;
+  siteSkillExecutionState: SiteSkillExecutionState | null;
   isBrowserAssistReady: boolean;
   isBrowserAssistCanvasVisible: boolean;
   currentBrowserAssistScopeKey: string | null;
@@ -95,9 +173,12 @@ export function useWorkspaceBrowserAssistRuntime({
   activeTheme,
   projectId,
   sessionId,
+  contentId,
   input,
   initialUserPrompt,
   openBrowserAssistOnMount,
+  initialSiteSkillLaunch,
+  siteSkillLaunchNonce,
   artifacts,
   messages,
   currentCanvasArtifact,
@@ -108,9 +189,12 @@ export function useWorkspaceBrowserAssistRuntime({
   generalBrowserAssistProfileKey,
 }: UseWorkspaceBrowserAssistRuntimeParams): WorkspaceBrowserAssistRuntimeResult {
   const [browserAssistLaunching, setBrowserAssistLaunching] = useState(false);
+  const [siteSkillExecutionState, setSiteSkillExecutionState] =
+    useState<SiteSkillExecutionState | null>(null);
   const [browserAssistSessionState, setBrowserAssistSessionState] =
     useState<BrowserAssistSessionState | null>(null);
   const openBrowserAssistOnMountHandledRef = useRef(false);
+  const initialSiteSkillLaunchHandledSignatureRef = useRef("");
   const autoOpenedBrowserAssistSessionIdRef = useRef<string>("");
   const autoLaunchingBrowserAssistKeyRef = useRef<string>("");
   const browserAssistLaunchRequestIdRef = useRef(0);
@@ -130,6 +214,27 @@ export function useWorkspaceBrowserAssistRuntime({
         : null,
     [activeTheme, projectId, sessionId],
   );
+
+  const initialSiteSkillLaunchSignature = useMemo(() => {
+    if (!initialSiteSkillLaunch?.adapterName?.trim()) {
+      return "";
+    }
+
+    return JSON.stringify({
+      adapterName: initialSiteSkillLaunch.adapterName,
+      profileKey: initialSiteSkillLaunch.profileKey?.trim() || null,
+      targetId: initialSiteSkillLaunch.targetId?.trim() || null,
+      args: initialSiteSkillLaunch.args ?? null,
+      autoRun: initialSiteSkillLaunch.autoRun ?? null,
+      requireAttachedSession:
+        initialSiteSkillLaunch.requireAttachedSession ?? null,
+      saveTitle: initialSiteSkillLaunch.saveTitle?.trim() || null,
+      skillTitle: initialSiteSkillLaunch.skillTitle?.trim() || null,
+      projectId: projectId?.trim() || null,
+      contentId: contentId?.trim() || null,
+      launchNonce: siteSkillLaunchNonce ?? null,
+    });
+  }, [contentId, initialSiteSkillLaunch, projectId, siteSkillLaunchNonce]);
 
   const browserAssistArtifact = useMemo(
     () =>
@@ -168,7 +273,7 @@ export function useWorkspaceBrowserAssistRuntime({
 
     const latestArtifact = [...artifacts]
       .reverse()
-      .find((artifact) => artifact.type !== "browser_assist");
+      .find(shouldAutoOpenGeneralStreamingArtifact);
     if (!latestArtifact) {
       return null;
     }
@@ -265,46 +370,20 @@ export function useWorkspaceBrowserAssistRuntime({
     if (activeTheme !== "general") {
       return;
     }
-    if (artifacts.length === 0) {
-      return;
-    }
 
-    const hasNonBrowserAssistArtifact = artifacts.some(
-      (artifact) => artifact.type !== "browser_assist",
-    );
-    const hasBoundBrowserAssistSession = Boolean(
-      browserAssistSessionState?.sessionId ||
-        browserAssistSessionState?.profileKey,
-    );
-    if (!hasNonBrowserAssistArtifact && !hasBoundBrowserAssistSession) {
+    if (!latestGeneralCanvasAutoOpenFingerprint) {
       return;
     }
 
     if (
-      !hasNonBrowserAssistArtifact &&
-      browserAssistAutoOpenDismissedScopeRef.current
-    ) {
-      return;
-    }
-
-    if (
-      hasNonBrowserAssistArtifact &&
-      latestGeneralCanvasAutoOpenFingerprint &&
       dismissedGeneralCanvasAutoOpenFingerprintRef.current ===
-        latestGeneralCanvasAutoOpenFingerprint
+      latestGeneralCanvasAutoOpenFingerprint
     ) {
       return;
     }
 
     setLayoutMode("chat-canvas");
-  }, [
-    activeTheme,
-    artifacts,
-    browserAssistSessionState?.profileKey,
-    browserAssistSessionState?.sessionId,
-    latestGeneralCanvasAutoOpenFingerprint,
-    setLayoutMode,
-  ]);
+  }, [activeTheme, latestGeneralCanvasAutoOpenFingerprint, setLayoutMode]);
 
   const commitBrowserAssistSessionState = useCallback(
     (candidate: BrowserAssistSessionState | null) => {
@@ -321,6 +400,164 @@ export function useWorkspaceBrowserAssistRuntime({
     },
     [activeTheme],
   );
+
+  useEffect(() => {
+    if (activeTheme !== "general") {
+      initialSiteSkillLaunchHandledSignatureRef.current = "";
+      setSiteSkillExecutionState(null);
+      return;
+    }
+
+    if (!initialSiteSkillLaunchSignature || !initialSiteSkillLaunch) {
+      return;
+    }
+
+    if (
+      initialSiteSkillLaunchHandledSignatureRef.current ===
+      initialSiteSkillLaunchSignature
+    ) {
+      return;
+    }
+
+    initialSiteSkillLaunchHandledSignatureRef.current =
+      initialSiteSkillLaunchSignature;
+
+    let cancelled = false;
+    const toastId = toast.loading(
+      `正在执行站点技能：${initialSiteSkillLaunch.adapterName}`,
+    );
+
+    void (async () => {
+      try {
+        setBrowserAssistLaunching(true);
+        setSiteSkillExecutionState({
+          phase: "running",
+          adapterName: initialSiteSkillLaunch.adapterName,
+          skillTitle:
+            initialSiteSkillLaunch.skillTitle || initialSiteSkillLaunch.adapterName,
+          profileKey: initialSiteSkillLaunch.profileKey,
+          targetId: initialSiteSkillLaunch.targetId,
+          message: `正在通过已附着的浏览器会话执行 ${initialSiteSkillLaunch.skillTitle || initialSiteSkillLaunch.adapterName}。`,
+        });
+        const result = await siteRunAdapter({
+          adapter_name: initialSiteSkillLaunch.adapterName,
+          args: initialSiteSkillLaunch.args,
+          profile_key: initialSiteSkillLaunch.profileKey?.trim() || undefined,
+          target_id: initialSiteSkillLaunch.targetId?.trim() || undefined,
+          content_id: contentId?.trim() || undefined,
+          project_id: projectId?.trim() || undefined,
+          save_title: initialSiteSkillLaunch.saveTitle?.trim() || undefined,
+          require_attached_session:
+            initialSiteSkillLaunch.requireAttachedSession ?? false,
+          skill_title: initialSiteSkillLaunch.skillTitle?.trim() || undefined,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        commitBrowserAssistSessionState(
+          createBrowserAssistSessionState({
+            sessionId: result.session_id,
+            profileKey: result.profile_key,
+            url: result.source_url?.trim() || result.entry_url?.trim(),
+            title: result.adapter || "浏览器协助",
+            targetId: result.target_id,
+            source: "runtime_launch",
+            updatedAt: Date.now(),
+          }),
+        );
+
+        if (!result.ok) {
+          const failureMessage =
+            result.error_message || result.error_code || "站点技能执行失败";
+          setSiteSkillExecutionState({
+            phase:
+              result.error_code === "attached_session_required"
+                ? "blocked"
+                : "error",
+            adapterName: initialSiteSkillLaunch.adapterName,
+            skillTitle:
+              initialSiteSkillLaunch.skillTitle || initialSiteSkillLaunch.adapterName,
+            profileKey: result.profile_key,
+            targetId: result.target_id,
+            sourceUrl: result.source_url,
+            message: failureMessage,
+            reportHint: result.report_hint,
+            result,
+          });
+          toast.error(`站点技能执行失败：${failureMessage}`, {
+            id: toastId,
+          });
+          return;
+        }
+
+        const successMessage = result.saved_content
+          ? result.saved_by === "explicit_content" ||
+            result.saved_by === "context_content"
+            ? `站点技能已完成，结果已写回当前主稿`
+            : `站点技能已完成，结果已保存到项目资源`
+          : `站点技能已完成`;
+
+        setSiteSkillExecutionState({
+          phase: "success",
+          adapterName: initialSiteSkillLaunch.adapterName,
+          skillTitle:
+            initialSiteSkillLaunch.skillTitle || initialSiteSkillLaunch.adapterName,
+          profileKey: result.profile_key,
+          targetId: result.target_id,
+          sourceUrl: result.source_url,
+          message: successMessage,
+          reportHint: result.save_error_message || result.report_hint,
+          result,
+        });
+
+        if (result.save_error_message) {
+          toast.error(
+            `${successMessage}，但自动保存失败：${result.save_error_message}`,
+            { id: toastId },
+          );
+          return;
+        }
+
+        toast.success(successMessage, { id: toastId });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setSiteSkillExecutionState({
+          phase: "error",
+          adapterName: initialSiteSkillLaunch.adapterName,
+          skillTitle:
+            initialSiteSkillLaunch.skillTitle || initialSiteSkillLaunch.adapterName,
+          profileKey: initialSiteSkillLaunch.profileKey,
+          targetId: initialSiteSkillLaunch.targetId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        toast.error(
+          `站点技能执行失败：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          { id: toastId },
+        );
+      } finally {
+        if (!cancelled) {
+          setBrowserAssistLaunching(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTheme,
+    commitBrowserAssistSessionState,
+    contentId,
+    initialSiteSkillLaunch,
+    initialSiteSkillLaunchSignature,
+    projectId,
+  ]);
 
   useEffect(() => {
     if (activeTheme !== "general") {
@@ -493,148 +730,162 @@ export function useWorkspaceBrowserAssistRuntime({
     ],
   );
 
-  const ensureBrowserAssistCanvas = useCallback<EnsureBrowserAssistCanvasHandler>(
-    async (
-      sourceText: string,
-      options?: {
-        silent?: boolean;
-        navigationMode?: "none" | "explicit-url" | "best-effort";
-      },
-    ): Promise<boolean> => {
-      if (activeTheme !== "general") {
-        return false;
-      }
+  const ensureBrowserAssistCanvas =
+    useCallback<EnsureBrowserAssistCanvasHandler>(
+      async (
+        sourceText: string,
+        options?: {
+          silent?: boolean;
+          navigationMode?: "none" | "explicit-url" | "best-effort";
+        },
+      ): Promise<boolean> => {
+        if (activeTheme !== "general") {
+          return false;
+        }
 
-      const navigationMode = options?.navigationMode || "best-effort";
-      const targetUrl =
-        navigationMode === "explicit-url"
-          ? extractExplicitUrlFromText(sourceText)
-          : navigationMode === "best-effort"
-            ? resolveBrowserAssistLaunchUrl(sourceText)
-            : null;
-      const artifactMeta = asRecord(browserAssistArtifact?.meta);
-      const hasSessionContext = Boolean(
-        browserAssistSessionState?.sessionId ||
-          browserAssistSessionState?.profileKey ||
-          readFirstString(artifactMeta ? [artifactMeta] : [], [
-            "sessionId",
-            "session_id",
-            "profileKey",
-            "profile_key",
-          ]) ||
-          browserAssistArtifact,
-      );
+        const navigationMode = options?.navigationMode || "best-effort";
+        const targetUrl =
+          navigationMode === "explicit-url"
+            ? extractExplicitUrlFromText(sourceText)
+            : navigationMode === "best-effort"
+              ? resolveBrowserAssistLaunchUrl(sourceText)
+              : null;
+        const artifactMeta = asRecord(browserAssistArtifact?.meta);
+        const artifactSessionId = readFirstString(
+          artifactMeta ? [artifactMeta] : [],
+          ["sessionId", "session_id"],
+        );
+        const artifactProfileKey = readFirstString(
+          artifactMeta ? [artifactMeta] : [],
+          ["profileKey", "profile_key"],
+        );
+        const artifactLaunchState = readFirstString(
+          artifactMeta ? [artifactMeta] : [],
+          ["launchState", "launch_state"],
+        );
+        const hasFailedLaunchContext =
+          !browserAssistSessionState?.sessionId &&
+          !artifactSessionId &&
+          isFailedBrowserAssistLaunchState(artifactLaunchState);
+        const hasSessionContext = Boolean(
+          !hasFailedLaunchContext &&
+          (browserAssistSessionState?.sessionId ||
+            browserAssistSessionState?.profileKey ||
+            artifactSessionId ||
+            artifactProfileKey ||
+            browserAssistArtifact),
+        );
 
-      if (hasSessionContext) {
-        openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
+        if (hasSessionContext) {
+          openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
+          if (!targetUrl) {
+            return true;
+          }
+          return navigateBrowserAssistCanvasToUrl(targetUrl, options);
+        }
+
         if (!targetUrl) {
+          return false;
+        }
+
+        const browserAssistScopeKey =
+          currentBrowserAssistScopeKey ||
+          resolveBrowserAssistSessionScopeKey(projectId, sessionId);
+        const launchKey = `${generalBrowserAssistProfileKey}:${targetUrl}`;
+        if (autoLaunchingBrowserAssistKeyRef.current === launchKey) {
+          openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
           return true;
         }
-        return navigateBrowserAssistCanvasToUrl(targetUrl, options);
-      }
-
-      if (!targetUrl) {
-        return false;
-      }
-
-      const browserAssistScopeKey =
-        currentBrowserAssistScopeKey ||
-        resolveBrowserAssistSessionScopeKey(projectId, sessionId);
-      const launchKey = `${generalBrowserAssistProfileKey}:${targetUrl}`;
-      if (autoLaunchingBrowserAssistKeyRef.current === launchKey) {
-        openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
-        return true;
-      }
-      autoLaunchingBrowserAssistKeyRef.current = launchKey;
-      upsertGeneralArtifact(
-        buildPendingBrowserAssistArtifact({
-          scopeKey: browserAssistScopeKey,
-          profileKey: generalBrowserAssistProfileKey,
-          url: targetUrl,
-          title: "浏览器协助",
-        }),
-      );
-      openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
-      setBrowserAssistLaunching(true);
-
-      try {
-        const result = await launchBrowserSession({
-          profile_key: generalBrowserAssistProfileKey,
-          url: targetUrl,
-          open_window: false,
-          stream_mode: "both",
-        });
-
-        commitBrowserAssistSessionState(
-          createBrowserAssistSessionState({
-            sessionId: result.session.session_id,
-            profileKey: result.session.profile_key,
-            url:
-              result.session.last_page_info?.url?.trim() ||
-              result.session.target_url?.trim() ||
-              targetUrl,
-            title:
-              result.session.last_page_info?.title?.trim() ||
-              result.session.target_title?.trim() ||
-              "浏览器协助",
-            targetId: result.session.target_id,
-            transportKind: result.session.transport_kind,
-            lifecycleState: result.session.lifecycle_state,
-            controlMode: result.session.control_mode,
-            source: "runtime_launch",
-            updatedAt: Date.now(),
-          }),
-        );
-        openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
-
-        if (!options?.silent) {
-          toast.success(
-            `浏览器协助已启动：${
-              result.session.target_title ||
-              result.session.target_url ||
-              targetUrl
-            }`,
-          );
-        }
-        return true;
-      } catch (error) {
+        autoLaunchingBrowserAssistKeyRef.current = launchKey;
         upsertGeneralArtifact(
-          buildFailedBrowserAssistArtifact({
+          buildPendingBrowserAssistArtifact({
             scopeKey: browserAssistScopeKey,
             profileKey: generalBrowserAssistProfileKey,
             url: targetUrl,
             title: "浏览器协助",
-            error: error instanceof Error ? error.message : String(error),
           }),
         );
-        autoLaunchingBrowserAssistKeyRef.current = "";
-        if (!options?.silent) {
-          toast.error(
-            `启动浏览器协助失败: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
+        openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
+        setBrowserAssistLaunching(true);
+
+        try {
+          const result = await launchBrowserSession({
+            profile_key: generalBrowserAssistProfileKey,
+            url: targetUrl,
+            open_window: false,
+            stream_mode: "both",
+          });
+
+          commitBrowserAssistSessionState(
+            createBrowserAssistSessionState({
+              sessionId: result.session.session_id,
+              profileKey: result.session.profile_key,
+              url:
+                result.session.last_page_info?.url?.trim() ||
+                result.session.target_url?.trim() ||
+                targetUrl,
+              title:
+                result.session.last_page_info?.title?.trim() ||
+                result.session.target_title?.trim() ||
+                "浏览器协助",
+              targetId: result.session.target_id,
+              transportKind: result.session.transport_kind,
+              lifecycleState: result.session.lifecycle_state,
+              controlMode: result.session.control_mode,
+              source: "runtime_launch",
+              updatedAt: Date.now(),
+            }),
           );
+          openBrowserAssistCanvas(GENERAL_BROWSER_ASSIST_ARTIFACT_ID);
+
+          if (!options?.silent) {
+            toast.success(
+              `浏览器协助已启动：${
+                result.session.target_title ||
+                result.session.target_url ||
+                targetUrl
+              }`,
+            );
+          }
+          return true;
+        } catch (error) {
+          upsertGeneralArtifact(
+            buildFailedBrowserAssistArtifact({
+              scopeKey: browserAssistScopeKey,
+              profileKey: generalBrowserAssistProfileKey,
+              url: targetUrl,
+              title: "浏览器协助",
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+          autoLaunchingBrowserAssistKeyRef.current = "";
+          if (!options?.silent) {
+            toast.error(
+              `启动浏览器协助失败: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+          return false;
+        } finally {
+          setBrowserAssistLaunching(false);
         }
-        return false;
-      } finally {
-        setBrowserAssistLaunching(false);
-      }
-    },
-    [
-      activeTheme,
-      browserAssistArtifact,
-      browserAssistSessionState?.profileKey,
-      browserAssistSessionState?.sessionId,
-      commitBrowserAssistSessionState,
-      currentBrowserAssistScopeKey,
-      generalBrowserAssistProfileKey,
-      navigateBrowserAssistCanvasToUrl,
-      openBrowserAssistCanvas,
-      projectId,
-      sessionId,
-      upsertGeneralArtifact,
-    ],
-  );
+      },
+      [
+        activeTheme,
+        browserAssistArtifact,
+        browserAssistSessionState?.profileKey,
+        browserAssistSessionState?.sessionId,
+        commitBrowserAssistSessionState,
+        currentBrowserAssistScopeKey,
+        generalBrowserAssistProfileKey,
+        navigateBrowserAssistCanvasToUrl,
+        openBrowserAssistCanvas,
+        projectId,
+        sessionId,
+        upsertGeneralArtifact,
+      ],
+    );
 
   const handleOpenBrowserAssistInCanvas = useCallback(async () => {
     await ensureBrowserAssistCanvas(input, {
@@ -776,16 +1027,23 @@ export function useWorkspaceBrowserAssistRuntime({
     const autoOpenKey =
       browserAssistSessionState.sessionId ||
       `${
-        browserAssistSessionState.profileKey ||
-        generalBrowserAssistProfileKey
+        browserAssistSessionState.profileKey || generalBrowserAssistProfileKey
       }:${browserAssistSessionState.url || currentUrl || "pending"}`;
-    if (autoOpenedBrowserAssistSessionIdRef.current !== autoOpenKey) {
+    if (
+      shouldAutoOpenBrowserAssistCanvas(
+        nextArtifact,
+        browserAssistLaunching,
+        browserAssistSessionState,
+      ) &&
+      autoOpenedBrowserAssistSessionIdRef.current !== autoOpenKey
+    ) {
       autoOpenedBrowserAssistSessionIdRef.current = autoOpenKey;
       autoOpenBrowserAssistCanvas(nextArtifact.id);
     }
   }, [
     activeTheme,
     autoOpenBrowserAssistCanvas,
+    browserAssistLaunching,
     browserAssistArtifact,
     browserAssistSessionState,
     currentBrowserAssistScopeKey,
@@ -814,8 +1072,29 @@ export function useWorkspaceBrowserAssistRuntime({
       browserAssistSessionState.profileKey || generalBrowserAssistProfileKey;
     const nextUrl = browserAssistSessionState.url || "https://www.google.com";
     const nextTitle = browserAssistSessionState.title || "浏览器协助";
+    const artifactMeta = asRecord(browserAssistArtifact?.meta);
+    const currentArtifactProfileKey = readFirstString(
+      artifactMeta ? [artifactMeta] : [],
+      ["profileKey", "profile_key"],
+    );
+    const currentArtifactUrl = readFirstString(
+      artifactMeta ? [artifactMeta] : [],
+      ["url", "launchUrl"],
+    );
+    const currentArtifactLaunchState = readFirstString(
+      artifactMeta ? [artifactMeta] : [],
+      ["launchState", "launch_state"],
+    );
 
     if (nextSessionId || !nextProfileKey || !nextUrl) {
+      return;
+    }
+
+    const isSameFailedLaunchArtifact =
+      isFailedBrowserAssistLaunchState(currentArtifactLaunchState) &&
+      currentArtifactProfileKey === nextProfileKey &&
+      currentArtifactUrl === nextUrl;
+    if (isSameFailedLaunchArtifact) {
       return;
     }
 
@@ -893,6 +1172,7 @@ export function useWorkspaceBrowserAssistRuntime({
   }, [
     activeTheme,
     autoOpenBrowserAssistCanvas,
+    browserAssistArtifact,
     browserAssistSessionState,
     commitBrowserAssistSessionState,
     currentBrowserAssistScopeKey,
@@ -904,6 +1184,7 @@ export function useWorkspaceBrowserAssistRuntime({
 
   return {
     browserAssistLaunching,
+    siteSkillExecutionState,
     isBrowserAssistReady,
     isBrowserAssistCanvasVisible,
     currentBrowserAssistScopeKey,

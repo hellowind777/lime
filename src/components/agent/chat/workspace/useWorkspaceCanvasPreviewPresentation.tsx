@@ -46,7 +46,6 @@ type ArtifactPreviewBaseProps = Omit<
   ComponentProps<typeof ArtifactWorkbenchPreview>,
   | "artifact"
   | "stackedWorkbenchTrigger"
-  | "artifactDocumentLayoutMode"
   | "onArtifactDocumentControllerChange"
 >;
 type ImageWorkbenchCanvasProps = ComponentProps<typeof ImageWorkbenchCanvas>;
@@ -447,7 +446,6 @@ export function useWorkspaceCanvasPreviewPresentation({
         {...artifactWorkbenchPreviewBaseProps}
         artifact={artifact}
         stackedWorkbenchTrigger={options?.stackedWorkbenchTrigger}
-        artifactDocumentLayoutMode={options?.artifactDocumentLayoutMode}
         onArtifactDocumentControllerChange={
           options?.onArtifactDocumentControllerChange
         }

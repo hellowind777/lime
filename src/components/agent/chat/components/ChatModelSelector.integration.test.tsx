@@ -17,6 +17,7 @@ const {
   mockProviderPoolGetOverview,
   mockApiKeyProvidersGetProviders,
   mockEmitProviderDataChanged,
+  mockWechatChannelSetRuntimeModel,
 } = vi.hoisted(() => ({
   mockInitAsterAgent: vi.fn(),
   mockCreateAgentRuntimeSession: vi.fn(),
@@ -36,6 +37,7 @@ const {
   mockProviderPoolGetOverview: vi.fn(),
   mockApiKeyProvidersGetProviders: vi.fn(),
   mockEmitProviderDataChanged: vi.fn(),
+  mockWechatChannelSetRuntimeModel: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/lib/api/agentRuntime", async () => {
@@ -101,6 +103,10 @@ vi.mock("@/lib/api/apiKeyProvider", () => ({
 
 vi.mock("@/lib/providerDataEvents", () => ({
   emitProviderDataChanged: mockEmitProviderDataChanged,
+}));
+
+vi.mock("@/lib/api/channelsRuntime", () => ({
+  wechatChannelSetRuntimeModel: mockWechatChannelSetRuntimeModel,
 }));
 
 import { useAsterAgentChat } from "../hooks/useAsterAgentChat";
@@ -270,6 +276,7 @@ beforeEach(() => {
   mockProviderPoolGetOverview.mockResolvedValue([]);
   mockApiKeyProvidersGetProviders.mockResolvedValue([]);
   mockEmitProviderDataChanged.mockImplementation(() => {});
+  mockWechatChannelSetRuntimeModel.mockResolvedValue(undefined);
 
   const createdAt = Math.floor(Date.now() / 1000);
   mockListAgentRuntimeSessions.mockResolvedValue([

@@ -426,6 +426,148 @@
       "description": "已零引用的 @/stores 根 barrel 回流",
       "patterns": ["from \"@/stores\"", "from '@/stores'"],
       "allowedPaths": []
+    },
+    {
+      "id": "inputbar-skill-selector-panel-imports",
+      "classification": "dead-candidate",
+      "description": "旧 SkillSelectorPanel 面板路径不允许回流，统一收敛到共享技能面板实现",
+      "patterns": [
+        "from \"./SkillSelectorPanel\"",
+        "from './SkillSelectorPanel'",
+        "import(\"./SkillSelectorPanel\")",
+        "import('./SkillSelectorPanel')",
+        "from \"@/components/agent/chat/components/Inputbar/components/SkillSelectorPanel\"",
+        "from '@/components/agent/chat/components/Inputbar/components/SkillSelectorPanel'",
+        "import(\"@/components/agent/chat/components/Inputbar/components/SkillSelectorPanel\")",
+        "import('@/components/agent/chat/components/Inputbar/components/SkillSelectorPanel')"
+      ],
+      "allowedPaths": []
+    },
+    {
+      "id": "inputbar-composer-flat-skill-parent-props",
+      "classification": "dead-candidate",
+      "description": "Inputbar 顶层不允许再向 ComposerSection 透传扁平 skill props，必须统一收敛到 skillSelection",
+      "patterns": [
+        "activeSkill={activeSkill}",
+        "onSelectSkill={setActiveSkill}",
+        "onSelectServiceSkill={onSelectServiceSkill}",
+        "onClearSkill={clearActiveSkill}",
+        "serviceSkills={serviceSkills}",
+        "isSkillsLoading={isSkillsLoading}",
+        "onNavigateToSettings={onNavigateToSettings}",
+        "onImportSkill={onImportSkill}",
+        "onRefreshSkills={onRefreshSkills}"
+      ],
+      "includePathPrefixes": [
+        "src/components/agent/chat/components/Inputbar/index.tsx"
+      ],
+      "allowedPaths": []
+    },
+    {
+      "id": "empty-state-composer-flat-skill-parent-props",
+      "classification": "dead-candidate",
+      "description": "EmptyState 顶层不允许再向首页输入面板透传扁平 skill props，必须统一收敛到 skillSelection",
+      "patterns": [
+        "activeSkill={activeSkill}",
+        "setActiveSkill={setActiveSkill}",
+        "onSelectServiceSkill={onSelectServiceSkill}",
+        "clearActiveSkill={clearActiveSkill}",
+        "serviceSkills={serviceSkills}",
+        "isSkillsLoading={isSkillsLoading}",
+        "onNavigateToSettings={onNavigateToSettings}",
+        "onImportSkill={onImportSkill}",
+        "onRefreshSkills={onRefreshSkills}"
+      ],
+      "includePathPrefixes": [
+        "src/components/agent/chat/components/EmptyState.tsx"
+      ],
+      "allowedPaths": []
+    },
+    {
+      "id": "inputbar-composer-flat-skill-prop-contract",
+      "classification": "dead-candidate",
+      "description": "InputbarComposerSection 不允许恢复扁平 skill props 契约，必须只消费共享 skillSelection",
+      "patterns": [],
+      "regexPatterns": [
+        "\\bactiveSkill\\s*\\?:",
+        "\\bonSelectSkill\\s*:",
+        "\\bonSelectServiceSkill\\s*\\?:",
+        "\\bonClearSkill\\s*\\?:",
+        "\\bserviceSkills\\s*\\?:",
+        "\\bisSkillsLoading\\s*\\?:",
+        "\\bonNavigateToSettings\\s*\\?:",
+        "\\bonImportSkill\\s*\\?:",
+        "\\bonRefreshSkills\\s*\\?:"
+      ],
+      "includePathPrefixes": [
+        "src/components/agent/chat/components/Inputbar/components/InputbarComposerSection.tsx"
+      ],
+      "allowedPaths": []
+    },
+    {
+      "id": "empty-state-composer-flat-skill-prop-contract",
+      "classification": "dead-candidate",
+      "description": "EmptyStateComposerPanel 不允许恢复扁平 skill props 契约，必须只消费共享 skillSelection",
+      "patterns": [],
+      "regexPatterns": [
+        "\\bactiveSkill\\s*\\?:",
+        "\\bsetActiveSkill\\s*:",
+        "\\bonSelectServiceSkill\\s*\\?:",
+        "\\bclearActiveSkill\\s*:",
+        "\\bisSkillsLoading\\s*:",
+        "\\bonNavigateToSettings\\s*\\?:",
+        "\\bonImportSkill\\s*\\?:",
+        "\\bonRefreshSkills\\s*\\?:",
+        "\\bserviceSkills\\s*\\?:"
+      ],
+      "includePathPrefixes": [
+        "src/components/agent/chat/components/EmptyStateComposerPanel.tsx"
+      ],
+      "allowedPaths": []
+    },
+    {
+      "id": "skill-selection-direct-construction-runtime-usage",
+      "classification": "dead-candidate",
+      "description": "运行时代码不允许绕过 useActiveSkill 直接构造 createSkillSelectionProps，必须收敛到共享激活态边界",
+      "patterns": ["createSkillSelectionProps("],
+      "includePathPrefixes": [
+        "src/components/agent/chat/components"
+      ],
+      "allowedPaths": [
+        "src/components/agent/chat/components/Inputbar/components/skillSelectionBindings.ts",
+        "src/components/agent/chat/components/Inputbar/hooks/useActiveSkill.ts"
+      ]
+    },
+    {
+      "id": "empty-state-local-active-skill-hook-usage",
+      "classification": "dead-candidate",
+      "description": "EmptyState 显示层不允许重新直读 useActiveSkill 的 activeSkill/clearActiveSkill，本地技能态必须通过 skillSelection 消费",
+      "patterns": [],
+      "regexPatterns": [
+        "(?<!\\.)\\bactiveSkill\\s*[,}]",
+        "(?<!\\.)\\bclearActiveSkill\\s*[,}]"
+      ],
+      "includePathPrefixes": [
+        "src/components/agent/chat/components/EmptyState.tsx"
+      ],
+      "allowedPaths": []
+    },
+    {
+      "id": "skill-selection-legacy-display-copy",
+      "classification": "dead-candidate",
+      "description": "技能入口页面层不允许回到分散手写旧展示文案，必须收敛到共享 skillSelectionDisplay helper",
+      "patterns": [
+        "当前技能 ",
+        "当前已启用 ",
+        "为当前任务挂载额外能力",
+        "按需挂载能力",
+        "项技能可用"
+      ],
+      "includePathPrefixes": [
+        "src/components/agent/chat/components/EmptyState.tsx",
+        "src/components/agent/chat/components/Inputbar/components/SkillSelector.tsx"
+      ],
+      "allowedPaths": []
     }
   ],
   "rustText": [

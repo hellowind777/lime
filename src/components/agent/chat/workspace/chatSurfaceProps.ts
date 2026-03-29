@@ -140,6 +140,8 @@ interface BuildWorkspaceEmptyStatePropsParams {
   setExecutionStrategy: ComponentProps<
     typeof EmptyState
   >["setExecutionStrategy"];
+  accessMode: ComponentProps<typeof EmptyState>["accessMode"];
+  setAccessMode: ComponentProps<typeof EmptyState>["setAccessMode"];
   onManageProviders?: ComponentProps<typeof EmptyState>["onManageProviders"];
   toolPreferences: ChatToolPreferences;
   onToolPreferenceChange: (
@@ -190,6 +192,8 @@ export function buildWorkspaceEmptyStateProps({
   setModel,
   executionStrategy,
   setExecutionStrategy,
+  accessMode,
+  setAccessMode,
   onManageProviders,
   toolPreferences,
   onToolPreferenceChange,
@@ -226,6 +230,8 @@ export function buildWorkspaceEmptyStateProps({
     setModel,
     executionStrategy,
     setExecutionStrategy,
+    accessMode,
+    setAccessMode,
     onManageProviders,
     webSearchEnabled: toolPreferences.webSearch,
     onWebSearchEnabledChange: (enabled) =>
@@ -233,8 +239,6 @@ export function buildWorkspaceEmptyStateProps({
     thinkingEnabled: toolPreferences.thinking,
     onThinkingEnabledChange: (enabled) =>
       onToolPreferenceChange("thinking", enabled),
-    taskEnabled: toolPreferences.task,
-    onTaskEnabledChange: (enabled) => onToolPreferenceChange("task", enabled),
     subagentEnabled: toolPreferences.subagent,
     onSubagentEnabledChange: (enabled) =>
       onToolPreferenceChange("subagent", enabled),

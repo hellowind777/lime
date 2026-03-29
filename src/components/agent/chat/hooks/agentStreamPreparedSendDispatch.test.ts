@@ -59,6 +59,7 @@ describe("agentStreamPreparedSendDispatch", () => {
       runtime: {} as never,
       ensureSession: async () => "session-1",
       executionStrategy: "react",
+      accessMode: "current",
       providerTypeRef: { current: "openai" } as MutableRefObject<string>,
       modelRef: { current: "gpt-5.4" } as MutableRefObject<string>,
       sessionIdRef: { current: null } as MutableRefObject<string | null>,

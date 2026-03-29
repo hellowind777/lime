@@ -242,7 +242,7 @@ pub(super) async fn build_turn_runtime_statuses(
 
     let decided = if request_tool_policy.requires_web_search() {
         (
-            "已决定：先联网检索".to_string(),
+            "先联网检索".to_string(),
             "当前任务已被明确指定为先搜索后答复，会先完成联网核实再继续生成。".to_string(),
             vec![
                 "用户明确要求联网搜索".to_string(),
@@ -251,7 +251,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else if news_expansion_needed {
         (
-            "已决定：先联网扩搜".to_string(),
+            "先联网扩搜".to_string(),
             "当前输入属于新闻或最新动态综述类请求，会先分批执行多组联网搜索，再基于结果做主题归纳与交叉核实。"
                 .to_string(),
             vec![
@@ -261,7 +261,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else if subagent_enabled && message_suggests_subagent(&request.message) {
         (
-            "已决定：优先拆分为多代理".to_string(),
+            "优先拆分为多代理".to_string(),
             "用户输入更适合并行分工处理，先按多代理路径组织执行。".to_string(),
             vec![
                 "检测到并行/多角度需求".to_string(),
@@ -270,7 +270,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else if task_enabled && message_suggests_task(&request.message) {
         (
-            "已决定：升级为后台任务".to_string(),
+            "升级为后台任务".to_string(),
             "用户输入更接近耗时或异步推进场景，优先走后台任务链路。".to_string(),
             vec![
                 "检测到排队/持续执行诉求".to_string(),
@@ -279,7 +279,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else if thinking_enabled && reasoning_supported {
         (
-            "已决定：先深度思考".to_string(),
+            "先深度思考".to_string(),
             "当前模型支持 reasoning，先做更充分的意图理解与方案判断，再决定是否调用搜索或工具。"
                 .to_string(),
             vec![
@@ -289,7 +289,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else if thinking_enabled {
         (
-            "已决定：轻量理解后回答".to_string(),
+            "轻量理解后回答".to_string(),
             "当前模型不支持显式 reasoning，先做轻量意图理解，再决定是否需要搜索或其他能力。"
                 .to_string(),
             vec![
@@ -301,7 +301,7 @@ pub(super) async fn build_turn_runtime_statuses(
         && message_suggests_live_search(&request.message)
     {
         (
-            "已决定：先联网核实".to_string(),
+            "先联网核实".to_string(),
             "问题包含明显时效性或实时性特征，先搜索核实再回答更稳妥。".to_string(),
             vec![
                 "已检测到最新/实时信息需求".to_string(),
@@ -310,7 +310,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else if message_suggests_planning(&request.message) {
         (
-            "已决定：先规划再输出".to_string(),
+            "先规划再输出".to_string(),
             "当前请求更像计划或方案拆解，会先整理执行路径和关键步骤。".to_string(),
             vec![
                 "检测到计划/拆解需求".to_string(),
@@ -319,7 +319,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else if message_suggests_content_generation(&request.message) {
         (
-            "已决定：先生成草稿".to_string(),
+            "先生成草稿".to_string(),
             "当前请求属于内容生成类，优先基于已有上下文生成一版草稿，信息不足时附带假设说明，而非反复追问。".to_string(),
             vec![
                 "检测到内容生成需求".to_string(),
@@ -328,7 +328,7 @@ pub(super) async fn build_turn_runtime_statuses(
         )
     } else {
         (
-            "已决定：直接回答优先".to_string(),
+            "直接回答优先".to_string(),
             "当前请求无需默认升级为搜索或任务，先直接给出结果，必要时再调用工具。".to_string(),
             vec![
                 "默认保持直接回答".to_string(),

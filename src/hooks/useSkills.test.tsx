@@ -45,11 +45,16 @@ type HookValue = ReturnType<typeof useSkills>;
 
 interface HarnessProps {
   app?: AppType;
+  includeRepos?: boolean;
   onReady: (value: HookValue) => void;
 }
 
-function HookHarness({ app = "lime", onReady }: HarnessProps) {
-  const value = useSkills(app);
+function HookHarness({
+  app = "lime",
+  includeRepos,
+  onReady,
+}: HarnessProps) {
+  const value = useSkills(app, { includeRepos });
 
   useEffect(() => {
     onReady(value);
@@ -89,9 +94,10 @@ describe("useSkills", () => {
     cleanupMountedRoots(mountedRoots);
   });
 
-  async function renderHook(app: AppType) {
+  async function renderHook(app: AppType, includeRepos?: boolean) {
     mountHarness(HookHarness, {
       app,
+      includeRepos,
       onReady: (value) => {
         latestValue = value;
       },
@@ -138,5 +144,12 @@ describe("useSkills", () => {
     expect(mockRefreshCache).toHaveBeenCalledTimes(1);
     expect(mockGetAll).toHaveBeenCalledWith("codex", { refreshRemote: true });
     expect(getLatestValue().skills).toEqual([remoteSkill]);
+  });
+
+  it("关闭 repo 拉取时不应触发仓库请求", async () => {
+    await renderHook("gemini", false);
+
+    expect(mockGetLocal).toHaveBeenCalledWith("gemini");
+    expect(mockGetRepos).not.toHaveBeenCalled();
   });
 });

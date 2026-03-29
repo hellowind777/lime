@@ -862,7 +862,7 @@ export const ArtifactDocumentRenderer: React.FC<ArtifactDocumentRendererProps> =
           tone === "light" ? "bg-background" : "bg-[#1e2227]",
         )}
       >
-        <article className="mx-auto flex w-full max-w-4xl flex-col gap-6">
+        <article className="mx-auto flex w-full max-w-[1100px] flex-col gap-6">
           <header
             className={cn(
               "rounded-3xl border px-6 py-5 shadow-sm",

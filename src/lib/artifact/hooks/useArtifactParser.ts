@@ -128,7 +128,6 @@ export function useArtifactParser(
    * 开始新的解析会话
    */
   const startParsing = useCallback(() => {
-    console.log("[useArtifactParser] 开始新的解析会话");
     // 创建新的解析器实例
     parserRef.current = new ArtifactParser(config);
     // 清空已知 ID 集合
@@ -141,24 +140,10 @@ export function useArtifactParser(
   const appendChunk = useCallback(
     (chunk: string): ParseResult | undefined => {
       if (!parserRef.current) {
-        console.log("[useArtifactParser] 解析器未初始化，跳过 chunk");
         return undefined;
       }
 
       const result = parserRef.current.append(chunk);
-
-      // 调试日志
-      if (result.artifacts.length > 0) {
-        console.log(
-          "[useArtifactParser] 解析到 artifacts:",
-          result.artifacts.length,
-          result.artifacts.map((a) => ({
-            id: a.id,
-            type: a.type,
-            title: a.title,
-          })),
-        );
-      }
 
       // 处理解析结果，更新 store
       processParseResult(result);

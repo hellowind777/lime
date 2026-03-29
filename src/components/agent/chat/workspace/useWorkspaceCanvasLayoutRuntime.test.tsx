@@ -19,6 +19,7 @@ function renderHook(props?: Partial<HookProps>) {
   const defaultProps: HookProps = {
     activeTheme: "general",
     isThemeWorkbench: false,
+    hasPendingA2UIForm: false,
     layoutMode: "chat-canvas",
     showChatPanel: true,
     showSidebar: true,
@@ -199,5 +200,33 @@ describe("useWorkspaceCanvasLayoutRuntime", () => {
 
     expect(setShowSidebar).toHaveBeenCalledWith(true);
     expect(autoCollapsedTopicSidebarRef.current).toBe(false);
+  });
+
+  it("待处理 A2UI 存在时应主动收起主题工作台侧栏并回到聊天态", async () => {
+    const setLayoutMode = vi.fn();
+    const setShowSidebar = vi.fn();
+    const dismissActiveTeamWorkbenchAutoOpen = vi.fn();
+    const suppressGeneralCanvasArtifactAutoOpen = vi.fn();
+    const suppressBrowserAssistCanvasAutoOpen = vi.fn();
+    const { render } = renderHook({
+      activeTheme: "social-media",
+      isThemeWorkbench: true,
+      hasPendingA2UIForm: true,
+      layoutMode: "canvas",
+      showSidebar: true,
+      setLayoutMode,
+      setShowSidebar,
+      dismissActiveTeamWorkbenchAutoOpen,
+      suppressGeneralCanvasArtifactAutoOpen,
+      suppressBrowserAssistCanvasAutoOpen,
+    });
+
+    await render();
+
+    expect(setLayoutMode).toHaveBeenCalledWith("chat");
+    expect(setShowSidebar).toHaveBeenCalledWith(false);
+    expect(dismissActiveTeamWorkbenchAutoOpen).toHaveBeenCalledTimes(1);
+    expect(suppressGeneralCanvasArtifactAutoOpen).toHaveBeenCalledTimes(1);
+    expect(suppressBrowserAssistCanvasAutoOpen).toHaveBeenCalledTimes(1);
   });
 });

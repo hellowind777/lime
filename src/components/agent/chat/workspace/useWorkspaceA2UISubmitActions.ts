@@ -15,6 +15,10 @@ interface UseWorkspaceA2UISubmitActionsParams {
   ) => Promise<void>;
   pendingLegacyQuestionnaireA2UIForm: A2UIResponse | null;
   pendingPromotedA2UIActionRequest: ActionRequired | null;
+  resolvePendingA2UISubmit: (formData: A2UIFormData) => {
+    status: "advance" | "empty" | "submit";
+    formData?: A2UIFormData;
+  };
   sendMessage: SendMessageFn;
 }
 
@@ -22,6 +26,7 @@ export function useWorkspaceA2UISubmitActions({
   handlePermissionResponseWithBrowserPreflight,
   pendingLegacyQuestionnaireA2UIForm,
   pendingPromotedA2UIActionRequest,
+  resolvePendingA2UISubmit,
   sendMessage,
 }: UseWorkspaceA2UISubmitActionsParams) {
   const handleA2UISubmit = useCallback(
@@ -44,10 +49,22 @@ export function useWorkspaceA2UISubmitActions({
 
   const handleInputbarA2UISubmit = useCallback(
     (formData: A2UIFormData) => {
+      const resolvedSubmission = resolvePendingA2UISubmit(formData);
+      if (resolvedSubmission.status === "advance") {
+        return;
+      }
+
+      if (resolvedSubmission.status === "empty") {
+        toast.info("请先完成当前这一步，再继续");
+        return;
+      }
+
+      const effectiveFormData = resolvedSubmission.formData || formData;
+
       if (pendingPromotedA2UIActionRequest) {
         const payload = buildActionRequestSubmissionPayload(
           pendingPromotedA2UIActionRequest,
-          formData,
+          effectiveFormData,
         );
 
         void handlePermissionResponseWithBrowserPreflight({
@@ -63,7 +80,7 @@ export function useWorkspaceA2UISubmitActions({
       if (pendingLegacyQuestionnaireA2UIForm) {
         const submissionPayload = buildLegacyQuestionnaireSubmissionPayload(
           pendingLegacyQuestionnaireA2UIForm,
-          formData,
+          effectiveFormData,
         );
 
         if (!submissionPayload) {
@@ -87,13 +104,14 @@ export function useWorkspaceA2UISubmitActions({
         return;
       }
 
-      void handleA2UISubmit(formData, "");
+      void handleA2UISubmit(effectiveFormData, "");
     },
     [
       handleA2UISubmit,
       handlePermissionResponseWithBrowserPreflight,
       pendingLegacyQuestionnaireA2UIForm,
       pendingPromotedA2UIActionRequest,
+      resolvePendingA2UISubmit,
       sendMessage,
     ],
   );

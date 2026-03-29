@@ -63,6 +63,8 @@ const mockToolCallItem = vi.fn(
   ({
     toolCall,
     onOpenSavedSiteContent,
+    grouped,
+    groupMarker,
   }: {
     toolCall: { name: string; arguments?: string; status?: string };
     onOpenSavedSiteContent?: (target: {
@@ -70,10 +72,14 @@ const mockToolCallItem = vi.fn(
       contentId: string;
       title?: string;
     }) => void;
+    grouped?: boolean;
+    groupMarker?: string;
   }) => (
     <div
       data-testid="tool-call-item"
       data-has-open-saved-site-content={onOpenSavedSiteContent ? "yes" : "no"}
+      data-grouped={grouped ? "yes" : "no"}
+      data-group-marker={groupMarker || ""}
     >
       {resolveMockToolText(toolCall)}
       {toolCall.status === "running" ? " 进行中" : ""}
@@ -104,6 +110,8 @@ vi.mock("./ToolCallDisplay", () => ({
       contentId: string;
       title?: string;
     }) => void;
+    grouped?: boolean;
+    groupMarker?: string;
   }) => mockToolCallItem(props),
 }));
 
@@ -273,6 +281,29 @@ function createFileArtifactItem(
   };
 }
 
+function createStructuredA2UIParseResult() {
+  return {
+    parts: [
+      { type: "text" as const, content: "请先确认以下选项：" },
+      {
+        type: "a2ui" as const,
+        content: {
+          id: "form-1",
+          root: "root",
+          components: [],
+          submitAction: {
+            label: "提交",
+            action: { name: "submit" },
+          },
+        },
+      },
+    ],
+    hasA2UI: true,
+    hasWriteFile: false,
+    hasPending: false,
+  };
+}
+
 describe("AgentThreadTimeline", () => {
   it("默认直接渲染内联时间线，不再显示旧摘要壳", () => {
     const items: AgentThreadItem[] = [
@@ -318,7 +349,7 @@ describe("AgentThreadTimeline", () => {
       container.querySelector('[data-testid="agent-thread-focus"]'),
     ).toBeNull();
     expect(container.textContent).toContain("已完成页面检查");
-    expect(container.textContent).toContain("打开 https://mp.weixin.qq.com");
+    expect(container.textContent).toContain("打开了 https://mp.weixin.qq.com");
     expect(container.textContent).toContain("请确认是否发布文章");
   });
 
@@ -330,7 +361,7 @@ describe("AgentThreadTimeline", () => {
 
     const heroJumpButton = Array.from(
       container.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((button) => button.textContent?.includes("跳到 block hero-1"));
+    ).find((button) => button.textContent?.includes("定位到 摘要"));
     expect(heroJumpButton).not.toBeUndefined();
 
     act(() => {
@@ -366,7 +397,7 @@ describe("AgentThreadTimeline", () => {
     );
 
     const block = container.querySelector<HTMLDetailsElement>(
-      '[data-testid="agent-thread-block:1:browser"]',
+      '[data-testid="agent-thread-block:1:process"]',
     );
     const focusedEntry = container.querySelector<HTMLElement>(
       '[data-thread-item-id="browser-1"]',
@@ -427,7 +458,7 @@ describe("AgentThreadTimeline", () => {
       '[data-testid="agent-thread-block:1:approval"]',
     );
     const otherGroup = container.querySelector<HTMLElement>(
-      '[data-testid="agent-thread-block:2:other"]',
+      '[data-testid="agent-thread-block:2:process"]',
     );
 
     expect(approvalGroup).not.toBeNull();
@@ -471,14 +502,56 @@ describe("AgentThreadTimeline", () => {
           !value.endsWith(":details"),
       );
 
-    expect(blockIds).toEqual([
-      "agent-thread-block:1:browser",
-      "agent-thread-block:2:thinking",
-      "agent-thread-block:3:search",
-    ]);
+    expect(blockIds).toEqual(["agent-thread-block:1:process"]);
   });
 
-  it("运行中的块应高亮，已完成块应降噪", () => {
+  it("同类多工具步骤应显示批次数量并切成轻量子行", () => {
+    const items: AgentThreadItem[] = [
+      {
+        ...createBaseItem("browser-1", 1),
+        type: "tool_call",
+        tool_name: "browser_navigate",
+        arguments: { url: "https://example.com" },
+      },
+      {
+        ...createBaseItem("browser-2", 2),
+        type: "tool_call",
+        tool_name: "browser_click",
+        arguments: { selector: "#publish" },
+      },
+    ];
+
+    const container = renderTimeline(items, {
+      turn: {
+        status: "completed",
+      },
+    });
+
+    const block = container.querySelector<HTMLDetailsElement>(
+      '[data-testid="agent-thread-block:1:process"]',
+    );
+    const summary = block?.querySelector("summary");
+
+    expect(summary?.textContent).toContain("2 步");
+    expect(summary?.textContent).toContain("2 个工具步骤");
+    expect(container.querySelectorAll('[data-testid="tool-call-item"]')).toHaveLength(0);
+
+    act(() => {
+      summary?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const toolRows = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-testid="tool-call-item"]'),
+    );
+
+    expect(toolRows).toHaveLength(2);
+    expect(toolRows[0]?.dataset.grouped).toBe("yes");
+    expect(toolRows[0]?.dataset.groupMarker).toBe("└");
+    expect(toolRows[1]?.dataset.grouped).toBe("yes");
+    expect(toolRows[1]?.dataset.groupMarker).toBe("·");
+  });
+
+  it("连续执行流里有运行中步骤时，应聚合为一个高亮过程块", () => {
     const items: AgentThreadItem[] = [
       {
         ...createBaseItem("browser-1", 1),
@@ -503,19 +576,11 @@ describe("AgentThreadTimeline", () => {
     ];
 
     const container = renderTimeline(items, { isCurrentTurn: true });
-    const browserBlock = container.querySelector<HTMLElement>(
-      '[data-testid="agent-thread-block:1:browser"]',
-    );
-    const searchBlock = container.querySelector<HTMLElement>(
-      '[data-testid="agent-thread-block:2:search"]',
-    );
-    const otherBlock = container.querySelector<HTMLElement>(
-      '[data-testid="agent-thread-block:3:other"]',
+    const processBlock = container.querySelector<HTMLElement>(
+      '[data-testid="agent-thread-block:1:process"]',
     );
 
-    expect(browserBlock?.dataset.emphasis).toBe("quiet");
-    expect(searchBlock?.dataset.emphasis).toBe("active");
-    expect(otherBlock?.dataset.emphasis).toBe("quiet");
+    expect(processBlock?.dataset.emphasis).toBe("active");
     expect(container.textContent).toContain("Mac mini 最新价格");
   });
 
@@ -577,26 +642,7 @@ describe("AgentThreadTimeline", () => {
   });
 
   it("思考摘要中的 A2UI 代码块应切换为结构化预览", () => {
-    parseAIResponseMock.mockReturnValue({
-      parts: [
-        { type: "text", content: "请先确认以下选项：" },
-        {
-          type: "a2ui",
-          content: {
-            id: "form-1",
-            root: "root",
-            components: [],
-            submitAction: {
-              label: "提交",
-              action: { name: "submit" },
-            },
-          },
-        },
-      ],
-      hasA2UI: true,
-      hasWriteFile: false,
-      hasPending: false,
-    });
+    parseAIResponseMock.mockReturnValue(createStructuredA2UIParseResult());
 
     const items: AgentThreadItem[] = [
       {
@@ -616,6 +662,93 @@ describe("AgentThreadTimeline", () => {
       },
     });
 
+    expect(
+      container.querySelector('[data-testid="timeline-a2ui-card"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("处理中");
+    expect(container.textContent).toContain("请先确认以下选项：");
+    expect(container.textContent).not.toContain("```a2ui");
+  });
+
+  it("turn_summary 完成态不应显示已完成思考这类思考标签", () => {
+    const items: AgentThreadItem[] = [
+      {
+        ...createBaseItem("summary-1", 1),
+        type: "turn_summary",
+        text: "直接回答优先\n当前请求无需默认升级为搜索或任务。",
+      },
+    ];
+
+    const container = renderTimeline(items, {
+      turn: {
+        status: "completed",
+      },
+    });
+
+    expect(container.textContent).toContain("直接回答优先");
+    expect(container.textContent).not.toContain("已完成思考");
+  });
+
+  it("reasoning 中的 A2UI 代码块不应被跳过", () => {
+    parseAIResponseMock.mockReturnValue(createStructuredA2UIParseResult());
+
+    const items: AgentThreadItem[] = [
+      {
+        ...createBaseItem("reasoning-1", 1),
+        status: "in_progress",
+        completed_at: undefined,
+        updated_at: at(1),
+        type: "reasoning",
+        text: "```a2ui\n{}\n```",
+      },
+    ];
+
+    const container = renderTimeline(items, {
+      isCurrentTurn: true,
+      turn: {
+        status: "running",
+      },
+    });
+
+    expect(
+      container.querySelector('[data-testid="timeline-a2ui-card"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("请先确认以下选项：");
+    expect(container.textContent).not.toContain("```a2ui");
+  });
+
+  it("已完成 reasoning 中的 A2UI 代码块展开后应显示结构化预览", () => {
+    parseAIResponseMock.mockReturnValue(createStructuredA2UIParseResult());
+
+    const items: AgentThreadItem[] = [
+      {
+        ...createBaseItem("reasoning-1", 1),
+        type: "reasoning",
+        text: "```a2ui\n{}\n```",
+      },
+    ];
+
+    const container = renderTimeline(items, {
+      turn: {
+        status: "completed",
+      },
+    });
+
+    const block = container.querySelector<HTMLDetailsElement>(
+      '[data-testid="agent-thread-block:1:process"]',
+    );
+    const summary = block?.querySelector("summary");
+
+    expect(block?.open).toBe(false);
+    expect(
+      container.querySelector('[data-testid="timeline-a2ui-card"]'),
+    ).toBeNull();
+
+    act(() => {
+      summary?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(block?.open).toBe(true);
     expect(
       container.querySelector('[data-testid="timeline-a2ui-card"]'),
     ).not.toBeNull();
@@ -641,7 +774,7 @@ describe("AgentThreadTimeline", () => {
     });
 
     expect(
-      container.querySelector('[data-testid="agent-thread-block:1:thinking:details"]'),
+      container.querySelector('[data-testid="agent-thread-block:1:process:details"]'),
     ).toBeNull();
     expect(container.textContent).not.toContain("思考摘要");
     expect((container.textContent?.split(reasoningText).length ?? 1) - 1).toBe(1);
@@ -664,7 +797,7 @@ describe("AgentThreadTimeline", () => {
     });
 
     const block = container.querySelector<HTMLDetailsElement>(
-      '[data-testid="agent-thread-block:1:thinking"]',
+      '[data-testid="agent-thread-block:1:process"]',
     );
     const summary = block?.querySelector("summary");
 
@@ -679,6 +812,93 @@ describe("AgentThreadTimeline", () => {
 
     expect(block?.open).toBe(true);
     expect(container.textContent).toContain("随后补齐自动续提。");
+  });
+
+  it("reasoning 缺少正文时应回退显示 summary", () => {
+    const items: AgentThreadItem[] = [
+      {
+        ...createBaseItem("reasoning-1", 1),
+        type: "reasoning",
+        text: "",
+        summary: ["先判断任务类型", "再决定是否联网"],
+      },
+    ];
+
+    const container = renderTimeline(items, {
+      turn: {
+        status: "completed",
+      },
+    });
+
+    const summary = container.querySelector("summary");
+    expect(summary?.textContent).toContain("先判断任务类型");
+
+    act(() => {
+      summary?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("先判断任务类型");
+    expect(container.textContent).toContain("再决定是否联网");
+  });
+
+  it("reasoning 同时存在 summary 与正文时应优先用 summary 做摘要", () => {
+    const items: AgentThreadItem[] = [
+      {
+        ...createBaseItem("reasoning-1", 1),
+        type: "reasoning",
+        text: "这里是更完整的正文。",
+        summary: ["先判断任务类型", "再决定是否联网"],
+      },
+    ];
+
+    const container = renderTimeline(items, {
+      turn: {
+        status: "completed",
+      },
+    });
+
+    const block = container.querySelector<HTMLDetailsElement>(
+      '[data-testid="agent-thread-block:1:process"]',
+    );
+    const summary = block?.querySelector("summary");
+
+    expect(summary?.textContent).toContain("先判断任务类型");
+    expect(summary?.textContent).not.toContain("这里是更完整的正文。");
+    expect(container.textContent).not.toContain("这里是更完整的正文。");
+
+    act(() => {
+      summary?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container.textContent).toContain("先判断任务类型");
+    expect(container.textContent).toContain("再决定是否联网");
+    expect(container.textContent).toContain("这里是更完整的正文。");
+  });
+
+  it("reasoning 的 summary 与正文相同时不应重复渲染", () => {
+    const repeatedText = "先判断任务类型\n\n再决定是否联网";
+    const items: AgentThreadItem[] = [
+      {
+        ...createBaseItem("reasoning-1", 1),
+        type: "reasoning",
+        text: repeatedText,
+        summary: ["先判断任务类型", "再决定是否联网"],
+      },
+    ];
+
+    const container = renderTimeline(items, {
+      turn: {
+        status: "completed",
+      },
+    });
+
+    const summary = container.querySelector("summary");
+    act(() => {
+      summary?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect((container.textContent?.split("先判断任务类型").length ?? 1) - 1).toBe(1);
+    expect((container.textContent?.split("再决定是否联网").length ?? 1) - 1).toBe(1);
   });
 
   it("已完成的 request_user_input 应以只读 A2UI 卡片回显", () => {

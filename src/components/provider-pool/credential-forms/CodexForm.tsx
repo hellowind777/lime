@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { safeListen } from "@/lib/dev-bridge";
+import { onCodexAuthUrl } from "@/lib/api/providerAuthEvents";
 import { providerPoolApi } from "@/lib/api/providerPool";
 import { ModeSelector } from "./ModeSelector";
 import { FileImportForm } from "./FileImportForm";
@@ -44,12 +44,9 @@ export function CodexForm({
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
-      unlisten = await safeListen<{ auth_url: string }>(
-        "codex-auth-url",
-        (event) => {
-          setAuthUrl(event.payload.auth_url);
-        },
-      );
+      unlisten = await onCodexAuthUrl((payload) => {
+        setAuthUrl(payload.auth_url);
+      });
     };
 
     setupListener();

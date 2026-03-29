@@ -13,6 +13,7 @@ import {
   useInputbarToolState,
   type InputbarToolStates,
 } from "./useInputbarToolState";
+import type { SkillSelectionSourceProps } from "../components/skillSelectionBindings";
 import type {
   ThemeWorkbenchGateState,
   ThemeWorkbenchWorkflowStep,
@@ -83,8 +84,16 @@ export function useInputbarController({
   pendingA2UIForm,
   a2uiSubmissionNotice,
   onEnableSuggestedTeam,
-}: UseInputbarControllerParams) {
-  const { activeSkill, setActiveSkill, clearActiveSkill } = useActiveSkill();
+  skills,
+  serviceSkills,
+  isSkillsLoading,
+  onSelectServiceSkill,
+  onNavigateToSettings,
+  onImportSkill,
+  onRefreshSkills,
+}: UseInputbarControllerParams & SkillSelectionSourceProps) {
+  const { activeSkill, setActiveSkill, clearActiveSkill, buildSkillSelection } =
+    useActiveSkill();
   const [activeBuiltinCommand, setActiveBuiltinCommand] =
     useState<BuiltinInputCommand | null>(null);
   const {
@@ -245,6 +254,15 @@ export function useInputbarController({
             : null,
         )
       : undefined;
+  const skillSelection = buildSkillSelection({
+    skills,
+    serviceSkills,
+    isSkillsLoading,
+    onSelectServiceSkill,
+    onNavigateToSettings,
+    onImportSkill,
+    onRefreshSkills,
+  });
 
   return {
     textareaRef,
@@ -278,6 +296,7 @@ export function useInputbarController({
     isPendingA2UIFormStale,
     visibleA2UISubmissionNotice,
     isA2UISubmissionNoticeVisible,
+    skillSelection,
     activeSkill,
     setActiveSkill: (skill: Parameters<typeof setActiveSkill>[0]) => {
       setActiveBuiltinCommand(null);

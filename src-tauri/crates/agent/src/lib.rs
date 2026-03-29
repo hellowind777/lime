@@ -44,6 +44,7 @@ pub mod subagent_control;
 pub mod subagent_profiles;
 pub mod subagent_scheduler;
 pub mod team_runtime_governor;
+mod text_normalization;
 pub mod tool_io_offload;
 pub mod tools;
 pub mod turn_input_envelope;
@@ -103,8 +104,9 @@ pub use runtime_queue::{
 };
 pub use session_execution_runtime::{
     build_session_execution_runtime, extract_recent_content_id_from_runtime_snapshot,
-    persist_session_recent_preferences, persist_session_recent_team_selection,
-    SessionExecutionRuntime, SessionExecutionRuntimePreferences,
+    persist_session_recent_access_mode, persist_session_recent_preferences,
+    persist_session_recent_team_selection, SessionExecutionRuntime,
+    SessionExecutionRuntimeAccessMode, SessionExecutionRuntimePreferences,
     SessionExecutionRuntimeRecentTeamRole, SessionExecutionRuntimeRecentTeamSelection,
     SessionExecutionRuntimeSource,
 };

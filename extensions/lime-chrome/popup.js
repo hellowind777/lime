@@ -36,7 +36,7 @@ function buildObserverEndpoint(serverUrl, bridgeKey, profileKey) {
   if (!base || !key) {
     return "Observer URL: 未配置";
   }
-  return `Observer URL: ${base}/lime-chrome-observer/Lime_Key=${encodeURIComponent(key)}?profileKey=${profile}`;
+  return `Observer URL: ${base}/lime-chrome-observer/${encodeURIComponent(key)}?profileKey=${profile}`;
 }
 
 function applyStatus(status) {

@@ -1,4 +1,17 @@
 export type AsterExecutionStrategy = "react" | "code_orchestrated" | "auto";
+export type AsterApprovalPolicy =
+  | "never"
+  | "on-request"
+  | "on-failure"
+  | "untrusted";
+export type AsterSandboxPolicy =
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access";
+export type AsterSessionExecutionRuntimeAccessMode =
+  | "read-only"
+  | "current"
+  | "full-access";
 
 export type AsterSessionExecutionRuntimeSource =
   | "session"
@@ -70,6 +83,7 @@ export interface AsterSessionExecutionRuntime {
     | "closed"
     | "not_found"
     | null;
+  recent_access_mode?: AsterSessionExecutionRuntimeAccessMode | null;
   recent_preferences?: AsterSessionExecutionRuntimePreferences | null;
   recent_team_selection?: AsterSessionExecutionRuntimeRecentTeamSelection | null;
   recent_theme?: string | null;

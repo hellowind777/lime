@@ -31,12 +31,6 @@ import {
   UpdateAutomationJobRequest,
   type DeliveryConfig,
 } from "@/lib/api/automation";
-import {
-  browserRuntimeApi,
-  type BrowserEnvironmentPresetRecord,
-  type BrowserProfileRecord,
-  type BrowserStreamMode,
-} from "@/features/browser-runtime/api";
 import type { Project } from "@/lib/api/project";
 
 export type AutomationJobDialogSubmit =
@@ -62,13 +56,6 @@ type AutomationJobFormState = {
   web_search: boolean;
   agent_content_id: string;
   agent_request_metadata: Record<string, unknown> | null;
-  browser_profile_id: string;
-  browser_profile_key: string;
-  browser_url: string;
-  browser_environment_preset_id: string;
-  browser_target_id: string;
-  browser_open_window: boolean;
-  browser_stream_mode: BrowserStreamMode;
   timeout_secs: string;
   max_retries: string;
   delivery_mode: "none" | "announce";
@@ -81,8 +68,9 @@ type AutomationJobFormState = {
 
 export type AutomationJobDialogInitialValues = Partial<AutomationJobFormState>;
 
-const NO_PRESET_VALUE = "__none__";
 const TEXT_ONLY_DELIVERY_CHANNEL = "telegram";
+const LEGACY_BROWSER_AUTOMATION_MESSAGE =
+  "浏览器自动化已下线，系统不会再自动启动 Chrome。请删除这条旧任务，并改用 Agent 对话任务重建。";
 
 function toDateTimeLocal(value?: string | null): string {
   if (!value) {
@@ -114,13 +102,6 @@ function createDefaultForm(workspaces: Project[]): AutomationJobFormState {
     web_search: false,
     agent_content_id: "",
     agent_request_metadata: null,
-    browser_profile_id: "",
-    browser_profile_key: "",
-    browser_url: "",
-    browser_environment_preset_id: "",
-    browser_target_id: "",
-    browser_open_window: false,
-    browser_stream_mode: "events",
     timeout_secs: "",
     max_retries: "3",
     delivery_mode: "none",
@@ -139,6 +120,7 @@ function createCreateForm(
   return {
     ...createDefaultForm(workspaces),
     ...(initialValues ?? {}),
+    payload_kind: "agent_turn",
   };
 }
 
@@ -223,15 +205,6 @@ function createFormFromJob(
     form.web_search = job.payload.web_search;
     form.agent_content_id = job.payload.content_id ?? "";
     form.agent_request_metadata = job.payload.request_metadata ?? null;
-  } else {
-    form.browser_profile_id = job.payload.profile_id;
-    form.browser_profile_key = job.payload.profile_key ?? "";
-    form.browser_url = job.payload.url ?? "";
-    form.browser_environment_preset_id =
-      job.payload.environment_preset_id ?? "";
-    form.browser_target_id = job.payload.target_id ?? "";
-    form.browser_open_window = job.payload.open_window;
-    form.browser_stream_mode = job.payload.stream_mode;
   }
   form.timeout_secs = job.timeout_secs ? String(job.timeout_secs) : "";
   form.max_retries = String(job.max_retries);
@@ -329,6 +302,37 @@ function scheduleHint(form: AutomationJobFormState): string {
     : "选择一次性触发时间。";
 }
 
+function buildLegacyBrowserPayloadSummary(
+  payload: BrowserSessionAutomationPayload,
+): Array<{ label: string; value: string }> {
+  return [
+    {
+      label: "浏览器资料",
+      value: payload.profile_key ?? payload.profile_id,
+    },
+    {
+      label: "启动地址",
+      value: payload.url?.trim() || "使用资料默认启动地址",
+    },
+    {
+      label: "环境预设",
+      value: payload.environment_preset_id?.trim() || "未设置",
+    },
+    {
+      label: "Target ID",
+      value: payload.target_id?.trim() || "未设置",
+    },
+    {
+      label: "调试窗口",
+      value: payload.open_window ? "打开" : "关闭",
+    },
+    {
+      label: "流模式",
+      value: payload.stream_mode,
+    },
+  ];
+}
+
 export function AutomationJobDialog({
   open,
   mode,
@@ -352,9 +356,19 @@ export function AutomationJobDialog({
     createCreateForm(workspaces, initialValues),
   );
   const [error, setError] = useState<string | null>(null);
-  const [profiles, setProfiles] = useState<BrowserProfileRecord[]>([]);
-  const [presets, setPresets] = useState<BrowserEnvironmentPresetRecord[]>([]);
-  const [resourcesLoading, setResourcesLoading] = useState(false);
+  const isLegacyBrowserJob =
+    mode === "edit" && job?.payload.kind === "browser_session";
+  const legacyBrowserPayload =
+    isLegacyBrowserJob && job?.payload.kind === "browser_session"
+      ? job.payload
+      : null;
+  const legacyBrowserSummary = useMemo(
+    () =>
+      legacyBrowserPayload
+        ? buildLegacyBrowserPayloadSummary(legacyBrowserPayload)
+        : [],
+    [legacyBrowserPayload],
+  );
 
   useEffect(() => {
     if (!open) {
@@ -368,93 +382,17 @@ export function AutomationJobDialog({
     );
   }, [initialValues, job, mode, open, workspaces]);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    let cancelled = false;
-
-    async function loadBrowserResources() {
-      setResourcesLoading(true);
-      try {
-        const [nextProfiles, nextPresets] = await Promise.all([
-          browserRuntimeApi.listBrowserProfiles(),
-          browserRuntimeApi.listBrowserEnvironmentPresets(),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        setProfiles(
-          nextProfiles.filter((profile) => profile.archived_at === null),
-        );
-        setPresets(nextPresets.filter((preset) => preset.archived_at === null));
-      } catch (loadError) {
-        if (!cancelled) {
-          setError(
-            loadError instanceof Error
-              ? `加载浏览器资料失败: ${loadError.message}`
-              : `加载浏览器资料失败: ${String(loadError)}`,
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setResourcesLoading(false);
-        }
-      }
-    }
-
-    void loadBrowserResources();
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (
-      !open ||
-      form.payload_kind !== "browser_session" ||
-      form.browser_profile_id.trim() ||
-      profiles.length === 0
-    ) {
-      return;
-    }
-    const firstProfile = profiles[0];
-    setForm((current) => {
-      if (
-        current.payload_kind !== "browser_session" ||
-        current.browser_profile_id.trim()
-      ) {
-        return current;
-      }
-      return {
-        ...current,
-        browser_profile_id: firstProfile.id,
-        browser_profile_key: firstProfile.profile_key,
-      };
-    });
-  }, [form.browser_profile_id, form.payload_kind, open, profiles]);
-
   const scheduleSummary = useMemo(() => scheduleHint(form), [form]);
-  const selectedBrowserProfile = useMemo(
-    () =>
-      profiles.find((profile) => profile.id === form.browser_profile_id) ??
-      null,
-    [form.browser_profile_id, profiles],
-  );
-  const selectedEnvironmentPreset = useMemo(
-    () =>
-      presets.find(
-        (preset) => preset.id === form.browser_environment_preset_id,
-      ) ?? null,
-    [form.browser_environment_preset_id, presets],
-  );
   const isTextOnlyDelivery =
     form.delivery_channel === TEXT_ONLY_DELIVERY_CHANNEL;
 
   async function handleSubmit() {
     try {
       setError(null);
+
+      if (isLegacyBrowserJob) {
+        throw new Error(LEGACY_BROWSER_AUTOMATION_MESSAGE);
+      }
 
       if (!form.name.trim()) {
         throw new Error("任务名称不能为空");
@@ -464,56 +402,17 @@ export function AutomationJobDialog({
       }
 
       const schedule = buildSchedule(form);
-      let payload: AutomationPayload;
-      if (form.payload_kind === "agent_turn") {
-        if (!form.prompt.trim()) {
-          throw new Error("任务提示词不能为空");
-        }
-        payload = {
-          kind: "agent_turn",
-          prompt: form.prompt.trim(),
-          system_prompt: form.system_prompt.trim() || null,
-          web_search: form.web_search,
-          content_id: form.agent_content_id.trim() || null,
-          request_metadata: form.agent_request_metadata ?? null,
-        };
-      } else {
-        if (!form.browser_profile_id.trim()) {
-          throw new Error("请选择浏览器资料");
-        }
-        const profileKey =
-          selectedBrowserProfile?.profile_key ??
-          form.browser_profile_key.trim();
-        if (!profileKey) {
-          throw new Error("浏览器资料不可用，请重新选择");
-        }
-        const browserUrl = form.browser_url.trim();
-        if (browserUrl) {
-          let parsedUrl: URL;
-          try {
-            parsedUrl = new URL(browserUrl);
-          } catch {
-            throw new Error("浏览器启动地址格式无效");
-          }
-          if (
-            parsedUrl.protocol !== "http:" &&
-            parsedUrl.protocol !== "https:"
-          ) {
-            throw new Error("浏览器启动地址仅支持 http/https");
-          }
-        }
-        const browserPayload: BrowserSessionAutomationPayload = {
-          kind: "browser_session",
-          profile_id: form.browser_profile_id,
-          profile_key: profileKey,
-          url: browserUrl || null,
-          environment_preset_id: form.browser_environment_preset_id || null,
-          target_id: form.browser_target_id.trim() || null,
-          open_window: form.browser_open_window,
-          stream_mode: form.browser_stream_mode,
-        };
-        payload = browserPayload;
+      if (!form.prompt.trim()) {
+        throw new Error("任务提示词不能为空");
       }
+      const payload: AutomationPayload = {
+        kind: "agent_turn",
+        prompt: form.prompt.trim(),
+        system_prompt: form.system_prompt.trim() || null,
+        web_search: form.web_search,
+        content_id: form.agent_content_id.trim() || null,
+        request_metadata: form.agent_request_metadata ?? null,
+      };
       const timeout_secs = form.timeout_secs.trim()
         ? Number(form.timeout_secs)
         : null;
@@ -587,8 +486,7 @@ export function AutomationJobDialog({
               {mode === "create" ? "新建自动化任务" : "编辑自动化任务"}
             </DialogTitle>
             <DialogDescription>
-              用结构化 job 承载 Agent
-              与浏览器任务，调度、工作区、运行历史都在单一模型里维护。
+              用结构化 job 承载 Agent 对话任务，统一管理调度、工作区和运行历史。
             </DialogDescription>
           </DialogHeader>
 
@@ -652,23 +550,17 @@ export function AutomationJobDialog({
             <div className="mt-5 grid gap-5 md:grid-cols-4">
               <div className="space-y-2">
                 <Label>任务类型</Label>
-                <Select
-                  value={form.payload_kind}
-                  onValueChange={(value) =>
-                    setForm((current) => ({
-                      ...current,
-                      payload_kind: value as AutomationPayload["kind"],
-                    }))
-                  }
-                >
+                <Select value={form.payload_kind} disabled>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="agent_turn">Agent 对话任务</SelectItem>
-                    <SelectItem value="browser_session">
-                      浏览器会话任务
-                    </SelectItem>
+                    {isLegacyBrowserJob ? (
+                      <SelectItem value="browser_session">
+                        浏览器自动化（已下线）
+                      </SelectItem>
+                    ) : null}
                   </SelectContent>
                 </Select>
               </div>
@@ -818,7 +710,34 @@ export function AutomationJobDialog({
               </div>
             </div>
 
-            {form.payload_kind === "agent_turn" ? (
+            {isLegacyBrowserJob && legacyBrowserPayload ? (
+              <div className="mt-5 space-y-4">
+                <div className="rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm leading-6 text-amber-800">
+                  <div className="font-medium text-amber-900">
+                    浏览器自动化已下线
+                  </div>
+                  <div className="mt-2">{LEGACY_BROWSER_AUTOMATION_MESSAGE}</div>
+                </div>
+                <div className="rounded-[24px] border border-slate-200/80 bg-slate-50 px-4 py-4">
+                  <div className="text-sm font-medium text-slate-900">
+                    历史配置快照
+                  </div>
+                  <div className="mt-3 grid gap-3 text-sm text-slate-600 md:grid-cols-2">
+                    {legacyBrowserSummary.map((item) => (
+                      <div key={item.label}>
+                        <span className="font-medium text-slate-900">
+                          {item.label}
+                        </span>
+                        : {item.value}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-xs leading-5 text-slate-500">
+                    这份配置只保留展示，不允许继续保存或执行。
+                  </div>
+                </div>
+              </div>
+            ) : (
               <>
                 <div className="mt-5 space-y-2">
                   <Label htmlFor="automation-job-prompt">执行提示词</Label>
@@ -853,371 +772,216 @@ export function AutomationJobDialog({
                     className="min-h-[96px] sm:min-h-[110px]"
                   />
                 </div>
-              </>
-            ) : (
-              <div className="mt-5 rounded-[24px] border border-slate-200/80 bg-white/80 p-4">
-                <div className="grid gap-5 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>浏览器资料</Label>
-                    <Select
-                      value={form.browser_profile_id || undefined}
-                      onValueChange={(value) => {
-                        const profile =
-                          profiles.find((item) => item.id === value) ?? null;
-                        setForm((current) => ({
-                          ...current,
-                          browser_profile_id: value,
-                          browser_profile_key:
-                            profile?.profile_key ?? current.browser_profile_key,
-                        }));
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="选择浏览器资料" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {form.browser_profile_id && !selectedBrowserProfile ? (
-                          <SelectItem value={form.browser_profile_id}>
-                            {form.browser_profile_key
-                              ? `${form.browser_profile_key}（当前绑定，已不可用）`
-                              : "当前绑定资料（已不可用）"}
-                          </SelectItem>
-                        ) : null}
-                        {profiles.map((profile) => (
-                          <SelectItem key={profile.id} value={profile.id}>
-                            {profile.name} · {profile.profile_key}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className="text-xs text-slate-500">
-                      调度执行时会复用统一 `launch_browser_session` 启动边界。
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>环境预设</Label>
-                    <Select
-                      value={
-                        form.browser_environment_preset_id || NO_PRESET_VALUE
-                      }
-                      onValueChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          browser_environment_preset_id:
-                            value === NO_PRESET_VALUE ? "" : value,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="不附加环境预设" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={NO_PRESET_VALUE}>
-                          不附加环境预设
-                        </SelectItem>
-                        {form.browser_environment_preset_id &&
-                        !selectedEnvironmentPreset ? (
-                          <SelectItem
-                            value={form.browser_environment_preset_id}
-                          >
-                            当前绑定预设（已不可用）
-                          </SelectItem>
-                        ) : null}
-                        {presets.map((preset) => (
-                          <SelectItem key={preset.id} value={preset.id}>
-                            {preset.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="automation-job-browser-url">启动地址</Label>
-                    <Input
-                      id="automation-job-browser-url"
-                      value={form.browser_url}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          browser_url: event.target.value,
-                        }))
-                      }
-                      placeholder="留空则使用资料默认启动地址"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="automation-job-browser-target-id">
-                      Target ID
-                    </Label>
-                    <Input
-                      id="automation-job-browser-target-id"
-                      value={form.browser_target_id}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          browser_target_id: event.target.value,
-                        }))
-                      }
-                      placeholder="可选，指定固定 target"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>流模式</Label>
-                    <Select
-                      value={form.browser_stream_mode}
-                      onValueChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          browser_stream_mode: value as BrowserStreamMode,
-                        }))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="events">仅事件</SelectItem>
-                        <SelectItem value="frames">仅画面</SelectItem>
-                        <SelectItem value="both">事件 + 画面</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {resourcesLoading ? (
-                  <div className="mt-3 text-xs text-slate-500">
-                    正在加载浏览器资料与环境预设...
-                  </div>
-                ) : null}
-
-                {!resourcesLoading && profiles.length === 0 ? (
-                  <div className="mt-4 rounded-[18px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
-                    还没有可用的浏览器资料，请先到浏览器运行时管理页创建资料。
-                  </div>
-                ) : null}
-              </div>
-            )}
-
-            <div className="mt-5 grid gap-4 rounded-[24px] border border-slate-200/80 bg-white/80 p-4 md:grid-cols-2">
-              <div className="flex items-center justify-between rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3">
-                <div>
-                  <div className="text-sm font-medium text-slate-900">
-                    启用任务
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    关闭后 job 不参与轮询
-                  </div>
-                </div>
-                <Switch
-                  checked={form.enabled}
-                  onCheckedChange={(checked) =>
-                    setForm((current) => ({ ...current, enabled: checked }))
-                  }
-                />
-              </div>
-              <div className="flex items-center justify-between rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3">
-                <div>
-                  <div className="text-sm font-medium text-slate-900">
-                    {form.payload_kind === "agent_turn"
-                      ? "允许 Web 搜索"
-                      : "自动打开调试窗口"}
-                  </div>
-                  <div className="text-xs text-slate-500">
-                    {form.payload_kind === "agent_turn"
-                      ? "为这个 job 单独开启搜索能力"
-                      : "适合需要人工观察或接管的浏览器任务"}
-                  </div>
-                </div>
-                <Switch
-                  checked={
-                    form.payload_kind === "agent_turn"
-                      ? form.web_search
-                      : form.browser_open_window
-                  }
-                  onCheckedChange={(checked) =>
-                    setForm((current) => ({
-                      ...current,
-                      ...(current.payload_kind === "agent_turn"
-                        ? { web_search: checked }
-                        : { browser_open_window: checked }),
-                    }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="mt-5 rounded-[24px] border border-slate-200/80 bg-white/80 p-4">
-              <div className="grid gap-5 md:grid-cols-4">
-                <div className="space-y-2">
-                  <Label>输出模式</Label>
-                  <Select
-                    value={form.delivery_mode}
-                    onValueChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        delivery_mode: value as "none" | "announce",
-                      }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">关闭</SelectItem>
-                      <SelectItem value="announce">任务完成后投递</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {form.delivery_mode === "announce" ? (
-                  <>
-                    <div className="space-y-2">
-                      <Label>输出目标</Label>
-                      <Select
-                        value={form.delivery_channel}
-                        onValueChange={(value) =>
-                          setForm((current) => {
-                            const deliveryChannel = value as
-                              | "webhook"
-                              | "telegram"
-                              | "local_file"
-                              | "google_sheets";
-                            const contract = normalizeDeliveryOutputContract(
-                              deliveryChannel,
-                              current.delivery_output_schema,
-                              current.delivery_output_format,
-                            );
-                            return {
-                              ...current,
-                              delivery_channel: deliveryChannel,
-                              delivery_output_schema: contract.outputSchema,
-                              delivery_output_format: contract.outputFormat,
-                            };
-                          })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="webhook">Webhook</SelectItem>
-                          <SelectItem value="google_sheets">
-                            Google Sheets
-                          </SelectItem>
-                          <SelectItem value="local_file">本地文件</SelectItem>
-                          <SelectItem value="telegram">Telegram</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>输出契约</Label>
-                      <Select
-                        disabled={isTextOnlyDelivery}
-                        value={form.delivery_output_schema}
-                        onValueChange={(value) =>
-                          setForm((current) => ({
-                            ...current,
-                            delivery_output_schema:
-                              value as AutomationOutputSchema,
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="text">文本摘要</SelectItem>
-                          <SelectItem value="json">JSON 对象</SelectItem>
-                          <SelectItem value="table">表格</SelectItem>
-                          <SelectItem value="csv">CSV</SelectItem>
-                          <SelectItem value="links">链接列表</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>输出格式</Label>
-                      <Select
-                        disabled={isTextOnlyDelivery}
-                        value={form.delivery_output_format}
-                        onValueChange={(value) =>
-                          setForm((current) => ({
-                            ...current,
-                            delivery_output_format:
-                              value as AutomationOutputFormat,
-                          }))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="text">文本摘要</SelectItem>
-                          <SelectItem value="json">结构化 JSON</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </>
-                ) : null}
-              </div>
-
-              {form.delivery_mode === "announce" ? (
-                <>
-                  <div className="mt-4 space-y-2">
-                    <Label>目标地址</Label>
-                    <Input
-                      value={form.delivery_target}
-                      onChange={(event) =>
-                        setForm((current) => ({
-                          ...current,
-                          delivery_target: event.target.value,
-                        }))
-                      }
-                      placeholder={
-                        form.delivery_channel === "telegram"
-                          ? "bot_token:chat_id"
-                          : form.delivery_channel === "google_sheets"
-                            ? "spreadsheet_id=...;sheet=AgentOutput;credentials_file=ABSOLUTE_PATH_TO_SERVICE_ACCOUNT.json"
-                            : form.delivery_channel === "local_file"
-                              ? "输入输出文件绝对路径"
-                              : "https://example.com/webhook"
-                      }
-                    />
-                  </div>
-                  <div className="mt-4 flex items-center justify-between rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3">
+                <div className="mt-5 grid gap-4 rounded-[24px] border border-slate-200/80 bg-white/80 p-4 md:grid-cols-2">
+                  <div className="flex items-center justify-between rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3">
                     <div>
                       <div className="text-sm font-medium text-slate-900">
-                        投递失败不阻塞任务
+                        启用任务
                       </div>
                       <div className="text-xs text-slate-500">
-                        关闭后投递失败也会记为 job 执行失败
+                        关闭后 job 不参与轮询
                       </div>
                     </div>
                     <Switch
-                      checked={form.best_effort}
+                      checked={form.enabled}
+                      onCheckedChange={(checked) =>
+                        setForm((current) => ({ ...current, enabled: checked }))
+                      }
+                    />
+                  </div>
+                  <div className="flex items-center justify-between rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3">
+                    <div>
+                      <div className="text-sm font-medium text-slate-900">
+                        允许 Web 搜索
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        为这个 job 单独开启搜索能力
+                      </div>
+                    </div>
+                    <Switch
+                      checked={form.web_search}
                       onCheckedChange={(checked) =>
                         setForm((current) => ({
                           ...current,
-                          best_effort: checked,
+                          web_search: checked,
                         }))
                       }
                     />
                   </div>
-                  <div className="mt-4 rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3 text-xs leading-5 text-slate-500">
-                    {form.delivery_channel === "webhook"
-                      ? "Webhook 适合系统对接；当前会携带 output_schema、output_format、结构化 output_data，以及稳定的 delivery_attempt_id 幂等键。"
-                      : form.delivery_channel === "google_sheets"
-                        ? "Google Sheets 使用 service account 直连，目标格式为 spreadsheet_id=...;sheet=...;credentials_file=绝对路径，可选 include_header=true 和 value_input_option=USER_ENTERED；追加行会自动带 delivery_attempt_id 等元数据列。"
-                        : form.delivery_channel === "local_file"
-                          ? "本地文件适合先落最小输出闭环；text 会按契约渲染，json 会写入结构化 payload。"
-                          : "Telegram 继续作为兼容通知通道，只发送文本提醒，不承诺结构化输出契约。"}
+                </div>
+
+                <div className="mt-5 rounded-[24px] border border-slate-200/80 bg-white/80 p-4">
+                  <div className="grid gap-5 md:grid-cols-4">
+                    <div className="space-y-2">
+                      <Label>输出模式</Label>
+                      <Select
+                        value={form.delivery_mode}
+                        onValueChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            delivery_mode: value as "none" | "announce",
+                          }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">关闭</SelectItem>
+                          <SelectItem value="announce">任务完成后投递</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {form.delivery_mode === "announce" ? (
+                      <>
+                        <div className="space-y-2">
+                          <Label>输出目标</Label>
+                          <Select
+                            value={form.delivery_channel}
+                            onValueChange={(value) =>
+                              setForm((current) => {
+                                const deliveryChannel = value as
+                                  | "webhook"
+                                  | "telegram"
+                                  | "local_file"
+                                  | "google_sheets";
+                                const contract = normalizeDeliveryOutputContract(
+                                  deliveryChannel,
+                                  current.delivery_output_schema,
+                                  current.delivery_output_format,
+                                );
+                                return {
+                                  ...current,
+                                  delivery_channel: deliveryChannel,
+                                  delivery_output_schema: contract.outputSchema,
+                                  delivery_output_format: contract.outputFormat,
+                                };
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="webhook">Webhook</SelectItem>
+                              <SelectItem value="google_sheets">
+                                Google Sheets
+                              </SelectItem>
+                              <SelectItem value="local_file">
+                                本地文件
+                              </SelectItem>
+                              <SelectItem value="telegram">Telegram</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>输出契约</Label>
+                          <Select
+                            disabled={isTextOnlyDelivery}
+                            value={form.delivery_output_schema}
+                            onValueChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                delivery_output_schema:
+                                  value as AutomationOutputSchema,
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="text">文本摘要</SelectItem>
+                              <SelectItem value="json">JSON 对象</SelectItem>
+                              <SelectItem value="table">表格</SelectItem>
+                              <SelectItem value="csv">CSV</SelectItem>
+                              <SelectItem value="links">链接列表</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>输出格式</Label>
+                          <Select
+                            disabled={isTextOnlyDelivery}
+                            value={form.delivery_output_format}
+                            onValueChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                delivery_output_format:
+                                  value as AutomationOutputFormat,
+                              }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="text">文本摘要</SelectItem>
+                              <SelectItem value="json">结构化 JSON</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </>
+                    ) : null}
                   </div>
-                </>
-              ) : null}
-            </div>
+
+                  {form.delivery_mode === "announce" ? (
+                    <>
+                      <div className="mt-4 space-y-2">
+                        <Label>目标地址</Label>
+                        <Input
+                          value={form.delivery_target}
+                          onChange={(event) =>
+                            setForm((current) => ({
+                              ...current,
+                              delivery_target: event.target.value,
+                            }))
+                          }
+                          placeholder={
+                            form.delivery_channel === "telegram"
+                              ? "bot_token:chat_id"
+                              : form.delivery_channel === "google_sheets"
+                                ? "spreadsheet_id=...;sheet=AgentOutput;credentials_file=ABSOLUTE_PATH_TO_SERVICE_ACCOUNT.json"
+                                : form.delivery_channel === "local_file"
+                                  ? "输入输出文件绝对路径"
+                                  : "https://example.com/webhook"
+                          }
+                        />
+                      </div>
+                      <div className="mt-4 flex items-center justify-between rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3">
+                        <div>
+                          <div className="text-sm font-medium text-slate-900">
+                            投递失败不阻塞任务
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            关闭后投递失败也会记为 job 执行失败
+                          </div>
+                        </div>
+                        <Switch
+                          checked={form.best_effort}
+                          onCheckedChange={(checked) =>
+                            setForm((current) => ({
+                              ...current,
+                              best_effort: checked,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="mt-4 rounded-[18px] border border-slate-200/80 bg-slate-50/70 px-4 py-3 text-xs leading-5 text-slate-500">
+                        {form.delivery_channel === "webhook"
+                          ? "Webhook 适合系统对接；当前会携带 output_schema、output_format、结构化 output_data，以及稳定的 delivery_attempt_id 幂等键。"
+                          : form.delivery_channel === "google_sheets"
+                            ? "Google Sheets 使用 service account 直连，目标格式为 spreadsheet_id=...;sheet=...;credentials_file=绝对路径，可选 include_header=true 和 value_input_option=USER_ENTERED；追加行会自动带 delivery_attempt_id 等元数据列。"
+                            : form.delivery_channel === "local_file"
+                              ? "本地文件适合先落最小输出闭环；text 会按契约渲染，json 会写入结构化 payload。"
+                              : "Telegram 继续作为兼容通知通道，只发送文本提醒，不承诺结构化输出契约。"}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </>
+            )}
 
             {error ? (
               <div className="mt-5 rounded-[18px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
@@ -1238,10 +1002,12 @@ export function AutomationJobDialog({
             <Button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={saving}
+              disabled={saving || isLegacyBrowserJob}
             >
               {saving
                 ? "保存中..."
+                : isLegacyBrowserJob
+                  ? "该类型不可保存"
                 : mode === "create"
                   ? "创建任务"
                   : "保存修改"}

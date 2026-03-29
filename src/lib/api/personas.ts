@@ -6,6 +6,16 @@ import type {
   PersonaUpdate,
 } from "@/types/persona";
 
+export interface GeneratedPersonaDraft {
+  name: string;
+  description: string;
+  style: string;
+  tone: string;
+  targetAudience: string;
+  forbiddenWords: string[];
+  preferredWords: string[];
+}
+
 export async function listPersonas(projectId: string): Promise<Persona[]> {
   return safeInvoke<Persona[]>("list_personas", { projectId });
 }
@@ -42,4 +52,10 @@ export async function setDefaultPersona(
 
 export async function listPersonaTemplates(): Promise<PersonaTemplate[]> {
   return safeInvoke<PersonaTemplate[]>("list_persona_templates");
+}
+
+export async function generatePersona(
+  prompt: string,
+): Promise<GeneratedPersonaDraft> {
+  return safeInvoke<GeneratedPersonaDraft>("generate_persona", { prompt });
 }

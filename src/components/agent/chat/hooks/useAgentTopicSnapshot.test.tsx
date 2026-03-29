@@ -1,0 +1,170 @@
+import { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Message } from "../types";
+import { useAgentTopicSnapshot } from "./useAgentTopicSnapshot";
+
+type HookProps = Parameters<typeof useAgentTopicSnapshot>[0];
+
+interface HookHarness {
+  render: (nextProps?: Partial<HookProps>) => Promise<void>;
+  unmount: () => void;
+}
+
+const mountedRoots: Array<{
+  container: HTMLDivElement;
+  root: ReturnType<typeof createRoot>;
+}> = [];
+
+function createMessage(overrides?: Partial<Message>): Message {
+  return {
+    id: "msg-1",
+    role: "assistant",
+    content: "已完成当前整理。",
+    timestamp: new Date("2026-03-29T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+async function mountHook(props?: Partial<HookProps>): Promise<HookHarness> {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+
+  const defaultProps: HookProps = {
+    sessionId: "session-1",
+    hasActiveTopic: true,
+    messages: [createMessage()],
+    isSending: false,
+    pendingActionCount: 0,
+    queuedTurnCount: 0,
+    workspaceId: "ws-1",
+    workspacePathMissing: false,
+    topicsCount: 1,
+    updateTopicSnapshot: vi.fn(),
+  };
+
+  function TestComponent(currentProps: HookProps) {
+    useAgentTopicSnapshot(currentProps);
+    return null;
+  }
+
+  const render = async (nextProps?: Partial<HookProps>) => {
+    const mergedProps = {
+      ...defaultProps,
+      ...props,
+      ...nextProps,
+    };
+    await act(async () => {
+      root.render(<TestComponent {...mergedProps} />);
+      await Promise.resolve();
+    });
+  };
+
+  await render();
+  const mounted = { container, root };
+  mountedRoots.push(mounted);
+
+  return {
+    render,
+    unmount: () => {
+      const index = mountedRoots.indexOf(mounted);
+      if (index >= 0) {
+        mountedRoots.splice(index, 1);
+      }
+      act(() => {
+        root.unmount();
+      });
+      container.remove();
+    },
+  };
+}
+
+describe("useAgentTopicSnapshot", () => {
+  beforeEach(() => {
+    (
+      globalThis as typeof globalThis & {
+        IS_REACT_ACT_ENVIRONMENT?: boolean;
+      }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+  });
+
+  afterEach(() => {
+    while (mountedRoots.length > 0) {
+      const mounted = mountedRoots.pop();
+      if (!mounted) {
+        break;
+      }
+      act(() => {
+        mounted.root.unmount();
+      });
+      mounted.container.remove();
+    }
+    vi.clearAllMocks();
+  });
+
+  it("存在活动话题时应推送 live snapshot", async () => {
+    const updateTopicSnapshot = vi.fn();
+    const harness = await mountHook({
+      updateTopicSnapshot,
+    });
+
+    try {
+      expect(updateTopicSnapshot).toHaveBeenCalledTimes(1);
+      expect(updateTopicSnapshot).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({
+          messagesCount: 1,
+          status: "done",
+          lastPreview: "已完成当前整理。",
+        }),
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("相同 snapshot 重渲染时应跳过重复更新", async () => {
+    const updateTopicSnapshot = vi.fn();
+    const harness = await mountHook({
+      updateTopicSnapshot,
+    });
+
+    try {
+      expect(updateTopicSnapshot).toHaveBeenCalledTimes(1);
+
+      await harness.render({
+        messages: [createMessage()],
+      });
+
+      expect(updateTopicSnapshot).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("失去活动话题后应重置去重键，并在恢复后重新更新", async () => {
+    const updateTopicSnapshot = vi.fn();
+    const harness = await mountHook({
+      updateTopicSnapshot,
+    });
+
+    try {
+      expect(updateTopicSnapshot).toHaveBeenCalledTimes(1);
+
+      await harness.render({
+        hasActiveTopic: false,
+      });
+      expect(updateTopicSnapshot).toHaveBeenCalledTimes(1);
+
+      await harness.render({
+        hasActiveTopic: true,
+        messages: [createMessage()],
+      });
+
+      expect(updateTopicSnapshot).toHaveBeenCalledTimes(2);
+    } finally {
+      harness.unmount();
+    }
+  });
+});

@@ -6,8 +6,13 @@ import type {
   AutoContinueRequestPayload,
   QueuedTurnSnapshot,
 } from "@/lib/api/agentRuntime";
-import type { SendMessageObserver, SessionModelPreference, AssistantDraftState } from "./agentChatShared";
+import type {
+  AssistantDraftState,
+  SendMessageObserver,
+  SessionModelPreference,
+} from "./agentChatShared";
 import type { AgentRuntimeAdapter } from "./agentRuntimeAdapter";
+import type { AgentAccessMode } from "./agentChatStorage";
 import type { StreamRequestState } from "./agentStreamSubmissionLifecycle";
 import type { ActionRequired, Message, MessageImage } from "../types";
 import type { ChatToolPreferences } from "../utils/chatToolPreferences";
@@ -28,6 +33,7 @@ interface ExecuteAgentStreamSubmitOptions {
   getSyncedSessionRecentPreferences?: (
     sessionId: string,
   ) => ChatToolPreferences | null;
+  effectiveAccessMode: AgentAccessMode;
   content: string;
   images: MessageImage[];
   skipUserMessage: boolean;
@@ -104,6 +110,7 @@ export async function executeAgentStreamSubmit(
     getRequiredWorkspaceId,
     getSyncedSessionExecutionStrategy,
     getSyncedSessionRecentPreferences,
+    effectiveAccessMode,
     content,
     images,
     skipUserMessage,
@@ -228,6 +235,7 @@ export async function executeAgentStreamSubmit(
       syncedSessionModelPreference,
       syncedExecutionStrategy,
       effectiveExecutionStrategy,
+      effectiveAccessMode,
       effectiveProviderType,
       effectiveModel,
       modelOverride,

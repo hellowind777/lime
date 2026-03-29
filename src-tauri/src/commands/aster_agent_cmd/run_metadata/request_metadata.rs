@@ -115,6 +115,8 @@ pub(in crate::commands::aster_agent_cmd) fn extend_map_with_harness_fields(
         ("gateKey", "gate_key"),
         ("run_title", "run_title"),
         ("runTitle", "run_title"),
+        ("access_mode", "access_mode"),
+        ("accessMode", "access_mode"),
         ("content_id", "content_id"),
         ("contentId", "content_id"),
         ("preferred_team_preset_id", "preferred_team_preset_id"),
@@ -173,6 +175,15 @@ pub(in crate::commands::aster_agent_cmd) fn extend_map_with_harness_fields(
     }
 }
 
+fn derive_request_access_mode(
+    request: &AsterChatRequest,
+) -> Option<lime_agent::SessionExecutionRuntimeAccessMode> {
+    lime_agent::SessionExecutionRuntimeAccessMode::from_runtime_policies(
+        request.approval_policy.as_deref(),
+        request.sandbox_policy.as_deref(),
+    )
+}
+
 pub(in crate::commands::aster_agent_cmd) fn build_chat_run_metadata_base(
     request: &AsterChatRequest,
     workspace_id: &str,
@@ -201,6 +212,14 @@ pub(in crate::commands::aster_agent_cmd) fn build_chat_run_metadata_base(
         serde_json::json!(request.message.chars().count()),
     );
     metadata.insert(
+        "approval_policy".to_string(),
+        serde_json::json!(request.approval_policy.clone()),
+    );
+    metadata.insert(
+        "sandbox_policy".to_string(),
+        serde_json::json!(request.sandbox_policy.clone()),
+    );
+    metadata.insert(
         "web_search_enabled".to_string(),
         serde_json::json!(request_tool_policy.effective_web_search),
     );
@@ -217,6 +236,14 @@ pub(in crate::commands::aster_agent_cmd) fn build_chat_run_metadata_base(
         serde_json::json!(auto_continue_metadata),
     );
     extend_map_with_harness_fields(&mut metadata, request.metadata.as_ref());
+    if !metadata.contains_key("access_mode") {
+        if let Some(access_mode) = derive_request_access_mode(request) {
+            metadata.insert(
+                "access_mode".to_string(),
+                serde_json::json!(access_mode.as_str()),
+            );
+        }
+    }
     for (target_key, preference_keys, session_value) in [
         (
             "thinking_enabled",

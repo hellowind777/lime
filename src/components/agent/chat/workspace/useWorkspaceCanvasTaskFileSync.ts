@@ -1,11 +1,19 @@
-import { useEffect, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import {
+  useEffect,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
 import type { CanvasStateUnion } from "@/components/content-creator/canvas/canvasUtils";
 import { createInitialDocumentState } from "@/components/content-creator/canvas/document";
 import { createInitialMusicState } from "@/components/content-creator/canvas/music/types";
 import { parseLyrics } from "@/components/content-creator/canvas/music/utils/lyricsParser";
-import type { LayoutMode, ThemeType } from "@/components/content-creator/types";
+import type { ThemeType } from "@/components/content-creator/types";
 import type { TaskFile } from "../components/TaskFiles";
-import { resolveCanvasTaskFileTarget, shouldDeferCanvasSyncWhileEditing } from "../utils/taskFileCanvasSync";
+import {
+  resolveCanvasTaskFileTarget,
+  shouldDeferCanvasSyncWhileEditing,
+} from "../utils/taskFileCanvasSync";
 import { isRenderableTaskFile } from "./themeWorkbenchHelpers";
 
 interface UseWorkspaceCanvasTaskFileSyncParams {
@@ -17,7 +25,6 @@ interface UseWorkspaceCanvasTaskFileSyncParams {
   documentEditorFocusedRef: MutableRefObject<boolean>;
   setSelectedFileId: Dispatch<SetStateAction<string | undefined>>;
   setCanvasState: Dispatch<SetStateAction<CanvasStateUnion | null>>;
-  setLayoutMode: Dispatch<SetStateAction<LayoutMode>>;
   upsertNovelCanvasState: (
     previous: CanvasStateUnion | null,
     content: string,
@@ -33,7 +40,6 @@ export function useWorkspaceCanvasTaskFileSync({
   documentEditorFocusedRef,
   setSelectedFileId,
   setCanvasState,
-  setLayoutMode,
   upsertNovelCanvasState,
 }: UseWorkspaceCanvasTaskFileSyncParams) {
   useEffect(() => {
@@ -95,7 +101,6 @@ export function useWorkspaceCanvasTaskFileSync({
       }
       return { ...previous, content: targetContent };
     });
-    setLayoutMode("chat-canvas");
   }, [
     canvasState?.type,
     documentEditorFocusedRef,
@@ -103,7 +108,6 @@ export function useWorkspaceCanvasTaskFileSync({
     mappedTheme,
     selectedFileId,
     setCanvasState,
-    setLayoutMode,
     setSelectedFileId,
     taskFiles,
     upsertNovelCanvasState,

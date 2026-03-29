@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getAutomationJobs } from "@/lib/api/automation";
 import {
-  getServiceSkillCatalog,
-  isSeededServiceSkillCatalog,
-  refreshServiceSkillCatalogFromRemote,
-  subscribeServiceSkillCatalogChanged,
-} from "@/lib/api/serviceSkills";
-import { isServiceSkillSiteCapabilityBound } from "./siteCapabilityBinding";
+  getSkillCatalog,
+  isSeededSkillCatalog,
+  refreshSkillCatalogFromRemote,
+  subscribeSkillCatalogChanged,
+  type SkillCatalog,
+  type SkillCatalogItem,
+  type SkillCatalogGroup,
+} from "@/lib/api/skillCatalog";
 import {
   buildServiceSkillAutomationStatusMap,
   listServiceSkillAutomationLinks,
@@ -17,82 +19,23 @@ import {
   getServiceSkillCloudRunStatusMap,
   subscribeServiceSkillCloudRunsChanged,
 } from "./cloudRunStorage";
+import {
+  getServiceSkillActionLabel,
+  getServiceSkillRunnerDescription,
+  getServiceSkillRunnerLabel,
+  getServiceSkillRunnerTone,
+} from "./skillPresentation";
 import { supportsServiceSkillLocalAutomation } from "./automationDraft";
 import { getServiceSkillUsageMap, recordServiceSkillUsage } from "./storage";
 import type {
   RecordServiceSkillUsageInput,
   ServiceSkillAutomationStatus,
-  ServiceSkillCatalog,
   ServiceSkillCatalogMeta,
   ServiceSkillCloudRunStatus,
   ServiceSkillHomeItem,
-  ServiceSkillItem,
-  ServiceSkillRunnerType,
-  ServiceSkillTone,
 } from "./types";
 
-const RUNNER_LABELS: Record<ServiceSkillRunnerType, string> = {
-  instant: "本地即时执行",
-  scheduled: "本地计划任务",
-  managed: "本地持续跟踪",
-};
-
-const RUNNER_TONES: Record<ServiceSkillRunnerType, ServiceSkillTone> = {
-  instant: "emerald",
-  scheduled: "sky",
-  managed: "amber",
-};
-
-const RUNNER_DESCRIPTIONS: Record<ServiceSkillRunnerType, string> = {
-  instant: "客户端起步版可直接进入工作区执行。",
-  scheduled: "可直接创建本地定时任务，并回流到任务中心与工作区。",
-  managed: "可直接创建本地持续跟踪任务，并回流到任务中心与工作区。",
-};
-
-const LOCAL_ACTION_LABELS: Record<ServiceSkillRunnerType, string> = {
-  instant: "填写参数",
-  scheduled: "创建任务",
-  managed: "创建跟踪",
-};
-
-function getRunnerLabel(item: ServiceSkillItem): string {
-  if (item.executionLocation === "cloud_required") {
-    return "云端托管执行";
-  }
-  if (isServiceSkillSiteCapabilityBound(item)) {
-    return "浏览器站点执行";
-  }
-  return RUNNER_LABELS[item.runnerType];
-}
-
-function getRunnerTone(item: ServiceSkillItem): ServiceSkillTone {
-  if (item.executionLocation === "cloud_required") {
-    return "slate";
-  }
-  return RUNNER_TONES[item.runnerType];
-}
-
-function getRunnerDescription(item: ServiceSkillItem): string {
-  if (item.executionLocation === "cloud_required") {
-    return "提交到 OEM 云端执行，结果由服务端异步返回。";
-  }
-  if (isServiceSkillSiteCapabilityBound(item)) {
-    return "直接进入浏览器工作台，复用真实登录态执行站点脚本并沉淀结果。";
-  }
-  return RUNNER_DESCRIPTIONS[item.runnerType];
-}
-
-function getActionLabel(item: ServiceSkillItem): string {
-  if (item.executionLocation === "cloud_required") {
-    return "提交云端";
-  }
-  if (isServiceSkillSiteCapabilityBound(item)) {
-    return "启动采集";
-  }
-  return LOCAL_ACTION_LABELS[item.runnerType];
-}
-
-function getSkillBadge(item: ServiceSkillItem, isRecent: boolean): string {
+function getSkillBadge(item: SkillCatalogItem, isRecent: boolean): string {
   if (isRecent) {
     return "最近使用";
   }
@@ -103,7 +46,7 @@ function getSkillBadge(item: ServiceSkillItem, isRecent: boolean): string {
 }
 
 function buildHomeItems(
-  items: ServiceSkillItem[],
+  items: SkillCatalogItem[],
   automationStatusMap: Record<string, ServiceSkillAutomationStatus>,
   cloudRunStatusMap: Record<string, ServiceSkillCloudRunStatus>,
 ): ServiceSkillHomeItem[] {
@@ -116,13 +59,15 @@ function buildHomeItems(
 
       return {
         ...item,
+        groupKey: item.groupKey,
+        executionKind: item.execution.kind,
         badge: getSkillBadge(item, isRecent),
         recentUsedAt,
         isRecent,
-        runnerLabel: getRunnerLabel(item),
-        runnerTone: getRunnerTone(item),
-        runnerDescription: getRunnerDescription(item),
-        actionLabel: getActionLabel(item),
+        runnerLabel: getServiceSkillRunnerLabel(item),
+        runnerTone: getServiceSkillRunnerTone(item),
+        runnerDescription: getServiceSkillRunnerDescription(item),
+        actionLabel: getServiceSkillActionLabel(item),
         automationStatus: automationStatusMap[item.id] ?? null,
         cloudStatus:
           item.executionLocation === "cloud_required"
@@ -151,22 +96,24 @@ function buildHomeItems(
 }
 
 function buildCatalogMeta(
-  catalog: ServiceSkillCatalog,
+  catalog: SkillCatalog,
 ): ServiceSkillCatalogMeta {
-  const isSeeded = isSeededServiceSkillCatalog(catalog);
+  const isSeeded = isSeededSkillCatalog(catalog);
 
   return {
     tenantId: catalog.tenantId,
     version: catalog.version,
     syncedAt: catalog.syncedAt,
     itemCount: catalog.items.length,
-    sourceLabel: isSeeded ? "本地 Seeded 目录" : "租户云目录",
+    groupCount: catalog.groups.length,
+    sourceLabel: isSeeded ? "本地 Seeded 目录" : "租户技能目录",
     isSeeded,
   };
 }
 
 interface UseServiceSkillsResult {
   skills: ServiceSkillHomeItem[];
+  groups: SkillCatalogGroup[];
   catalogMeta: ServiceSkillCatalogMeta | null;
   isLoading: boolean;
   error: string | null;
@@ -175,7 +122,8 @@ interface UseServiceSkillsResult {
 }
 
 export function useServiceSkills(enabled = true): UseServiceSkillsResult {
-  const [items, setItems] = useState<ServiceSkillItem[]>([]);
+  const [items, setItems] = useState<SkillCatalogItem[]>([]);
+  const [groups, setGroups] = useState<SkillCatalogGroup[]>([]);
   const [automationStatusMap, setAutomationStatusMap] = useState<
     Record<string, ServiceSkillAutomationStatus>
   >({});
@@ -190,34 +138,38 @@ export function useServiceSkills(enabled = true): UseServiceSkillsResult {
   const [usageVersion, setUsageVersion] = useState(0);
   const [automationLinkCount, setAutomationLinkCount] = useState(0);
 
-  const applyCatalogSnapshot = useCallback(async (catalog: ServiceSkillCatalog) => {
-    const automationLinks = listServiceSkillAutomationLinks();
-    let automationStatuses: Record<string, ServiceSkillAutomationStatus> = {};
-    let resolvedAutomationLinkCount = automationLinks.length;
+  const applyCatalogSnapshot = useCallback(
+    async (catalog: SkillCatalog) => {
+      const automationLinks = listServiceSkillAutomationLinks();
+      let automationStatuses: Record<string, ServiceSkillAutomationStatus> = {};
+      let resolvedAutomationLinkCount = automationLinks.length;
 
-    const hasLocalAutomationSkills = catalog.items.some((item) =>
-      supportsServiceSkillLocalAutomation(item),
-    );
+      const hasLocalAutomationSkills = catalog.items.some((item) =>
+        supportsServiceSkillLocalAutomation(item),
+      );
 
-    if (automationLinks.length > 0 || hasLocalAutomationSkills) {
-      try {
-        const automationJobs = await getAutomationJobs();
-        automationStatuses = buildServiceSkillAutomationStatusMap(automationJobs);
-        resolvedAutomationLinkCount =
-          resolveServiceSkillAutomationLinks(automationJobs).length;
-      } catch {
-        automationStatuses = {};
+      if (automationLinks.length > 0 || hasLocalAutomationSkills) {
+        try {
+          const automationJobs = await getAutomationJobs();
+          automationStatuses = buildServiceSkillAutomationStatusMap(automationJobs);
+          resolvedAutomationLinkCount =
+            resolveServiceSkillAutomationLinks(automationJobs).length;
+        } catch {
+          automationStatuses = {};
+        }
       }
-    }
 
-    setItems(catalog.items);
-    setAutomationLinkCount(resolvedAutomationLinkCount);
-    setAutomationStatusMap(automationStatuses);
-    setCatalogMeta(buildCatalogMeta(catalog));
-  }, []);
+      setItems(catalog.items);
+      setGroups(catalog.groups);
+      setAutomationLinkCount(resolvedAutomationLinkCount);
+      setAutomationStatusMap(automationStatuses);
+      setCatalogMeta(buildCatalogMeta(catalog));
+    },
+    [],
+  );
 
   const loadCurrentCatalog = useCallback(async () => {
-    const catalog = await getServiceSkillCatalog();
+    const catalog = await getSkillCatalog();
     await applyCatalogSnapshot(catalog);
     return catalog;
   }, [applyCatalogSnapshot]);
@@ -225,6 +177,7 @@ export function useServiceSkills(enabled = true): UseServiceSkillsResult {
   const refresh = useCallback(async () => {
     if (!enabled) {
       setItems([]);
+      setGroups([]);
       setAutomationStatusMap({});
       setAutomationLinkCount(0);
       setCatalogMeta(null);
@@ -234,7 +187,7 @@ export function useServiceSkills(enabled = true): UseServiceSkillsResult {
     }
 
     setIsLoading(true);
-    let currentCatalog: ServiceSkillCatalog | null = null;
+    let currentCatalog: SkillCatalog | null = null;
 
     try {
       currentCatalog = await loadCurrentCatalog();
@@ -242,7 +195,7 @@ export function useServiceSkills(enabled = true): UseServiceSkillsResult {
       setIsLoading(false);
 
       try {
-        const remoteCatalog = await refreshServiceSkillCatalogFromRemote();
+        const remoteCatalog = await refreshSkillCatalogFromRemote();
         if (remoteCatalog) {
           await applyCatalogSnapshot(remoteCatalog);
         }
@@ -253,6 +206,7 @@ export function useServiceSkills(enabled = true): UseServiceSkillsResult {
       }
     } catch (reason) {
       setItems([]);
+      setGroups([]);
       setAutomationStatusMap({});
       setAutomationLinkCount(0);
       setCatalogMeta(null);
@@ -271,7 +225,7 @@ export function useServiceSkills(enabled = true): UseServiceSkillsResult {
       return;
     }
 
-    const unsubscribeCatalog = subscribeServiceSkillCatalogChanged(() => {
+    const unsubscribeCatalog = subscribeSkillCatalogChanged(() => {
       void loadCurrentCatalog();
     });
     const unsubscribeAutomationLinks =
@@ -334,6 +288,7 @@ export function useServiceSkills(enabled = true): UseServiceSkillsResult {
 
   return {
     skills,
+    groups,
     catalogMeta,
     isLoading,
     error,

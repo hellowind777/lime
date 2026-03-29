@@ -7,13 +7,30 @@
 import { safeInvoke } from "@/lib/dev-bridge";
 import { logAgentDebug } from "@/lib/agentDebug";
 import type {
+  RunSiteAdapterRequest,
+  SavedSiteAdapterContent,
+  SaveSiteAdapterResultRequest,
+  SiteAdapterCatalogStatus,
+  SiteAdapterDefinition,
+  SiteAdapterImportResult,
+  SiteAdapterImportYamlBundleRequest,
+  SiteAdapterLaunchReadinessRequest,
+  SiteAdapterLaunchReadinessResult,
+  SiteAdapterRecommendation,
+  SiteAdapterRunResult,
+} from "@/lib/webview-api";
+import type {
   AgentMessage,
   AgentThreadItem,
   AgentThreadTurn,
 } from "./agentProtocol";
+import { normalizeLegacyThreadItem } from "./agentTextNormalization";
 import type {
+  AsterApprovalPolicy,
   AsterExecutionStrategy,
+  AsterSandboxPolicy,
   AsterSessionExecutionRuntime,
+  AsterSessionExecutionRuntimeAccessMode,
   AsterSessionExecutionRuntimePreferences,
   AsterSessionExecutionRuntimeRecentTeamSelection,
 } from "./agentExecutionRuntime";
@@ -24,8 +41,11 @@ import {
 
 export type { QueuedTurnSnapshot } from "./queuedTurn";
 export type {
+  AsterApprovalPolicy,
   AsterExecutionStrategy,
+  AsterSandboxPolicy,
   AsterSessionExecutionRuntime,
+  AsterSessionExecutionRuntimeAccessMode,
   AsterSessionExecutionRuntimePreferences,
   AsterSessionExecutionRuntimeRecentTeamRole,
   AsterSessionExecutionRuntimeRecentTeamSelection,
@@ -882,6 +902,8 @@ export interface AgentTurnConfigSnapshot {
   provider_preference?: string;
   model_preference?: string;
   thinking_enabled?: boolean;
+  approval_policy?: AsterApprovalPolicy;
+  sandbox_policy?: AsterSandboxPolicy;
   execution_strategy?: AsterExecutionStrategy;
   web_search?: boolean;
   auto_continue?: AutoContinueRequestPayload;
@@ -968,6 +990,7 @@ export interface AgentRuntimeUpdateSessionRequest {
   provider_name?: string;
   model_name?: string;
   execution_strategy?: AsterExecutionStrategy;
+  recent_access_mode?: AsterSessionExecutionRuntimeAccessMode;
   recent_preferences?: AsterSessionExecutionRuntimePreferences;
   recent_team_selection?: AsterSessionExecutionRuntimeRecentTeamSelection;
 }
@@ -1355,6 +1378,11 @@ export async function getAgentRuntimeSession(
   const normalizedDetail = detail as AsterSessionDetail | null | undefined;
   return {
     ...(detail as AsterSessionDetail),
+    items: Array.isArray(normalizedDetail?.items)
+      ? normalizedDetail.items.map((item) =>
+          normalizeLegacyThreadItem(item as AgentThreadItem),
+        )
+      : normalizedDetail?.items,
     queued_turns: normalizeQueuedTurnSnapshots(normalizedDetail?.queued_turns),
     thread_read: normalizeThreadReadModel(normalizedDetail?.thread_read),
   };
@@ -1471,6 +1499,90 @@ export async function deleteAgentRuntimeSession(
   sessionId: string,
 ): Promise<void> {
   return await safeInvoke("agent_runtime_delete_session", { sessionId });
+}
+
+export async function siteListAdapters(): Promise<SiteAdapterDefinition[]> {
+  return await safeInvoke("site_list_adapters");
+}
+
+export async function siteRecommendAdapters(
+  limit?: number,
+): Promise<SiteAdapterRecommendation[]> {
+  return await safeInvoke("site_recommend_adapters", {
+    request: { limit },
+  });
+}
+
+export async function siteSearchAdapters(
+  query: string,
+): Promise<SiteAdapterDefinition[]> {
+  return await safeInvoke("site_search_adapters", {
+    request: { query },
+  });
+}
+
+export async function siteGetAdapterInfo(
+  name: string,
+): Promise<SiteAdapterDefinition> {
+  return await safeInvoke("site_get_adapter_info", {
+    request: { name },
+  });
+}
+
+export async function siteGetAdapterLaunchReadiness(
+  request: SiteAdapterLaunchReadinessRequest,
+): Promise<SiteAdapterLaunchReadinessResult> {
+  return await safeInvoke("site_get_adapter_launch_readiness", {
+    request,
+  });
+}
+
+export async function siteGetAdapterCatalogStatus(): Promise<SiteAdapterCatalogStatus> {
+  return await safeInvoke("site_get_adapter_catalog_status");
+}
+
+export async function siteApplyAdapterCatalogBootstrap(
+  payload: unknown,
+): Promise<SiteAdapterCatalogStatus> {
+  return await safeInvoke("site_apply_adapter_catalog_bootstrap", {
+    request: {
+      payload,
+    },
+  });
+}
+
+export async function siteClearAdapterCatalogCache(): Promise<SiteAdapterCatalogStatus> {
+  return await safeInvoke("site_clear_adapter_catalog_cache");
+}
+
+export async function siteImportAdapterYamlBundle(
+  request: SiteAdapterImportYamlBundleRequest,
+): Promise<SiteAdapterImportResult> {
+  return await safeInvoke("site_import_adapter_yaml_bundle", {
+    request,
+  });
+}
+
+export async function siteRunAdapter(
+  request: RunSiteAdapterRequest,
+): Promise<SiteAdapterRunResult> {
+  return await safeInvoke("site_run_adapter", { request });
+}
+
+export async function siteDebugRunAdapter(
+  request: RunSiteAdapterRequest,
+): Promise<SiteAdapterRunResult> {
+  return await safeInvoke("site_debug_run_adapter", {
+    request,
+  });
+}
+
+export async function siteSaveAdapterResult(
+  request: SaveSiteAdapterResultRequest,
+): Promise<SavedSiteAdapterContent> {
+  return await safeInvoke("site_save_adapter_result", {
+    request,
+  });
 }
 
 /**

@@ -9,18 +9,15 @@ import { resolveInternalImageTaskDisplayName } from "./internalImagePlaceholder"
 import { resolveToolDisplayLabel } from "./toolDisplayInfo";
 
 export type AgentThreadGroupKind =
-  | "thinking"
+  | "process"
   | "approval"
   | "alert"
-  | "browser"
-  | "search"
-  | "file"
-  | "command"
+  | "artifact"
   | "subagent"
   | "other";
 
 export interface AgentThreadSummaryChip {
-  kind: Exclude<AgentThreadGroupKind, "thinking" | "approval" | "alert" | "other">;
+  kind: Exclude<AgentThreadGroupKind, "approval" | "alert" | "other">;
   label: string;
   count: number;
 }
@@ -41,7 +38,7 @@ export interface AgentThreadOrderedBlock {
 
 export interface AgentThreadSemanticGroup {
   id: string;
-  kind: Exclude<AgentThreadGroupKind, "thinking">;
+  kind: Exclude<AgentThreadGroupKind, "other">;
   title: string;
   status: AgentThreadItemStatus;
   items: AgentThreadItem[];
@@ -235,6 +232,10 @@ function resolveUrlFromItem(item: AgentThreadItem): string | null {
 }
 
 function isBrowserItem(item: AgentThreadItem): boolean {
+  if (item.type === "web_search" || item.type === "command_execution") {
+    return false;
+  }
+
   if (item.type !== "tool_call") {
     return false;
   }
@@ -325,15 +326,6 @@ function isCommandItem(item: AgentThreadItem): boolean {
 }
 
 function classifyItemKind(item: AgentThreadItem): AgentThreadGroupKind {
-  if (
-    item.type === "plan" ||
-    item.type === "reasoning" ||
-    item.type === "turn_summary" ||
-    item.type === "context_compaction"
-  ) {
-    return "thinking";
-  }
-
   if (item.type === "approval_request" || item.type === "request_user_input") {
     return "approval";
   }
@@ -346,63 +338,43 @@ function classifyItemKind(item: AgentThreadItem): AgentThreadGroupKind {
     return "subagent";
   }
 
-  if (isBrowserItem(item)) {
-    return "browser";
+  if (item.type === "file_artifact") {
+    return "artifact";
   }
 
-  if (isSearchItem(item)) {
-    return "search";
-  }
-
-  if (isFileItem(item)) {
-    return "file";
-  }
-
-  if (isCommandItem(item)) {
-    return "command";
-  }
-
-  return "other";
+  return "process";
 }
 
-function resolveGroupTitle(kind: Exclude<AgentThreadGroupKind, "thinking">): string {
+function resolveGroupTitle(kind: Exclude<AgentThreadGroupKind, "other">): string {
   switch (kind) {
+    case "process":
+      return "执行过程";
     case "approval":
       return "等你确认";
     case "alert":
       return "提醒和错误";
-    case "browser":
-      return "页面操作";
-    case "search":
-      return "联网搜索";
-    case "file":
+    case "artifact":
       return "文件和产物";
-    case "command":
-      return "命令";
     case "subagent":
       return "协作成员";
-    case "other":
     default:
       return "执行过程";
   }
 }
 
 function resolveBlockTitle(kind: AgentThreadGroupKind): string {
-  if (kind === "thinking") {
-    return "思考";
+  if (kind === "other") {
+    return "执行过程";
   }
-
   return resolveGroupTitle(kind);
 }
 
 function resolveCountLabel(kind: AgentThreadGroupKind, count: number): string {
   switch (kind) {
-    case "thinking":
-      return `${count} 项`;
-    case "browser":
+    case "process":
       return `${count} 步`;
-    case "search":
-      return `${count} 次`;
+    case "artifact":
+      return `${count} 份`;
     case "subagent":
       return `${count} 个任务`;
     default:
@@ -612,15 +584,7 @@ function summarizeThinkingItem(item: AgentThreadItem): string | null {
       return item.status === "in_progress" ? "思考中" : "已完成思考";
     }
 
-    if (startsWithAnyPrefix(preview, ["在整理表单", "已整理成表单"])) {
-      return preview;
-    }
-
-    return prefixAction(
-      preview,
-      "已决定：",
-      ["已决定：", "决定了：", "思考中", "已完成思考"],
-    );
+    return shortenText(preview);
   }
 
   if (item.type === "context_compaction") {
@@ -645,18 +609,34 @@ function summarizeThinkingItem(item: AgentThreadItem): string | null {
 }
 
 function summarizeGroupPreviewLine(
-  kind: Exclude<AgentThreadGroupKind, "thinking">,
+  kind: Exclude<AgentThreadGroupKind, "other">,
   item: AgentThreadItem,
 ): string | null {
   switch (kind) {
-    case "browser":
-      return summarizeBrowserItem(item);
-    case "search":
-      return summarizeSearchItem(item);
-    case "file":
+    case "process":
+      if (
+        item.type === "plan" ||
+        item.type === "reasoning" ||
+        item.type === "turn_summary" ||
+        item.type === "context_compaction"
+      ) {
+        return summarizeThinkingItem(item);
+      }
+      if (isBrowserItem(item)) {
+        return summarizeBrowserItem(item);
+      }
+      if (isSearchItem(item)) {
+        return summarizeSearchItem(item);
+      }
+      if (isFileItem(item)) {
+        return summarizeFileItem(item);
+      }
+      if (isCommandItem(item)) {
+        return summarizeCommandItem(item);
+      }
+      return summarizeOtherItem(item);
+    case "artifact":
       return summarizeFileItem(item);
-    case "command":
-      return summarizeCommandItem(item);
     case "subagent":
       return summarizeSubagentItem(item);
     case "alert":
@@ -678,7 +658,6 @@ function summarizeGroupPreviewLine(
         );
       }
       return null;
-    case "other":
     default:
       return summarizeOtherItem(item);
   }
@@ -688,8 +667,8 @@ function summarizeBlockPreviewLine(
   kind: AgentThreadGroupKind,
   item: AgentThreadItem,
 ): string | null {
-  if (kind === "thinking") {
-    return summarizeThinkingItem(item);
+  if (kind === "other") {
+    return summarizeOtherItem(item);
   }
 
   return summarizeGroupPreviewLine(kind, item);
@@ -721,7 +700,13 @@ function shouldDefaultExpand(kind: AgentThreadGroupKind, status: AgentThreadItem
 
 function buildSummaryText(items: AgentThreadItem[]): string | null {
   const sortedThinking = items
-    .filter((item) => classifyItemKind(item) === "thinking")
+    .filter(
+      (item) =>
+        item.type === "plan" ||
+        item.type === "reasoning" ||
+        item.type === "turn_summary" ||
+        item.type === "context_compaction",
+    )
     .sort(compareItems);
 
   for (let index = sortedThinking.length - 1; index >= 0; index -= 1) {
@@ -739,7 +724,11 @@ export function buildAgentThreadDisplayModel(
 ): AgentThreadDisplayModel {
   const sortedItems = [...items].sort(compareItems);
   const thinkingItems = sortedItems.filter(
-    (item) => classifyItemKind(item) === "thinking",
+    (item) =>
+      item.type === "plan" ||
+      item.type === "reasoning" ||
+      item.type === "turn_summary" ||
+      item.type === "context_compaction",
   );
   const orderedBlocks: AgentThreadOrderedBlock[] = [];
   const groups: AgentThreadSemanticGroup[] = [];
@@ -767,11 +756,13 @@ export function buildAgentThreadDisplayModel(
       previewLines: buildPreviewLines(current.kind, current.items),
       countLabel: resolveCountLabel(current.kind, current.items.length),
       rawDetailLabel:
-        current.kind === "thinking"
-          ? "查看处理思路"
-          : current.kind === "approval"
-            ? "查看待处理项"
-            : "查看执行过程",
+        current.kind === "approval"
+          ? "查看待处理项"
+          : current.kind === "artifact"
+            ? "查看产物"
+            : current.kind === "subagent"
+              ? "查看协作详情"
+              : "查看执行过程",
       defaultExpanded: shouldDefaultExpand(current.kind, status),
       startedAt,
       completedAt,
@@ -779,7 +770,7 @@ export function buildAgentThreadDisplayModel(
 
     orderedBlocks.push(block);
 
-    if (current.kind !== "thinking") {
+    if (current.kind !== "other") {
       groups.push({
         id: block.id,
         kind: current.kind,
@@ -813,11 +804,7 @@ export function buildAgentThreadDisplayModel(
   >();
 
   for (const group of groups) {
-    if (
-      group.kind === "approval" ||
-      group.kind === "alert" ||
-      group.kind === "other"
-    ) {
+    if (group.kind === "approval" || group.kind === "alert") {
       continue;
     }
 

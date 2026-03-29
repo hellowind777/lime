@@ -161,6 +161,8 @@ describe("Agent API 治理护栏", () => {
         provider_preference: "custom-provider",
         model_preference: "gpt-5.3-codex",
         thinking_enabled: true,
+        approval_policy: "on-request",
+        sandbox_policy: "workspace-write",
       },
     });
 
@@ -174,7 +176,25 @@ describe("Agent API 治理护栏", () => {
           provider_preference: "custom-provider",
           model_preference: "gpt-5.3-codex",
           thinking_enabled: true,
+          approval_policy: "on-request",
+          sandbox_policy: "workspace-write",
         },
+      },
+    });
+  });
+
+  it("updateAgentRuntimeSession 应支持 recent_access_mode", async () => {
+    mockSafeInvoke.mockResolvedValueOnce(undefined);
+
+    await updateAgentRuntimeSession({
+      session_id: "session-runtime-access",
+      recent_access_mode: "full-access",
+    });
+
+    expect(mockSafeInvoke).toHaveBeenCalledWith("agent_runtime_update_session", {
+      request: {
+        session_id: "session-runtime-access",
+        recent_access_mode: "full-access",
       },
     });
   });
@@ -585,6 +605,20 @@ describe("Agent API 治理护栏", () => {
           timestamp: 1710002000,
         },
       ],
+      items: [
+        {
+          id: "turn-summary-1",
+          thread_id: "thread-runtime-2",
+          turn_id: "turn-runtime-2",
+          sequence: 1,
+          status: "completed",
+          started_at: "2026-03-29T10:00:00Z",
+          completed_at: "2026-03-29T10:00:02Z",
+          updated_at: "2026-03-29T10:00:02Z",
+          type: "turn_summary",
+          text: "已决定：直接回答优先\n当前请求无需默认升级为搜索或任务。",
+        },
+      ],
     });
 
     await expect(getAgentRuntimeSession("session-runtime-2")).resolves.toEqual({
@@ -664,6 +698,20 @@ describe("Agent API 治理护栏", () => {
           role: "assistant",
           content: [{ type: "text", text: "world" }],
           timestamp: 1710002000,
+        },
+      ],
+      items: [
+        {
+          id: "turn-summary-1",
+          thread_id: "thread-runtime-2",
+          turn_id: "turn-runtime-2",
+          sequence: 1,
+          status: "completed",
+          started_at: "2026-03-29T10:00:00Z",
+          completed_at: "2026-03-29T10:00:02Z",
+          updated_at: "2026-03-29T10:00:02Z",
+          type: "turn_summary",
+          text: "直接回答优先\n当前请求无需默认升级为搜索或任务。",
         },
       ],
     });

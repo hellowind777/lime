@@ -48,7 +48,6 @@ import {
   type NotionEditorHandle,
 } from "@/components/content-creator/canvas/document/editor";
 
-export type ArtifactWorkbenchLayoutMode = "full" | "canvas-only";
 export type ArtifactWorkbenchInspectorTab =
   | "overview"
   | "sources"

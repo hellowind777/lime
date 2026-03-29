@@ -24,6 +24,7 @@ type ThemeWorkbenchSidebarRuntime = ReturnType<
 interface UseWorkspaceThemeWorkbenchShellRuntimeParams {
   showChatPanel: ThemeWorkbenchSidebarPresentationParams["showChatPanel"];
   showSidebar: ThemeWorkbenchSidebarPresentationParams["showSidebar"];
+  hasPendingA2UIForm: ThemeWorkbenchSidebarPresentationParams["hasPendingA2UIForm"];
   contextHarnessRuntime: ContextHarnessRuntime;
   themeWorkbenchScaffoldRuntime: ThemeWorkbenchScaffoldRuntime;
   themeWorkbenchSidebarRuntime: ThemeWorkbenchSidebarRuntime;
@@ -49,6 +50,7 @@ interface UseWorkspaceThemeWorkbenchShellRuntimeParams {
 export function useWorkspaceThemeWorkbenchShellRuntime({
   showChatPanel,
   showSidebar,
+  hasPendingA2UIForm,
   contextHarnessRuntime,
   themeWorkbenchScaffoldRuntime,
   themeWorkbenchSidebarRuntime,
@@ -73,6 +75,7 @@ export function useWorkspaceThemeWorkbenchShellRuntime({
   return useThemeWorkbenchSidebarPresentation({
     showChatPanel,
     showSidebar,
+    hasPendingA2UIForm,
     isThemeWorkbench: contextHarnessRuntime.isThemeWorkbench,
     shouldUseCompactThemeWorkbench:
       themeWorkbenchScaffoldRuntime.shouldUseCompactThemeWorkbench,
@@ -115,7 +118,9 @@ export function useWorkspaceThemeWorkbenchShellRuntime({
       },
     },
     harnessDialog: {
-      enabled: contextHarnessRuntime.isThemeWorkbench,
+      enabled:
+        contextHarnessRuntime.workbenchEnabled &&
+        contextHarnessRuntime.isThemeWorkbench,
       open: contextHarnessRuntime.harnessPanelVisible,
       onOpenChange: contextHarnessRuntime.setHarnessPanelVisible,
       harnessState,

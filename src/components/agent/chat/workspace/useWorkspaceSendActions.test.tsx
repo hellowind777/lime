@@ -91,6 +91,7 @@ function mountHook(initialProps?: Partial<HookProps>): HookHarness {
     runtimeStyleMessagePrompt: "",
     projectId: "project-1",
     executionStrategy: "react",
+    accessMode: "current",
     preferredTeamPresetId: null,
     selectedTeam: null,
     selectedTeamLabel: "",
@@ -281,6 +282,33 @@ describe("useWorkspaceSendActions", () => {
             theme: "social-media",
             session_mode: "theme_workbench",
             content_id: "content-service-skill-1",
+          }),
+        },
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("应把 accessMode 写入 harness request metadata", async () => {
+    const harness = mountHook({
+      accessMode: "full-access",
+    });
+
+    try {
+      await act(async () => {
+        const started = await harness.getValue().handleSend();
+        expect(started).toBe(true);
+      });
+
+      expect(mockSendMessage).toHaveBeenCalledTimes(1);
+      const args = mockSendMessage.mock.calls[0] as Parameters<
+        HookProps["sendMessage"]
+      >;
+      expect(args?.[8]).toMatchObject({
+        requestMetadata: {
+          harness: expect.objectContaining({
+            access_mode: "full-access",
           }),
         },
       });

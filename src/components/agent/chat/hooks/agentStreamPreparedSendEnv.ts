@@ -10,6 +10,7 @@ import type {
   WorkspacePathMissingState,
 } from "./agentChatShared";
 import type { AgentRuntimeAdapter } from "./agentRuntimeAdapter";
+import type { AgentAccessMode } from "./agentChatStorage";
 import type { ActiveStreamState } from "./agentStreamSubmissionLifecycle";
 import type { ActionRequired, Message } from "../types";
 import type { ChatToolPreferences } from "../utils/chatToolPreferences";
@@ -23,6 +24,7 @@ export interface AgentStreamPreparedSendEnv {
   runtime: AgentRuntimeAdapter;
   ensureSession: () => Promise<string | null>;
   executionStrategy: AsterExecutionStrategy;
+  accessMode: AgentAccessMode;
   providerTypeRef: MutableRefObject<string>;
   modelRef: MutableRefObject<string>;
   sessionIdRef: MutableRefObject<string | null>;
@@ -64,4 +66,20 @@ export interface AgentStreamPreparedSendEnv {
   playToolcallSound: () => void;
   playTypewriterSound: () => void;
   appendThinkingToParts: AppendThinkingToPartsFn;
+}
+
+export interface CreateAgentStreamPreparedSendEnvOptions
+  extends Omit<AgentStreamPreparedSendEnv, "getQueuedTurnsCount"> {
+  queuedTurnsCount: number;
+}
+
+export function createAgentStreamPreparedSendEnv(
+  options: CreateAgentStreamPreparedSendEnvOptions,
+): AgentStreamPreparedSendEnv {
+  const { queuedTurnsCount, ...rest } = options;
+
+  return {
+    ...rest,
+    getQueuedTurnsCount: () => queuedTurnsCount,
+  };
 }

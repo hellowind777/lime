@@ -1,9 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { safeInvoke } from "@/lib/dev-bridge";
-import { openPathWithDefaultApp, revealPathInFinder } from "./fileSystem";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import {
+  convertLocalFileSrc,
+  openPathWithDefaultApp,
+  revealPathInFinder,
+} from "./fileSystem";
 
 vi.mock("@/lib/dev-bridge", () => ({
   safeInvoke: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: vi.fn(),
 }));
 
 describe("fileSystem API", () => {
@@ -29,5 +38,12 @@ describe("fileSystem API", () => {
     expect(safeInvoke).toHaveBeenCalledWith("open_with_default_app", {
       path: "/tmp/demo.txt",
     });
+  });
+
+  it("应代理 convertFileSrc", () => {
+    vi.mocked(convertFileSrc).mockReturnValueOnce("asset://demo.txt");
+
+    expect(convertLocalFileSrc("/tmp/demo.txt")).toBe("asset://demo.txt");
+    expect(convertFileSrc).toHaveBeenCalledWith("/tmp/demo.txt");
   });
 });

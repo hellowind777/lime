@@ -26,7 +26,8 @@ use lime_browser_runtime::{
     EventBufferSnapshot, OpenSessionRequest,
 };
 use lime_server::chrome_bridge::{
-    self, ChromeBridgeCommandRequest, ChromeBridgeCommandResult, ChromeBridgeStatusSnapshot,
+    self, ChromeBridgeCommandRequest, ChromeBridgeCommandResult, ChromeBridgeDisconnectResult,
+    ChromeBridgeStatusSnapshot,
 };
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -1171,6 +1172,16 @@ pub async fn get_chrome_bridge_status() -> Result<ChromeBridgeStatusSnapshot, St
 #[cfg_attr(any(test, not(debug_assertions)), allow(dead_code))]
 pub async fn get_chrome_bridge_status_global() -> Result<ChromeBridgeStatusSnapshot, String> {
     get_chrome_bridge_status().await
+}
+
+/// 主动断开 ChromeBridge 当前连接（用于连接器设置页）
+#[tauri::command]
+pub async fn disconnect_browser_connector_session(
+    profile_key: Option<String>,
+) -> Result<ChromeBridgeDisconnectResult, String> {
+    Ok(chrome_bridge::chrome_bridge_hub()
+        .disconnect_connections(profile_key.as_deref())
+        .await)
 }
 
 /// 通过 ChromeBridge 执行命令（用于设置页测试）

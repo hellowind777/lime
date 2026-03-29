@@ -33,11 +33,53 @@ describe("actionRequestA2UI", () => {
 
     expect(response).not.toBeNull();
     expect(response?.submitAction?.label).toBe("确认并继续");
+    expect(response?.data).toMatchObject({});
     expect(
       response?.components.some(
         (component) => component.component === "ChoicePicker",
       ),
     ).toBe(true);
+  });
+
+  it("多问题 ask_user 应在 A2UI 层裁剪为单轮单问", () => {
+    const request: ActionRequired = {
+      requestId: "req-ask-governed-form",
+      actionType: "ask_user",
+      prompt: "继续前先确认几个点",
+      questions: [
+        {
+          question: "你希望我先聚焦哪一部分？",
+        },
+        {
+          question: "这一步更看重速度还是完整度？",
+        },
+      ],
+      status: "pending",
+    };
+
+    const response = buildActionRequestA2UI(request);
+
+    expect(response?.data).toMatchObject({
+      governance: {
+        originalQuestionCount: 2,
+        deferredQuestionCount: 1,
+      },
+    });
+    expect(response?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "TextField",
+          label: "你希望我先聚焦哪一部分？",
+        }),
+      ]),
+    );
+    expect(response?.components).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "这一步更看重速度还是完整度？",
+        }),
+      ]),
+    );
   });
 
   it("应将单选 A2UI 表单值归一化为 ask_user 提交载荷", () => {
@@ -100,6 +142,49 @@ describe("actionRequestA2UI", () => {
     });
   });
 
+  it("多字段 elicitation 提交 metadata 时应保留治理信息", () => {
+    const request: ActionRequired = {
+      requestId: "req-eli-governed-meta",
+      actionType: "elicitation",
+      prompt: "补充创作约束",
+      requestedSchema: {
+        type: "object",
+        required: ["topic", "audience"],
+        properties: {
+          topic: {
+            type: "string",
+            title: "主题",
+          },
+          audience: {
+            type: "string",
+            title: "目标人群",
+          },
+        },
+      },
+      status: "pending",
+    };
+
+    const payload = buildActionRequestSubmissionPayload(request, {
+      "req-eli-governed-meta_topic": "A2UI 治理",
+    });
+
+    expect(payload.requestMetadata).toMatchObject({
+      elicitation_context: {
+        governance: {
+          originalFieldCount: 2,
+          retainedFieldKey: "topic",
+          deferredFieldCount: 1,
+        },
+        entries: [
+          expect.objectContaining({
+            fieldKey: "topic",
+            label: "主题",
+          }),
+        ],
+      },
+    });
+  });
+
   it("应基于已解析 userData 为 elicitation 构造字段级 metadata", () => {
     const request: ActionRequired = {
       requestId: "req-eli-meta-1",
@@ -130,18 +215,17 @@ describe("actionRequestA2UI", () => {
       requestMetadata: {
         elicitation_context: {
           action_type: "elicitation",
+          governance: {
+            originalFieldCount: 2,
+            retainedFieldKey: "topic",
+            deferredFieldCount: 1,
+          },
           entries: [
             {
               fieldKey: "topic",
               label: "主题",
               value: "A2UI 改造",
               summary: "A2UI 改造",
-            },
-            {
-              fieldKey: "includeCta",
-              label: "是否加入 CTA",
-              value: false,
-              summary: "否",
             },
           ],
         },
@@ -188,7 +272,6 @@ describe("actionRequestA2UI", () => {
 
     expect(resolveActionRequestInitialFormData(request)).toEqual({
       "req-eli-1_topic": "A2UI 改造",
-      "req-eli-1_channels": ["小红书", "视频号"],
     });
   });
 

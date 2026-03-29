@@ -2,10 +2,16 @@ import {
   normalizeQueuedTurnSnapshot,
   type QueuedTurnSnapshot,
 } from "./queuedTurn";
+import {
+  normalizeLegacyRuntimeStatusTitle,
+  normalizeLegacyThreadItem,
+} from "./agentTextNormalization";
 import type { AsterTurnOutputSchemaRuntime } from "./agentExecutionRuntime";
 import type {
+  AsterApprovalPolicy,
   AgentRuntimeSubmitTurnRequest,
   AsterExecutionStrategy,
+  AsterSandboxPolicy,
   AutoContinueRequestPayload,
   ImageInput,
 } from "./agentRuntime";
@@ -520,6 +526,8 @@ export interface AgentUserPreferences {
   modelPreference?: string;
   thinking?: boolean;
   webSearch?: boolean;
+  approvalPolicy?: AsterApprovalPolicy;
+  sandboxPolicy?: AsterSandboxPolicy;
   executionStrategy?: AsterExecutionStrategy;
   autoContinue?: AutoContinueRequestPayload;
 }
@@ -626,17 +634,17 @@ export function parseAgentEvent(data: unknown): AgentEvent | null {
     case "item_started":
       return {
         type: "item_started",
-        item: event.item as AgentThreadItem,
+        item: normalizeLegacyThreadItem(event.item as AgentThreadItem),
       };
     case "item_updated":
       return {
         type: "item_updated",
-        item: event.item as AgentThreadItem,
+        item: normalizeLegacyThreadItem(event.item as AgentThreadItem),
       };
     case "item_completed":
       return {
         type: "item_completed",
-        item: event.item as AgentThreadItem,
+        item: normalizeLegacyThreadItem(event.item as AgentThreadItem),
       };
     case "turn_completed":
       return {
@@ -790,7 +798,10 @@ export function parseAgentEvent(data: unknown): AgentEvent | null {
             phase === "failed"
               ? phase
               : "routing",
-          title: typeof status?.title === "string" ? status.title : "",
+          title:
+            typeof status?.title === "string"
+              ? normalizeLegacyRuntimeStatusTitle(status.title)
+              : "",
           detail: typeof status?.detail === "string" ? status.detail : "",
           checkpoints: Array.isArray(status?.checkpoints)
             ? (status?.checkpoints as string[])
@@ -931,6 +942,8 @@ export function createSubmitTurnRequestFromAgentOp(
       provider_preference: preferences?.providerPreference,
       model_preference: preferences?.modelPreference,
       thinking_enabled: preferences?.thinking,
+      approval_policy: preferences?.approvalPolicy,
+      sandbox_policy: preferences?.sandboxPolicy,
       execution_strategy: preferences?.executionStrategy,
       web_search: preferences?.webSearch,
       auto_continue: preferences?.autoContinue,

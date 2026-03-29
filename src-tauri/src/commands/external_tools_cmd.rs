@@ -24,12 +24,12 @@ pub struct CodexCliStatus {
     pub error: Option<String>,
 }
 
-/// 检查 Codex CLI 状态
+/// 检查 Lime CLI 状态
 #[tauri::command]
 pub async fn check_codex_cli_status() -> Result<CodexCliStatus, String> {
     let mut status = CodexCliStatus::default();
 
-    // 1. 检查 codex 命令是否存在
+    // 1. 检查 Lime 命令是否存在
     let version_result = Command::new("codex")
         .arg("--version")
         .stdout(Stdio::piped())
@@ -150,7 +150,7 @@ pub async fn get_external_tools() -> Result<Vec<ExternalTool>, String> {
     tools.push(ExternalTool {
         id: "codex-cli".to_string(),
         name: "Codex CLI".to_string(),
-        description: "OpenAI Codex 命令行工具，支持 Agent 模式和工具调用".to_string(),
+        description: "Lime 命令行工具，支持 Agent 模式和工具调用".to_string(),
         installed: codex_status.installed,
         configured: codex_status.logged_in,
         install_command: "npm i -g @openai/codex".to_string(),

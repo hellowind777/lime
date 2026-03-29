@@ -4,21 +4,64 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InputbarCore } from "./InputbarCore";
 
+const {
+  mockGetVoiceInputConfig,
+  mockStartRecording,
+  mockStopRecording,
+  mockTranscribeAudio,
+  mockPolishVoiceText,
+  mockCancelRecording,
+} = vi.hoisted(() => ({
+  mockGetVoiceInputConfig: vi.fn(async () => ({
+    enabled: true,
+    shortcut: "Alt+Space",
+    processor: {
+      polish_enabled: true,
+      default_instruction_id: "default",
+    },
+    output: {
+      mode: "type",
+      type_delay_ms: 0,
+    },
+    instructions: [],
+    sound_enabled: false,
+    translate_instruction_id: "",
+  })),
+  mockStartRecording: vi.fn(async () => undefined),
+  mockStopRecording: vi.fn(async () => ({
+    audio_data: [1, 2, 3, 4],
+    sample_rate: 16000,
+    duration: 1.2,
+  })),
+  mockTranscribeAudio: vi.fn(async () => ({
+    text: "原始识别文本",
+    provider: "mock",
+  })),
+  mockPolishVoiceText: vi.fn(async () => ({
+    text: "润色后的文本",
+    instruction_name: "默认润色",
+  })),
+  mockCancelRecording: vi.fn(async () => undefined),
+}));
+
 vi.mock("./InputbarTools", () => ({
   InputbarTools: () => <div data-testid="inputbar-tools">tools</div>,
 }));
 
-vi.mock("@/components/ui/tooltip", () => ({
-  TooltipProvider: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
-  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
-  TooltipContent: ({ children }: { children: React.ReactNode }) => (
-    <>{children}</>
-  ),
+vi.mock("@/lib/api/asrProvider", () => ({
+  getVoiceInputConfig: mockGetVoiceInputConfig,
+  startRecording: mockStartRecording,
+  stopRecording: mockStopRecording,
+  transcribeAudio: mockTranscribeAudio,
+  polishVoiceText: mockPolishVoiceText,
+  cancelRecording: mockCancelRecording,
+}));
+
+vi.mock("@/hooks/useVoiceSound", () => ({
+  useVoiceSound: () => ({
+    playStartSound: vi.fn(),
+    playStopSound: vi.fn(),
+  }),
 }));
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
@@ -43,7 +86,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const renderInputbarCore = (
+const renderInputbarCore = async (
   props?: Partial<React.ComponentProps<typeof InputbarCore>>,
 ) => {
   const container = document.createElement("div");
@@ -58,12 +101,14 @@ const renderInputbarCore = (
         onSend={vi.fn()}
         activeTools={{}}
         onToolClick={vi.fn()}
-        showTranslate={false}
         toolMode="attach-only"
         visualVariant="floating"
         {...props}
       />,
     );
+  });
+  await act(async () => {
+    await Promise.resolve();
   });
 
   mountedRoots.push({ root, container });
@@ -71,8 +116,8 @@ const renderInputbarCore = (
 };
 
 describe("InputbarCore", () => {
-  it("主题工作台未聚焦时应使用单行紧凑态，点击展开，移出后收起", () => {
-    const container = renderInputbarCore();
+  it("主题工作台未聚焦时应使用单行紧凑态，点击展开，移出后收起", async () => {
+    const container = await renderInputbarCore();
     const textarea = container.querySelector(
       "textarea",
     ) as HTMLTextAreaElement | null;
@@ -93,8 +138,11 @@ describe("InputbarCore", () => {
 
     expect(textarea?.className).not.toContain("floating-collapsed");
     expect(
-      container.querySelector('[data-testid="inputbar-tools"]'),
+      container.querySelector('button[aria-label="添加图片"]'),
     ).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="inputbar-tools"]'),
+    ).toBeNull();
 
     act(() => {
       inputBar?.dispatchEvent(
@@ -108,7 +156,7 @@ describe("InputbarCore", () => {
     expect(textarea?.className).not.toContain("floating-collapsed");
     expect(
       container.querySelector('[data-testid="inputbar-tools"]'),
-    ).toBeTruthy();
+    ).toBeNull();
 
     act(() => {
       textarea?.blur();
@@ -126,10 +174,79 @@ describe("InputbarCore", () => {
     ).toBeNull();
   });
 
-  it("生成中应显示稍后处理与停止按钮，并渲染待处理列表", () => {
+  it("点击展开按钮应切换输入框展开态", async () => {
+    const container = await renderInputbarCore({
+      visualVariant: "default",
+      toolMode: "default",
+    });
+    const textarea = container.querySelector(
+      "textarea",
+    ) as HTMLTextAreaElement | null;
+    const expandButton = container.querySelector(
+      'button[aria-label="展开输入框"]',
+    ) as HTMLButtonElement | null;
+
+    expect(textarea?.className).not.toContain("composer-expanded");
+    expect(expandButton).toBeTruthy();
+
+    await act(async () => {
+      expandButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(textarea?.className).toContain("composer-expanded");
+    expect(
+      container.querySelector('button[aria-label="收起输入框"]'),
+    ).toBeTruthy();
+  });
+
+  it("点击麦克风按钮应执行语音识别并把结果写回输入框", async () => {
+    const setText = vi.fn();
+    const container = await renderInputbarCore({
+      visualVariant: "default",
+      toolMode: "default",
+      setText,
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const micButton = container.querySelector(
+      'button[aria-label="开始语音输入"]',
+    ) as HTMLButtonElement | null;
+    expect(micButton).toBeTruthy();
+
+    await act(async () => {
+      micButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(mockStartRecording).toHaveBeenCalledTimes(1);
+
+    const stopDictationButton = container.querySelector(
+      'button[aria-label="停止语音输入"]',
+    ) as HTMLButtonElement | null;
+    expect(stopDictationButton).toBeTruthy();
+
+    await act(async () => {
+      stopDictationButton?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockStopRecording).toHaveBeenCalledTimes(1);
+    expect(mockTranscribeAudio).toHaveBeenCalledTimes(1);
+    expect(mockPolishVoiceText).toHaveBeenCalledWith("原始识别文本");
+    expect(setText).toHaveBeenCalledWith("润色后的文本");
+  });
+
+  it("生成中应显示稍后处理与停止按钮，并渲染待处理列表", async () => {
     const onSend = vi.fn();
     const onStop = vi.fn();
-    const container = renderInputbarCore({
+    const container = await renderInputbarCore({
       text: "下一条需求",
       onSend,
       onStop,
@@ -149,9 +266,9 @@ describe("InputbarCore", () => {
     const queueButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("稍后处理"),
     );
-    const stopButton = Array.from(container.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("停止"),
-    );
+    const stopButton = container.querySelector(
+      'button[aria-label="停止"]',
+    ) as HTMLButtonElement | null;
 
     expect(queueButton).toBeTruthy();
     expect(stopButton).toBeTruthy();
@@ -180,9 +297,9 @@ describe("InputbarCore", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
-  it("点击图片删除按钮应触发 onRemoveImage", () => {
+  it("点击图片删除按钮应触发 onRemoveImage", async () => {
     const onRemoveImage = vi.fn();
-    const container = renderInputbarCore({
+    const container = await renderInputbarCore({
       pendingImages: [
         {
           data: "aGVsbG8=",

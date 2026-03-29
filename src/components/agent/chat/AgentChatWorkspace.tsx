@@ -25,6 +25,7 @@ import { useCompatSubagentRuntime } from "./hooks/useCompatSubagentRuntime";
 import type { TopicBranchStatus } from "./hooks/useTopicBranchBoard";
 import { useSessionFiles } from "./hooks/useSessionFiles";
 import { useContentSync } from "./hooks/useContentSync";
+import { useDeveloperFeatureFlags } from "@/hooks/useDeveloperFeatureFlags";
 import { useGlobalMediaGenerationDefaults } from "@/hooks/useGlobalMediaGenerationDefaults";
 import { useTrayModelShortcuts } from "./hooks/useTrayModelShortcuts";
 import { type CanvasWorkbenchLayoutMode } from "./components/CanvasWorkbenchLayout";
@@ -66,7 +67,6 @@ import {
   type Character,
 } from "@/lib/api/memory";
 import { logAgentDebug } from "@/lib/agentDebug";
-import { SettingsTabs } from "@/types/settings";
 import { setActiveContentTarget } from "@/lib/activeContentTarget";
 import { recordWorkspaceRepair } from "@/lib/workspaceHealthTelemetry";
 import { useImageGen } from "@/components/image-gen/useImageGen";
@@ -81,11 +81,11 @@ import type { ThemeType, LayoutMode } from "@/components/content-creator/types";
 import { normalizeProjectId } from "./utils/topicProjectResolution";
 import { buildHarnessRequestMetadata } from "./utils/harnessRequestMetadata";
 import { deriveHarnessSessionState } from "./utils/harnessState";
-import { loadChatToolPreferences } from "./utils/chatToolPreferences";
 import {
-  mergeArtifacts,
-  resolveDefaultArtifactViewMode,
-} from "./utils/messageArtifacts";
+  alignChatToolPreferencesWithExecutionStrategy,
+  loadChatToolPreferences,
+} from "./utils/chatToolPreferences";
+import { mergeArtifacts } from "./utils/messageArtifacts";
 import {
   createChatToolPreferencesFromExecutionRuntime,
   createSessionRecentPreferencesFromChatToolPreferences,
@@ -124,6 +124,7 @@ import {
   isResumableBrowserTaskReason,
   mergeMessageArtifactsIntoStore,
 } from "./workspace/browserAssistArtifact";
+import { ServiceSkillExecutionCard } from "./workspace/ServiceSkillExecutionCard";
 import { useWorkspaceBrowserAssistRuntime } from "./workspace/useWorkspaceBrowserAssistRuntime";
 import { useWorkspaceBrowserPreflightRuntime } from "./workspace/useWorkspaceBrowserPreflightRuntime";
 import { useWorkspaceA2UISubmitActions } from "./workspace/useWorkspaceA2UISubmitActions";
@@ -164,6 +165,7 @@ import { useWorkspaceContextDetailActions } from "./workspace/useWorkspaceContex
 import { useWorkspaceTeamSessionRuntime } from "./workspace/useWorkspaceTeamSessionRuntime";
 import { useWorkspaceThemeWorkbenchDocumentPersistenceRuntime } from "./workspace/useWorkspaceThemeWorkbenchDocumentPersistenceRuntime";
 import { useWorkspaceServiceSkillEntryActions } from "./workspace/useWorkspaceServiceSkillEntryActions";
+import { useWorkspaceArtifactViewModeControl } from "./workspace/useWorkspaceArtifactViewModeControl";
 import { resolveArtifactProtocolFilePath } from "@/lib/artifact-protocol";
 import type { ArtifactDocumentV1 } from "@/lib/artifact-document";
 import type { ArtifactTimelineOpenTarget } from "./utils/artifactTimelineNavigation";
@@ -189,6 +191,28 @@ import { ServiceSkillLaunchDialog } from "./service-skills/ServiceSkillLaunchDia
 import { AutomationJobDialog } from "@/components/settings-v2/system/automation/AutomationJobDialog";
 
 const GENERAL_BROWSER_ASSIST_PROFILE_KEY = "general_browser_assist";
+
+function resolveDefaultSelectedArtifact(
+  activeTheme: string,
+  artifacts: Artifact[],
+): Artifact | null {
+  if (artifacts.length === 0) {
+    return null;
+  }
+
+  if (activeTheme !== "general") {
+    return artifacts[artifacts.length - 1] ?? null;
+  }
+
+  for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+    const candidate = artifacts[index];
+    if (candidate.type !== "browser_assist") {
+      return candidate;
+    }
+  }
+
+  return null;
+}
 
 export type {
   AgentChatWorkspaceProps,
@@ -224,10 +248,11 @@ export function AgentChatWorkspace({
   onSessionChange,
   preferContentReviewInRightRail = false,
   openBrowserAssistOnMount = false,
+  initialSiteSkillLaunch,
 }: AgentChatWorkspaceProps) {
   const normalizedEntryTheme = normalizeInitialTheme(initialTheme);
   const shouldAutoCollapseClassicClawSidebar =
-    agentEntry === "claw" && !lockTheme && normalizedEntryTheme === "general";
+    agentEntry === "claw" && normalizedEntryTheme === "general";
   const defaultTopicSidebarVisible =
     showChatPanel && !shouldAutoCollapseClassicClawSidebar;
   const [showSidebar, setShowSidebar] = useState(
@@ -423,6 +448,7 @@ export function AgentChatWorkspace({
   const [projectMemory, setProjectMemory] = useState<ProjectMemory | null>(
     null,
   );
+  const { workspaceHarnessEnabled } = useDeveloperFeatureFlags();
   const { mediaDefaults } = useGlobalMediaGenerationDefaults();
   const effectiveImageWorkbenchPreference = useMemo(
     () =>
@@ -562,7 +588,7 @@ export function AgentChatWorkspace({
       return;
     }
 
-    toast.error(`加载服务型技能失败：${serviceSkillsError}`);
+    toast.error(`加载技能目录失败：${serviceSkillsError}`);
   }, [activeTheme, serviceSkillsError]);
   const combinedSkillsLoading = skillsLoading || serviceSkillsLoading;
 
@@ -614,6 +640,7 @@ export function AgentChatWorkspace({
 
   // Artifact 状态 - 用于在画布中显示
   const artifacts = useAtomValue(artifactsAtom);
+  const selectedArtifactId = useAtomValue(selectedArtifactIdAtom);
   const selectedArtifact = useAtomValue(selectedArtifactAtom);
   const setArtifacts = useSetAtom(artifactsAtom);
   const setSelectedArtifactId = useSetAtom(selectedArtifactIdAtom);
@@ -625,17 +652,16 @@ export function AgentChatWorkspace({
     },
     [setArtifacts],
   );
+  const defaultSelectedArtifact = useMemo(
+    () => resolveDefaultSelectedArtifact(activeTheme, artifacts),
+    [activeTheme, artifacts],
+  );
   const liveArtifact = useMemo(
-    () =>
-      selectedArtifact ||
-      (artifacts.length > 0 ? artifacts[artifacts.length - 1] : null),
-    [artifacts, selectedArtifact],
+    () => selectedArtifact || defaultSelectedArtifact,
+    [defaultSelectedArtifact, selectedArtifact],
   );
 
   // Artifact 预览状态
-  const [artifactViewMode, setArtifactViewMode] = useState<
-    "source" | "preview"
-  >("source");
   const [artifactPreviewSize, setArtifactPreviewSize] = useState<
     "mobile" | "tablet" | "desktop"
   >("desktop");
@@ -661,9 +687,9 @@ export function AgentChatWorkspace({
     setBrowserTaskPreflight(null);
   }, [activeTheme]);
 
-  // 跳转到设置页安装技能
+  // 跳转到技能主页面
   const handleNavigateToSkillSettings = useCallback(() => {
-    _onNavigate?.("settings", { tab: SettingsTabs.Skills });
+    _onNavigate?.("skills");
   }, [_onNavigate]);
   const handleOpenSavedSiteContent = useCallback(
     ({ projectId, contentId }: SiteSavedContentTarget) => {
@@ -1094,6 +1120,8 @@ export function AgentChatWorkspace({
     setModel,
     executionStrategy,
     setExecutionStrategy,
+    accessMode,
+    setAccessMode,
     messages = [],
     setMessages: setChatMessages,
     currentTurnId,
@@ -1142,6 +1170,25 @@ export function AgentChatWorkspace({
     getSyncedSessionRecentPreferences,
   });
   activeSessionIdRef.current = sessionId;
+  const clawSidebarEntryResetKey = shouldAutoCollapseClassicClawSidebar
+    ? JSON.stringify({
+        projectId: externalProjectId ?? null,
+        contentId: contentId ?? null,
+        sessionId: sessionId ?? null,
+        theme: normalizedEntryTheme,
+        newChatAt: newChatAt ?? null,
+      })
+    : null;
+
+  useEffect(() => {
+    if (!shouldAutoCollapseClassicClawSidebar) {
+      return;
+    }
+
+    autoCollapsedTopicSidebarRef.current = false;
+    setShowSidebar(false);
+  }, [clawSidebarEntryResetKey, shouldAutoCollapseClassicClawSidebar]);
+
   const {
     selectedTeam,
     setSelectedTeam: handleSelectTeam,
@@ -1173,10 +1220,30 @@ export function AgentChatWorkspace({
     () => createChatToolPreferencesFromExecutionRuntime(executionRuntime),
     [executionRuntime],
   );
+  const effectiveChatToolPreferences = useMemo(
+    () =>
+      alignChatToolPreferencesWithExecutionStrategy(
+        chatToolPreferences,
+        executionStrategy,
+      ),
+    [chatToolPreferences, executionStrategy],
+  );
 
   useEffect(() => {
     syncChatToolPreferencesSource(activeTheme, runtimeChatToolPreferences);
   }, [activeTheme, runtimeChatToolPreferences, syncChatToolPreferencesSource]);
+
+  useEffect(() => {
+    if (chatToolPreferences.task === effectiveChatToolPreferences.task) {
+      return;
+    }
+
+    setChatToolPreferences(effectiveChatToolPreferences);
+  }, [
+    chatToolPreferences.task,
+    effectiveChatToolPreferences,
+    setChatToolPreferences,
+  ]);
 
   useEffect(() => {
     const trimmedSessionId = sessionId?.trim();
@@ -1184,7 +1251,10 @@ export function AgentChatWorkspace({
       return;
     }
 
-    const fallbackPreferences = loadChatToolPreferences(activeTheme);
+    const fallbackPreferences = alignChatToolPreferencesWithExecutionStrategy(
+      loadChatToolPreferences(activeTheme),
+      executionStrategy,
+    );
     const backfillKey = `${trimmedSessionId}:${JSON.stringify([
       fallbackPreferences.webSearch,
       fallbackPreferences.thinking,
@@ -1204,6 +1274,7 @@ export function AgentChatWorkspace({
     });
   }, [
     activeTheme,
+    executionStrategy,
     runtimeChatToolPreferences,
     sessionId,
     syncSessionRecentPreferences,
@@ -1218,7 +1289,7 @@ export function AgentChatWorkspace({
     projectId,
     sessionId,
     selectedTeam,
-    subagentEnabled: chatToolPreferences.subagent,
+    subagentEnabled: effectiveChatToolPreferences.subagent,
     hasRealTeamGraph,
   });
   const {
@@ -1275,7 +1346,7 @@ export function AgentChatWorkspace({
     turns,
     queuedTurnCount: queuedTurns.length,
     isSending,
-    subagentEnabled: chatToolPreferences.subagent,
+    subagentEnabled: effectiveChatToolPreferences.subagent,
     childSubagentSessions,
     subagentParentContext,
   });
@@ -1378,8 +1449,24 @@ export function AgentChatWorkspace({
   );
   const currentCanvasArtifact = artifactDisplayState.liveArtifact;
   const displayedCanvasArtifact = artifactDisplayState.displayArtifact;
+  const activeArtifactViewTargetId =
+    displayedCanvasArtifact?.id ||
+    currentCanvasArtifact?.id ||
+    selectedArtifact?.id ||
+    liveArtifact?.id ||
+    null;
+  const {
+    artifactViewMode,
+    applyAutoArtifactViewMode,
+    handleArtifactViewModeChange,
+  } = useWorkspaceArtifactViewModeControl({
+    activeTheme,
+    displayedArtifact: displayedCanvasArtifact,
+    activeArtifactId: activeArtifactViewTargetId,
+  });
   const {
     browserAssistLaunching,
+    siteSkillExecutionState,
     isBrowserAssistReady,
     isBrowserAssistCanvasVisible,
     currentBrowserAssistScopeKey,
@@ -1391,9 +1478,12 @@ export function AgentChatWorkspace({
     activeTheme,
     projectId,
     sessionId,
+    contentId,
     input,
     initialUserPrompt,
     openBrowserAssistOnMount,
+    initialSiteSkillLaunch,
+    siteSkillLaunchNonce: newChatAt,
     artifacts,
     messages,
     currentCanvasArtifact,
@@ -1403,6 +1493,48 @@ export function AgentChatWorkspace({
     upsertGeneralArtifact,
     generalBrowserAssistProfileKey: GENERAL_BROWSER_ASSIST_PROFILE_KEY,
   });
+  const handleOpenBrowserRuntimeForSiteSkillExecution = useCallback(() => {
+    if (!_onNavigate || !initialSiteSkillLaunch?.adapterName?.trim()) {
+      return;
+    }
+
+    _onNavigate("browser-runtime", {
+      projectId: projectId ?? undefined,
+      contentId: contentId ?? undefined,
+      initialProfileKey:
+        siteSkillExecutionState?.profileKey || initialSiteSkillLaunch.profileKey,
+      initialTargetId:
+        siteSkillExecutionState?.targetId || initialSiteSkillLaunch.targetId,
+      initialAdapterName: initialSiteSkillLaunch.adapterName,
+      initialArgs: initialSiteSkillLaunch.args,
+      initialAutoRun: false,
+      initialRequireAttachedSession: true,
+      initialSaveTitle: initialSiteSkillLaunch.saveTitle,
+    });
+  }, [
+    contentId,
+    initialSiteSkillLaunch,
+    _onNavigate,
+    projectId,
+    siteSkillExecutionState?.profileKey,
+    siteSkillExecutionState?.targetId,
+  ]);
+  const serviceSkillExecutionCard = useMemo(
+    () => (
+      <ServiceSkillExecutionCard
+        state={siteSkillExecutionState}
+        onOpenBrowserRuntime={
+          siteSkillExecutionState?.phase === "blocked"
+            ? handleOpenBrowserRuntimeForSiteSkillExecution
+            : undefined
+        }
+      />
+    ),
+    [
+      handleOpenBrowserRuntimeForSiteSkillExecution,
+      siteSkillExecutionState,
+    ],
+  );
 
   const compatSubagentRuntime = useCompatSubagentRuntime(sessionId);
   const realSubagentTimelineItems = useMemo(
@@ -1468,40 +1600,45 @@ export function AgentChatWorkspace({
 
   useEffect(() => {
     if (activeTheme !== "general") {
-      setSelectedArtifactId(null);
-      return;
-    }
-
-    if (artifacts.length === 0) {
-      if (selectedArtifact) {
+      if (selectedArtifactId !== null) {
         setSelectedArtifactId(null);
       }
       return;
     }
 
+    if (artifacts.length === 0) {
+      if (selectedArtifactId !== null) {
+        setSelectedArtifactId(null);
+      }
+      return;
+    }
+
+    const fallbackArtifactId = defaultSelectedArtifact?.id || null;
+
     if (!selectedArtifact) {
-      setSelectedArtifactId(artifacts[artifacts.length - 1]?.id || null);
+      if (selectedArtifactId !== fallbackArtifactId) {
+        setSelectedArtifactId(fallbackArtifactId);
+      }
       return;
     }
 
     const selectedStillExists = artifacts.some(
       (artifact) => artifact.id === selectedArtifact.id,
     );
-    if (!selectedStillExists) {
-      setSelectedArtifactId(artifacts[artifacts.length - 1]?.id || null);
+    if (!selectedStillExists && selectedArtifactId !== fallbackArtifactId) {
+      setSelectedArtifactId(fallbackArtifactId);
     }
-  }, [activeTheme, artifacts, selectedArtifact, setSelectedArtifactId]);
-
-  useEffect(() => {
-    if (activeTheme !== "general" || !displayedCanvasArtifact) {
-      return;
-    }
-    setArtifactViewMode(
-      resolveDefaultArtifactViewMode(displayedCanvasArtifact),
-    );
-  }, [activeTheme, displayedCanvasArtifact]);
+  }, [
+    activeTheme,
+    artifacts,
+    defaultSelectedArtifact,
+    selectedArtifact,
+    selectedArtifactId,
+    setSelectedArtifactId,
+  ]);
 
   const contextHarnessRuntime = useWorkspaceContextHarnessRuntime({
+    enabled: workspaceHarnessEnabled,
     projectId,
     activeTheme,
     messages,
@@ -1554,12 +1691,16 @@ export function AgentChatWorkspace({
   const {
     a2uiSubmissionNotice,
     pendingA2UIForm,
+    pendingA2UISource,
     pendingActionRequest,
     pendingLegacyQuestionnaireA2UIForm,
     pendingPromotedA2UIActionRequest,
+    resolvePendingA2UISubmit,
   } = useWorkspaceA2UIRuntime({
     messages,
   });
+  const hasPendingA2UIForm = Boolean(pendingA2UIForm);
+  const suppressCanvasAutoOpenForPendingA2UI = hasPendingA2UIForm;
 
   const {
     currentGate,
@@ -1595,10 +1736,10 @@ export function AgentChatWorkspace({
       buildHarnessRequestMetadata({
         theme: mappedTheme,
         preferences: {
-          webSearch: chatToolPreferences.webSearch,
-          thinking: chatToolPreferences.thinking,
-          task: chatToolPreferences.task,
-          subagent: chatToolPreferences.subagent,
+          webSearch: effectiveChatToolPreferences.webSearch,
+          thinking: effectiveChatToolPreferences.thinking,
+          task: effectiveChatToolPreferences.task,
+          subagent: effectiveChatToolPreferences.subagent,
         },
         sessionMode: isThemeWorkbench ? "theme_workbench" : "default",
         gateKey: isThemeWorkbench ? currentGate.key : undefined,
@@ -1617,10 +1758,10 @@ export function AgentChatWorkspace({
         selectedTeamRoles: selectedTeam?.roles,
       }),
     [
-      chatToolPreferences.subagent,
-      chatToolPreferences.task,
-      chatToolPreferences.thinking,
-      chatToolPreferences.webSearch,
+      effectiveChatToolPreferences.subagent,
+      effectiveChatToolPreferences.task,
+      effectiveChatToolPreferences.thinking,
+      effectiveChatToolPreferences.webSearch,
       contentId,
       currentGate.key,
       isThemeWorkbench,
@@ -1636,6 +1777,7 @@ export function AgentChatWorkspace({
     ],
   );
   const harnessInventoryRuntime = useWorkspaceHarnessInventoryRuntime({
+    enabled: workspaceHarnessEnabled,
     chatMode,
     mappedTheme,
     harnessPanelVisible,
@@ -1867,7 +2009,6 @@ export function AgentChatWorkspace({
     messages,
     processedMessageIdsRef: processedMessageIds,
     setCanvasState,
-    setLayoutMode,
   });
 
   const imageWorkbenchActionRuntime = useWorkspaceImageWorkbenchActionRuntime({
@@ -1898,7 +2039,7 @@ export function AgentChatWorkspace({
     setInput,
     mentionedCharacters,
     setMentionedCharacters,
-    chatToolPreferences,
+    chatToolPreferences: effectiveChatToolPreferences,
     setChatToolPreferences,
     activeTheme,
     mappedTheme,
@@ -1910,6 +2051,7 @@ export function AgentChatWorkspace({
     runtimeStyleMessagePrompt,
     projectId,
     executionStrategy,
+    accessMode,
     preferredTeamPresetId,
     selectedTeam,
     selectedTeamLabel,
@@ -1942,7 +2084,7 @@ export function AgentChatWorkspace({
       await handleSendRef.current(
         [],
         webSearchPreferenceRef.current,
-        chatToolPreferences.thinking,
+        effectiveChatToolPreferences.thinking,
         promptToSend,
       );
     },
@@ -1996,10 +2138,14 @@ export function AgentChatWorkspace({
     handlePermissionResponseWithBrowserPreflight,
     pendingLegacyQuestionnaireA2UIForm,
     pendingPromotedA2UIActionRequest,
+    resolvePendingA2UISubmit,
     sendMessage,
   });
   const handleMessageA2UISubmit = useCallback(
-    (formData: Parameters<typeof handleInputbarA2UISubmit>[0], _messageId: string) => {
+    (
+      formData: Parameters<typeof handleInputbarA2UISubmit>[0],
+      _messageId: string,
+    ) => {
       handleInputbarA2UISubmit(formData);
     },
     [handleInputbarA2UISubmit],
@@ -2070,6 +2216,7 @@ export function AgentChatWorkspace({
   } = useWorkspaceCanvasLayoutRuntime({
     activeTheme,
     isThemeWorkbench,
+    hasPendingA2UIForm,
     layoutMode,
     showChatPanel,
     showSidebar,
@@ -2108,7 +2255,6 @@ export function AgentChatWorkspace({
     documentEditorFocusedRef,
     setSelectedFileId,
     setCanvasState,
-    setLayoutMode,
     upsertNovelCanvasState,
   });
 
@@ -2158,8 +2304,9 @@ export function AgentChatWorkspace({
     syncGeneralArtifactToResource,
     upsertGeneralArtifact,
     setSelectedArtifactId,
-    setArtifactViewMode,
+    setArtifactViewMode: applyAutoArtifactViewMode,
     setLayoutMode,
+    suppressCanvasAutoOpen: suppressCanvasAutoOpenForPendingA2UI,
     completeStep,
     setTaskFiles,
     setSelectedFileId,
@@ -2240,9 +2387,10 @@ export function AgentChatWorkspace({
     taskFiles,
     sessionFiles,
     readSessionFile,
+    suppressBrowserAssistCanvasAutoOpen,
     upsertGeneralArtifact,
     setSelectedArtifactId,
-    setArtifactViewMode,
+    setArtifactViewMode: applyAutoArtifactViewMode,
     setLayoutMode,
     setTaskFiles,
     setSelectedFileId,
@@ -2309,7 +2457,7 @@ export function AgentChatWorkspace({
     shouldSkipThemeWorkbenchAutoGuideWithoutPrompt,
     themeWorkbenchEntryCheckPending,
     themeWorkbenchEntryPrompt,
-    chatToolPreferences,
+    chatToolPreferences: effectiveChatToolPreferences,
     setInput,
     handleSend,
     triggerAIGuide,
@@ -2355,6 +2503,7 @@ export function AgentChatWorkspace({
   const themeWorkbenchShellRuntime = useWorkspaceThemeWorkbenchShellRuntime({
     showChatPanel,
     showSidebar,
+    hasPendingA2UIForm,
     contextHarnessRuntime,
     themeWorkbenchScaffoldRuntime,
     themeWorkbenchSidebarRuntime,
@@ -2401,7 +2550,7 @@ export function AgentChatWorkspace({
       projectId,
       contentId,
       input,
-      chatToolPreferences,
+      chatToolPreferences: effectiveChatToolPreferences,
       onNavigate: _onNavigate,
       recordServiceSkillUsage,
     });
@@ -2443,6 +2592,8 @@ export function AgentChatWorkspace({
     projectId: projectId ?? null,
     executionStrategy,
     setExecutionStrategy,
+    accessMode,
+    setAccessMode,
     activeTheme,
     navigationActions,
     selectedTeam,
@@ -2479,7 +2630,7 @@ export function AgentChatWorkspace({
     themeWorkbenchEntryPrompt,
     handleRestartThemeWorkbenchEntryPrompt,
     handleContinueThemeWorkbenchEntryPrompt,
-    generalWorkbenchEnabled: chatMode === "general",
+    generalWorkbenchEnabled: workspaceHarnessEnabled && chatMode === "general",
     contextHarnessRuntime,
     harnessState,
     compatSubagentRuntime,
@@ -2489,7 +2640,7 @@ export function AgentChatWorkspace({
     handleFileClick: handleWorkspaceFileClick,
     shellChromeRuntime,
     handleActivateTeamWorkbench,
-    chatToolPreferences,
+    chatToolPreferences: effectiveChatToolPreferences,
   });
 
   const canvasScene = useWorkspaceCanvasSceneRuntime({
@@ -2510,7 +2661,7 @@ export function AgentChatWorkspace({
     displayedCanvasArtifact,
     artifactDisplayState,
     artifactViewMode,
-    setArtifactViewMode,
+    setArtifactViewMode: handleArtifactViewModeChange,
     artifactPreviewSize,
     setArtifactPreviewSize,
     onSaveArtifactDocument: handleSaveArtifactDocument,
@@ -2534,7 +2685,7 @@ export function AgentChatWorkspace({
     setProviderType,
     model,
     setModel,
-    documentThinkingEnabled: chatToolPreferences.thinking,
+    documentThinkingEnabled: effectiveChatToolPreferences.thinking,
     handleDocumentThinkingEnabledChange,
     handleDocumentAutoContinueRun,
     handleAddImage,
@@ -2579,6 +2730,7 @@ export function AgentChatWorkspace({
     handleReturnToParentSession,
     entryBannerVisible,
     entryBannerMessage,
+    serviceSkillExecutionCard,
     contextWorkspaceEnabled: contextWorkspace.enabled,
     input,
     setInput,
@@ -2588,7 +2740,9 @@ export function AgentChatWorkspace({
     setModel,
     executionStrategy,
     setExecutionStrategy,
-    chatToolPreferences,
+    accessMode,
+    setAccessMode,
+    chatToolPreferences: effectiveChatToolPreferences,
     setChatToolPreferences,
     selectedTeam,
     handleSelectTeam,
@@ -2627,6 +2781,9 @@ export function AgentChatWorkspace({
     sessionId,
     syncStatus,
     pendingA2UIForm,
+    pendingA2UISource,
+    a2uiSubmissionNotice,
+    handlePendingA2UISubmit: handleInputbarA2UISubmit,
     handleToggleCanvas,
     hideInlineStepProgress,
     isContentCreationMode,
@@ -2693,6 +2850,9 @@ export function AgentChatWorkspace({
         onCreateAutomation={
           workspaceServiceSkillEntryActions.handleServiceSkillAutomationSetup
         }
+        onOpenBrowserRuntime={
+          workspaceServiceSkillEntryActions.handleServiceSkillBrowserRuntimeLaunch
+        }
       />
       <AutomationJobDialog
         open={workspaceServiceSkillEntryActions.automationDialogOpen}
@@ -2705,7 +2865,9 @@ export function AgentChatWorkspace({
         onOpenChange={
           workspaceServiceSkillEntryActions.handleAutomationDialogOpenChange
         }
-        onSubmit={workspaceServiceSkillEntryActions.handleAutomationDialogSubmit}
+        onSubmit={
+          workspaceServiceSkillEntryActions.handleAutomationDialogSubmit
+        }
       />
     </>
   );

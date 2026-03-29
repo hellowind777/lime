@@ -19,15 +19,6 @@ const heroReveal = keyframes`
   }
 `;
 
-const orbFloat = keyframes`
-  0%, 100% {
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-  50% {
-    transform: translate3d(16px, -12px, 0) scale(1.06);
-  }
-`;
-
 const cardReveal = keyframes`
   from {
     opacity: 0;
@@ -43,57 +34,6 @@ const HeroSection = styled.section`
   position: relative;
   overflow: visible;
   animation: ${heroReveal} 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-`;
-
-const HeroOrbLeft = styled.div`
-  pointer-events: none;
-  position: absolute;
-  left: -6rem;
-  top: -5.4rem;
-  height: 14rem;
-  width: 14rem;
-  border-radius: 999px;
-  background: rgba(167, 243, 208, 0.24);
-  filter: blur(48px);
-  animation: ${orbFloat} 16s ease-in-out infinite;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-`;
-
-const HeroOrbRight = styled.div`
-  pointer-events: none;
-  position: absolute;
-  right: -4rem;
-  top: -1.2rem;
-  height: 12rem;
-  width: 12rem;
-  border-radius: 999px;
-  background: rgba(186, 230, 253, 0.26);
-  filter: blur(42px);
-  animation: ${orbFloat} 19s ease-in-out infinite reverse;
-
-  @media (prefers-reduced-motion: reduce) {
-    animation: none;
-  }
-`;
-
-const HeroOrbBottom = styled.div`
-  pointer-events: none;
-  position: absolute;
-  bottom: -5.4rem;
-  left: 33%;
-  height: 11rem;
-  width: 11rem;
-  border-radius: 999px;
-  background: rgba(253, 230, 138, 0.16);
-  filter: blur(44px);
-  animation: ${orbFloat} 17s ease-in-out infinite;
 
   @media (prefers-reduced-motion: reduce) {
     animation: none;
@@ -337,12 +277,9 @@ export function EmptyStateHero({
 }: EmptyStateHeroProps) {
   return (
     <HeroSection>
-      <HeroOrbLeft />
-      <HeroOrbRight />
-      <HeroOrbBottom />
       <HeroContent>
         <IntroGrid>
-          <LeadBlock className="flex w-full min-w-0 flex-col gap-3 rounded-[28px] border border-white/80 bg-white/56 px-4 py-4 text-left shadow-sm shadow-slate-950/5 backdrop-blur-sm md:px-5 md:py-[18px]">
+          <LeadBlock className="flex w-full min-w-0 flex-col gap-3 rounded-[28px] border border-slate-200/80 bg-white px-4 py-4 text-left shadow-sm shadow-slate-950/5 md:px-5 md:py-[18px]">
             <LeadTopRow>
               <div className="inline-flex w-fit items-center rounded-full border border-emerald-200/80 bg-white/92 px-3 py-1 text-[10px] font-semibold tracking-[0.14em] text-emerald-700 shadow-sm shadow-slate-950/5">
                 {eyebrow}
@@ -442,13 +379,13 @@ export function EmptyStateHero({
         ) : null}
 
         {features.length > 0 ? (
-          <FeaturePanel className="hidden rounded-[22px] border border-white/85 bg-white/72 px-4 py-3.5 shadow-sm shadow-slate-950/5 backdrop-blur-sm md:block">
+          <FeaturePanel className="hidden rounded-[22px] border border-slate-200/80 bg-white px-4 py-3.5 shadow-sm shadow-slate-950/5 md:block">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {features.map((feature) => (
                 <div
                   key={feature.key}
                   title={feature.description}
-                  className="min-w-0 rounded-2xl border border-white/80 bg-white/74 px-3 py-2.5"
+                  className="min-w-0 rounded-2xl border border-slate-200/80 bg-slate-50 px-3 py-2.5"
                 >
                   <div className="text-[11px] font-semibold text-slate-700">
                     {feature.title}

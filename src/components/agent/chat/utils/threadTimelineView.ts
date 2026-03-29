@@ -1,5 +1,9 @@
 import type { AgentThreadItem, AgentThreadTurn, Message } from "../types";
 
+const HIDDEN_CONVERSATION_WARNING_CODES = new Set([
+  "artifact_document_repaired",
+]);
+
 export interface MessageTurnTimeline {
   messageId: string;
   turn: AgentThreadTurn;
@@ -29,8 +33,31 @@ export function compareThreadItems(
   return left.id.localeCompare(right.id);
 }
 
+function normalizeThreadWarningCode(value?: string | null): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || null;
+}
+
+function shouldHideConversationThreadItem(item: AgentThreadItem): boolean {
+  if (item.type !== "warning") {
+    return false;
+  }
+
+  const normalizedCode = normalizeThreadWarningCode(item.code);
+  return (
+    normalizedCode !== null &&
+    HIDDEN_CONVERSATION_WARNING_CODES.has(normalizedCode)
+  );
+}
+
+export function filterConversationThreadItems(
+  items: AgentThreadItem[],
+): AgentThreadItem[] {
+  return items.filter((item) => !shouldHideConversationThreadItem(item));
+}
+
 export function sortThreadItems(items: AgentThreadItem[]): AgentThreadItem[] {
-  return [...items].sort(compareThreadItems);
+  return [...filterConversationThreadItems(items)].sort(compareThreadItems);
 }
 
 export function mergeThreadTurns(
@@ -62,6 +89,9 @@ export function mergeThreadItems(
     }
 
     for (const item of items) {
+      if (shouldHideConversationThreadItem(item)) {
+        continue;
+      }
       merged.set(item.id, item);
     }
   }

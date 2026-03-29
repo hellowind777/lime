@@ -12,7 +12,6 @@ import {
   ChevronDown,
   ExternalLink,
   FileText,
-  Lightbulb,
   Loader2,
   Sparkles,
 } from "lucide-react";
@@ -20,7 +19,7 @@ import { useDebouncedValue } from "@/lib/artifact/hooks/useDebouncedValue";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { A2UITaskCard, A2UITaskLoadingCard } from "./A2UITaskCard";
 import { ActionRequestA2UIPreviewCard } from "./ActionRequestA2UIPreviewCard";
-import { ToolCallList, ToolCallItem } from "./ToolCallDisplay";
+import { ToolCallItem } from "./ToolCallDisplay";
 import { DecisionPanel } from "./DecisionPanel";
 import { AgentPlanBlock } from "./AgentPlanBlock";
 import { parseAIResponse } from "@/components/content-creator/a2ui/parser";
@@ -54,13 +53,75 @@ const STREAMING_STRUCTURED_PARSE_DEBOUNCE_MS = 48;
 interface ThinkingBlockProps {
   content: string;
   defaultExpanded?: boolean;
+  grouped?: boolean;
+  groupMarker?: string;
+  isStreaming?: boolean;
+}
+
+interface ThinkingDisplayParts {
+  statusLabel: string;
+  body: string;
+  preview: string;
+}
+
+type WriteFileMessagePart = ParsedMessageContent & {
+  type: "write_file" | "pending_write_file";
+};
+
+function resolveThinkingDisplayParts(
+  content: string,
+  isStreaming: boolean,
+): ThinkingDisplayParts {
+  const trimmed = content.trim();
+  const statusLabel = isStreaming ? "思考中" : "已完成思考";
+
+  if (!trimmed) {
+    return {
+      statusLabel,
+      body: "",
+      preview: "",
+    };
+  }
+
+  const parsed = parseAIResponse(trimmed, false);
+  if (!parsed.hasA2UI && !parsed.hasPending) {
+    const preview =
+      trimmed
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean) || "";
+    return {
+      statusLabel,
+      body: trimmed,
+      preview,
+    };
+  }
+
+  const fallbackPreview =
+    trimmed
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || "在整理结构化内容";
+  return {
+    statusLabel,
+    body: fallbackPreview,
+    preview: fallbackPreview,
+  };
 }
 
 const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   content,
   defaultExpanded = false,
+  grouped = false,
+  groupMarker = "•",
+  isStreaming = false,
 }) => {
   const [expanded, setExpanded] = React.useState(defaultExpanded);
+  const thinkingDisplay = useMemo(
+    () => resolveThinkingDisplayParts(content, isStreaming),
+    [content, isStreaming],
+  );
+  const hasBody = thinkingDisplay.body.length > 0;
 
   React.useEffect(() => {
     if (defaultExpanded) {
@@ -71,25 +132,92 @@ const ThinkingBlock: React.FC<ThinkingBlockProps> = ({
   if (!content) return null;
 
   return (
-    <details
-      className="bg-muted/50 border border-border rounded-lg overflow-hidden mb-3"
-      open={expanded}
-      onToggle={(e) => setExpanded((e.target as HTMLDetailsElement).open)}
+    <div
+      className={cn(grouped ? "flex items-start gap-2 py-1.5" : "py-1")}
+      data-testid="thinking-block"
+      data-visual-style={grouped ? "grouped-inline" : "card"}
     >
-      <summary className="cursor-pointer px-3 py-2 text-sm text-muted-foreground select-none flex items-center gap-2 hover:bg-muted/70 transition-colors">
-        <Lightbulb className="w-4 h-4 text-yellow-500" />
-        <span className="flex-1">思考过程</span>
-        <ChevronDown
+      {grouped ? (
+        <span className="pt-0.5 font-mono text-xs text-slate-400">
+          {groupMarker}
+        </span>
+      ) : null}
+      <details
+        className={cn(
+          "min-w-0 flex-1",
+          grouped
+            ? "rounded-none border-0 bg-transparent px-0 py-0"
+            : "rounded-[18px] border border-slate-200/90 bg-slate-50/80 px-4 py-3",
+        )}
+        open={expanded}
+        onToggle={(e) => setExpanded((e.target as HTMLDetailsElement).open)}
+      >
+        <summary
           className={cn(
-            "w-4 h-4 transition-transform duration-200",
-            expanded && "rotate-180",
+            "list-none select-none rounded-xl transition-colors",
+            hasBody ? "cursor-pointer" : "cursor-default",
+            grouped && hasBody && "hover:bg-slate-50/80",
           )}
-        />
-      </summary>
-      <div className="px-3 py-2 border-t border-border bg-background/50">
-        <MarkdownRenderer content={content} />
-      </div>
-    </details>
+          onClick={(event) => {
+            if (!hasBody) {
+              event.preventDefault();
+            }
+          }}
+        >
+          <div className={cn("flex items-start", grouped ? "gap-2.5" : "gap-3")}>
+            <span
+              className={cn(
+                "shrink-0 rounded-full",
+                grouped ? "mt-2 h-2 w-2" : "mt-1.5 h-2.5 w-2.5",
+                isStreaming
+                  ? "bg-amber-500 shadow-[0_0_0_4px_rgba(245,158,11,0.14)]"
+                  : "bg-emerald-500 shadow-[0_0_0_4px_rgba(16,185,129,0.14)]",
+              )}
+            />
+            <div className="min-w-0 flex-1">
+              <div
+                className={cn(
+                  "text-sm font-medium leading-6",
+                  grouped ? "text-slate-700" : "text-slate-800",
+                )}
+              >
+                {thinkingDisplay.statusLabel}
+              </div>
+              {!expanded && thinkingDisplay.preview ? (
+                <div
+                  className={cn(
+                    "text-sm leading-6 text-slate-600",
+                    grouped ? "mt-0.5 line-clamp-2" : "mt-1 line-clamp-3",
+                  )}
+                >
+                  {thinkingDisplay.preview}
+                </div>
+              ) : null}
+            </div>
+            {hasBody ? (
+              <ChevronDown
+                className={cn(
+                  "mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200",
+                  expanded && "rotate-180",
+                )}
+              />
+            ) : null}
+          </div>
+        </summary>
+        {hasBody && expanded ? (
+          <div
+            className={cn(
+              "min-w-0",
+              grouped ? "mt-1.5 pl-[18px]" : "mt-2.5 pl-[22px]",
+            )}
+          >
+            <div className="min-w-0">
+              <MarkdownRenderer content={thinkingDisplay.body} />
+            </div>
+          </div>
+        ) : null}
+      </details>
+    </div>
   );
 };
 
@@ -116,6 +244,12 @@ function hasStructuredContentHint(text: string): boolean {
 function createPlainTextParts(text: string): ParsedMessageContent[] {
   const trimmed = text.trim();
   return trimmed ? [{ type: "text", content: trimmed }] : [];
+}
+
+function isWriteFileMessagePart(
+  part: ParsedMessageContent,
+): part is WriteFileMessagePart {
+  return part.type === "write_file" || part.type === "pending_write_file";
 }
 
 function parseStructuredContent(
@@ -168,6 +302,8 @@ interface PlanAwareMarkdownOptions {
   onCodeBlockClick?: (language: string, code: string) => void;
   isStreaming?: boolean;
   renderProposedPlanBlocks?: boolean;
+  showBlockActions?: boolean;
+  onQuoteContent?: (content: string) => void;
 }
 
 function renderPlanAwareMarkdown(
@@ -181,6 +317,8 @@ function renderPlanAwareMarkdown(
     onCodeBlockClick,
     isStreaming,
     renderProposedPlanBlocks = true,
+    showBlockActions = false,
+    onQuoteContent,
   }: PlanAwareMarkdownOptions,
 ) {
   if (!renderProposedPlanBlocks) {
@@ -198,6 +336,8 @@ function renderPlanAwareMarkdown(
         shouldCollapseCodeBlock={shouldCollapseCodeBlock}
         onCodeBlockClick={onCodeBlockClick}
         isStreaming={isStreaming}
+        showBlockActions={showBlockActions}
+        onQuoteContent={onQuoteContent}
       />
     );
   }
@@ -224,6 +364,8 @@ function renderPlanAwareMarkdown(
         shouldCollapseCodeBlock={shouldCollapseCodeBlock}
         onCodeBlockClick={onCodeBlockClick}
         isStreaming={isStreaming}
+        showBlockActions={showBlockActions}
+        onQuoteContent={onQuoteContent}
       />
     ),
   );
@@ -258,6 +400,10 @@ interface StreamingTextProps {
   shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
   /** 代码块点击回调 */
   onCodeBlockClick?: (language: string, code: string) => void;
+  /** 是否为正文块显示引用/复制按钮 */
+  showBlockActions?: boolean;
+  /** 引用当前正文块 */
+  onQuoteContent?: (content: string) => void;
 }
 
 /**
@@ -281,6 +427,8 @@ const StreamingText: React.FC<StreamingTextProps> = memo(
     collapseCodeBlocks,
     shouldCollapseCodeBlock,
     onCodeBlockClick,
+    showBlockActions = false,
+    onQuoteContent,
   }) => {
     const [displayText, setDisplayText] = useState("");
     const displayIndexRef = useRef(0);
@@ -381,6 +529,11 @@ const StreamingText: React.FC<StreamingTextProps> = memo(
       isStreaming && containsStructuredContent
         ? STREAMING_STRUCTURED_PARSE_DEBOUNCE_MS
         : 0,
+      {
+        maxWait: isStreaming && containsStructuredContent
+          ? STREAMING_STRUCTURED_PARSE_DEBOUNCE_MS
+          : undefined,
+      },
     );
     const parsedSourceText =
       isStreaming && containsStructuredContent
@@ -407,6 +560,8 @@ const StreamingText: React.FC<StreamingTextProps> = memo(
           shouldCollapseCodeBlock,
           onCodeBlockClick,
           isStreaming,
+          showBlockActions,
+          onQuoteContent,
         });
       }
 
@@ -462,6 +617,8 @@ const StreamingText: React.FC<StreamingTextProps> = memo(
                   shouldCollapseCodeBlock,
                   onCodeBlockClick,
                   isStreaming,
+                  showBlockActions,
+                  onQuoteContent,
                 });
               }
             }
@@ -510,6 +667,98 @@ const parseThinkingContent = (text: string): ParsedContent => {
     visibleText: visibleText.trim(),
     thinkingText,
   };
+};
+
+type StreamingProcessEntry =
+  | {
+      kind: "thinking";
+      id: string;
+      text: string;
+      defaultExpanded?: boolean;
+    }
+  | {
+      kind: "tool";
+      id: string;
+      toolCall: ToolCallState;
+    }
+  | {
+      kind: "action";
+      id: string;
+      actionRequired: ActionRequired;
+    };
+
+function buildStreamingProcessSummary(entries: StreamingProcessEntry[]): string {
+  const toolCount = entries.filter((entry) => entry.kind === "tool").length;
+  const messageCount = entries.length - toolCount;
+  const summaryParts = [`${toolCount} 个工具调用`];
+  if (messageCount > 0) {
+    summaryParts.push(`${messageCount} 条过程消息`);
+  }
+  return summaryParts.join("，");
+}
+
+const GroupedProcessShell: React.FC<{
+  groupMarker: string;
+  children: React.ReactNode;
+}> = ({ groupMarker, children }) => (
+  <div className="flex items-start gap-2 py-1.5">
+    <span className="pt-0.5 font-mono text-xs text-slate-400">
+      {groupMarker}
+    </span>
+    <div className="min-w-0 flex-1">{children}</div>
+  </div>
+);
+
+const StreamingProcessGroup: React.FC<{
+  entries: StreamingProcessEntry[];
+  defaultExpanded?: boolean;
+  renderEntry: (
+    entry: StreamingProcessEntry,
+    grouped: boolean,
+    groupMarker: string,
+  ) => React.ReactNode;
+}> = ({ entries, defaultExpanded = true, renderEntry }) => {
+  const [expanded, setExpanded] = React.useState(defaultExpanded);
+  const summaryText = useMemo(
+    () => buildStreamingProcessSummary(entries),
+    [entries],
+  );
+
+  React.useEffect(() => {
+    if (defaultExpanded) {
+      setExpanded(true);
+    }
+  }, [defaultExpanded]);
+
+  return (
+    <div className="py-0.5" data-testid="streaming-process-group">
+      <button
+        type="button"
+        className="flex w-full items-start gap-2 py-1.5 text-left transition-colors hover:bg-slate-50"
+        onClick={() => setExpanded((current) => !current)}
+        aria-expanded={expanded}
+      >
+        <ChevronDown
+          className={cn(
+            "mt-0.5 h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200",
+            expanded && "rotate-180",
+          )}
+        />
+        <span className="min-w-0 flex-1 text-sm font-medium leading-6 text-slate-700">
+          {summaryText}
+        </span>
+      </button>
+      {expanded ? (
+        <div className="ml-2">
+          {entries.map((entry, index) => (
+            <React.Fragment key={entry.id}>
+              {renderEntry(entry, true, index === 0 ? "└" : "·")}
+            </React.Fragment>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 };
 
 // ============ 主组件 ============
@@ -564,6 +813,10 @@ interface StreamingRendererProps {
   showRuntimeStatusInline?: boolean;
   promoteActionRequestsToA2UI?: boolean;
   renderProposedPlanBlocks?: boolean;
+  suppressedActionRequestId?: string | null;
+  suppressProcessFlow?: boolean;
+  showContentBlockActions?: boolean;
+  onQuoteContent?: (content: string) => void;
 }
 
 const RUNTIME_PHASE_LABELS: Record<AgentRuntimeStatus["phase"], string> = {
@@ -697,19 +950,28 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
     showRuntimeStatusInline = false,
     promoteActionRequestsToA2UI = false,
     renderProposedPlanBlocks = true,
+    suppressedActionRequestId = null,
+    suppressProcessFlow = false,
+    showContentBlockActions = false,
+    onQuoteContent,
   }) => {
     const shouldRenderInlineActionRequest = React.useCallback(
       (request: ActionRequired) =>
         !(
+          suppressedActionRequestId === request.requestId ||
           promoteActionRequestsToA2UI &&
           request.status === "pending" &&
           isActionRequestA2UICompatible(request)
         ),
-      [promoteActionRequestsToA2UI],
+      [promoteActionRequestsToA2UI, suppressedActionRequestId],
     );
 
     // 判断是否使用交错显示模式
-    const useInterleavedMode = contentParts && contentParts.length > 0;
+    const interleavedContentParts = useMemo(
+      () => contentParts ?? [],
+      [contentParts],
+    );
+    const useInterleavedMode = interleavedContentParts.length > 0;
     const parseCacheRef = useRef<Map<string, ParseResult>>(new Map());
 
     // 解析思考内容（仅在非交错模式下使用）
@@ -726,6 +988,11 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
       isStreaming && containsStructuredContent
         ? STREAMING_STRUCTURED_PARSE_DEBOUNCE_MS
         : 0,
+      {
+        maxWait: isStreaming && containsStructuredContent
+          ? STREAMING_STRUCTURED_PARSE_DEBOUNCE_MS
+          : undefined,
+      },
     );
     const parsedVisibleText =
       isStreaming && containsStructuredContent
@@ -742,15 +1009,6 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
         parsedVisibleText,
         isStreaming,
       );
-      // 添加调试日志
-      if (result.hasWriteFile) {
-        console.log(
-          "[StreamingRenderer] 检测到 write_file:",
-          result.parts.filter(
-            (p) => p.type === "write_file" || p.type === "pending_write_file",
-          ),
-        );
-      }
       return result;
     }, [parsedVisibleText, isStreaming, useInterleavedMode]);
 
@@ -759,14 +1017,14 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
         return [];
       }
 
-      return (contentParts || []).map((part) => {
+      return interleavedContentParts.map((part) => {
         if (part.type !== "text") {
           return EMPTY_PARSE_RESULT;
         }
 
         return getCachedStructuredParse(parseCacheRef, part.text, isStreaming);
       });
-    }, [contentParts, isStreaming, useInterleavedMode]);
+    }, [interleavedContentParts, isStreaming, useInterleavedMode]);
 
     // 处理文件写入 - 使用 ref 追踪同一路径的最新阶段与内容签名
     const processedWriteFilesRef = useRef<Map<string, string>>(new Map());
@@ -853,199 +1111,419 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
     ]);
 
     // 使用外部提供的思考内容或解析出的内容
-    const finalThinking = externalThinking || thinkingText;
+    const finalThinking = suppressProcessFlow
+      ? null
+      : externalThinking || thinkingText;
+    const visibleActionRequests = (actionRequests || []).filter(
+      shouldRenderInlineActionRequest,
+    );
 
     // 判断是否有正在执行的工具
     const hasRunningTools = useMemo(() => {
       if (useInterleavedMode) {
-        return contentParts.some(
+        return interleavedContentParts.some(
           (part) =>
             part.type === "tool_use" && part.toolCall.status === "running",
         );
       }
       return toolCalls?.some((tc) => tc.status === "running") ?? false;
-    }, [contentParts, toolCalls, useInterleavedMode]);
+    }, [interleavedContentParts, toolCalls, useInterleavedMode]);
 
     // 判断是否显示光标
     const shouldShowCursor = isStreaming && showCursor && !hasRunningTools;
 
-    // 判断是否有可见内容
-    const hasVisibleContent = useInterleavedMode
-      ? contentParts.some(
-          (part) =>
-            (part.type === "text" && part.text.length > 0) ||
-            (part.type === "thinking" && part.text.length > 0),
-        ) ||
-        (isStreaming &&
-          (content.length > 0 ||
-            (externalThinking && externalThinking.length > 0)))
-      : visibleText.length > 0;
+    const renderWriteFileIndicator = React.useCallback(
+      (
+        part: WriteFileMessagePart,
+        key: string,
+      ) => {
+        const fileContent = typeof part.content === "string" ? part.content : "";
+        return (
+          <div
+            key={key}
+            className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/70"
+            onClick={() => part.filePath && onFileClick?.(part.filePath, fileContent)}
+          >
+            <FileText className="h-4 w-4" />
+            <span>写入</span>
+            <span className="font-medium text-foreground">
+              {part.filePath || "文档.md"}
+            </span>
+            {part.filePath ? (
+              <ExternalLink className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+            ) : null}
+            {part.type === "pending_write_file" ? (
+              <span className="animate-pulse">...</span>
+            ) : null}
+          </div>
+        );
+      },
+      [onFileClick],
+    );
 
-    // 交错显示模式：按顺序渲染 contentParts
-    if (useInterleavedMode) {
-      return (
-        <div className="flex flex-col gap-2">
-          {/* 交错内容 - 不再在开头显示思考内容，避免重复 */}
-          {contentParts.map((part, index) => {
-            if (part.type === "text") {
-              // 在交错模式下，不再解析 thinking 标签，避免重复显示
-              // 直接使用原始文本内容
-              const partText = part.text;
-              if (!partText) return null;
+    const renderActionRequestNode = React.useCallback(
+      (request: ActionRequired) => {
+        if (
+          isActionRequestA2UICompatible(request) &&
+          (request.status === "submitted" || request.status === "queued")
+        ) {
+          return (
+            <ActionRequestA2UIPreviewCard
+              request={request}
+              compact={true}
+              context="chat"
+            />
+          );
+        }
+        if (!shouldRenderInlineActionRequest(request)) {
+          return null;
+        }
+        return (
+          <DecisionPanel
+            request={request}
+            onSubmit={onPermissionResponse || (() => {})}
+          />
+        );
+      },
+      [onPermissionResponse, shouldRenderInlineActionRequest],
+    );
 
-              // 解析 write_file 标签
-              const partParsed =
-                interleavedParsedContent[index] || EMPTY_PARSE_RESULT;
-              const isLastPart = index === contentParts.length - 1;
+    const renderProcessEntry = React.useCallback(
+      (
+        entry: StreamingProcessEntry,
+        grouped: boolean,
+        groupMarker: string,
+      ) => {
+        if (entry.kind === "thinking") {
+          return (
+            <ThinkingBlock
+              key={entry.id}
+              content={entry.text}
+              defaultExpanded={Boolean(entry.defaultExpanded)}
+              grouped={grouped}
+              groupMarker={groupMarker}
+              isStreaming={isStreaming}
+            />
+          );
+        }
 
-              // 添加调试日志
-              if (partParsed.hasWriteFile) {
-                console.log(
-                  "[StreamingRenderer] 交错模式检测到 write_file:",
-                  partParsed.parts.filter(
-                    (p) =>
-                      p.type === "write_file" ||
-                      p.type === "pending_write_file",
-                  ),
-                );
+        if (entry.kind === "tool") {
+          return (
+            <ToolCallItem
+              key={entry.id}
+              toolCall={entry.toolCall}
+              isMessageStreaming={isStreaming}
+              onFileClick={onFileClick}
+              onOpenSavedSiteContent={onOpenSavedSiteContent}
+              grouped={grouped}
+              groupMarker={groupMarker}
+            />
+          );
+        }
+
+        const actionNode = renderActionRequestNode(entry.actionRequired);
+        if (!actionNode) {
+          return null;
+        }
+
+        if (!grouped) {
+          return <React.Fragment key={entry.id}>{actionNode}</React.Fragment>;
+        }
+
+        return (
+          <GroupedProcessShell key={entry.id} groupMarker={groupMarker}>
+            {actionNode}
+          </GroupedProcessShell>
+        );
+      },
+      [
+        isStreaming,
+        onFileClick,
+        onOpenSavedSiteContent,
+        renderActionRequestNode,
+      ],
+    );
+
+    const renderProcessRun = React.useCallback(
+      (entries: StreamingProcessEntry[], key: string) => {
+        if (entries.length === 0) {
+          return null;
+        }
+
+        const toolCount = entries.filter((entry) => entry.kind === "tool").length;
+        if (toolCount > 0 && entries.length > 1) {
+          return (
+            <StreamingProcessGroup
+              key={key}
+              entries={entries}
+              defaultExpanded={true}
+              renderEntry={renderProcessEntry}
+            />
+          );
+        }
+
+        return entries.map((entry) => (
+          <React.Fragment key={entry.id}>
+            {renderProcessEntry(entry, false, "•")}
+          </React.Fragment>
+        ));
+      },
+      [renderProcessEntry],
+    );
+
+    const renderParsedResultParts = React.useCallback(
+      (params: {
+        parsed: ParseResult;
+        keyPrefix: string;
+        lastStreamingPartIndex?: number;
+      }) => {
+        const { parsed, keyPrefix, lastStreamingPartIndex } = params;
+        return parsed.parts.map((part, index) => {
+          switch (part.type) {
+            case "a2ui":
+              if (!renderA2UIInline || typeof part.content === "string") {
+                return null;
               }
+              return (
+                <A2UITaskCard
+                  key={`${keyPrefix}-a2ui-${index}`}
+                  response={part.content}
+                  onSubmit={onA2UISubmit}
+                  formId={a2uiFormId}
+                  initialFormData={a2uiInitialFormData}
+                  onFormChange={onA2UIFormChange}
+                  preset={CHAT_A2UI_TASK_CARD_PRESET}
+                />
+              );
 
-              // 如果包含 write_file，按部分渲染
-              if (partParsed.hasWriteFile) {
-                return (
-                  <React.Fragment key={`text-${index}`}>
-                    {partParsed.parts.map((p, pIndex) => {
-                      if (
-                        p.type === "write_file" ||
-                        p.type === "pending_write_file"
-                      ) {
-                        const fileContent =
-                          typeof p.content === "string" ? p.content : "";
-                        return (
-                          <div
-                            key={`write-${index}-${pIndex}`}
-                            className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg text-sm text-muted-foreground cursor-pointer hover:bg-muted/70 transition-colors"
-                            onClick={() =>
-                              p.filePath &&
-                              onFileClick?.(p.filePath, fileContent)
-                            }
-                          >
-                            <FileText className="w-4 h-4" />
-                            <span>写入</span>
-                            <span className="font-medium text-foreground">
-                              {p.filePath || "文档.md"}
-                            </span>
-                            {p.filePath ? (
-                              <ExternalLink className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
-                            ) : null}
-                            {p.type === "pending_write_file" && (
-                              <span className="animate-pulse">...</span>
-                            )}
-                          </div>
-                        );
-                      } else if (p.type === "text") {
-                        const textContent =
-                          typeof p.content === "string" ? p.content : "";
-                        if (!textContent || textContent.trim() === "")
-                          return null;
-                        return (
-                          <StreamingText
-                            key={`text-${index}-${pIndex}`}
-                            text={textContent}
-                            isStreaming={
-                              isStreaming &&
-                              isLastPart &&
-                              pIndex === partParsed.parts.length - 1
-                            }
-                            showCursor={
-                              shouldShowCursor &&
-                              isLastPart &&
-                              pIndex === partParsed.parts.length - 1
-                            }
-                            onA2UISubmit={onA2UISubmit}
-                            a2uiFormId={a2uiFormId}
-                            a2uiInitialFormData={a2uiInitialFormData}
-                            onA2UIFormChange={onA2UIFormChange}
-                            renderProposedPlanBlocks={renderProposedPlanBlocks}
-                            collapseCodeBlocks={collapseCodeBlocks}
-                            shouldCollapseCodeBlock={shouldCollapseCodeBlock}
-                            onCodeBlockClick={onCodeBlockClick}
-                          />
-                        );
-                      }
-                      return null;
-                    })}
-                  </React.Fragment>
-                );
+            case "write_file":
+            case "pending_write_file":
+              return isWriteFileMessagePart(part)
+                ? renderWriteFileIndicator(part, `${keyPrefix}-write-${index}`)
+                : null;
+
+            case "pending_a2ui":
+              if (!renderA2UIInline) {
+                return null;
               }
+              return (
+                <A2UITaskLoadingCard
+                  key={`${keyPrefix}-pending-${index}`}
+                  preset={CHAT_A2UI_TASK_CARD_PRESET}
+                  subtitle="正在解析结构化问题，请稍等。"
+                />
+              );
 
-              // 没有 write_file，直接渲染
+            case "text":
+            default: {
+              const textContent =
+                typeof part.content === "string" ? part.content : "";
+              if (!textContent || textContent.trim() === "") {
+                return null;
+              }
+              const isStreamingPart =
+                typeof lastStreamingPartIndex === "number" &&
+                index === lastStreamingPartIndex;
               return (
                 <StreamingText
-                  key={`text-${index}`}
-                  text={partText}
-                  isStreaming={isStreaming && isLastPart}
-                  showCursor={shouldShowCursor && isLastPart}
+                  key={`${keyPrefix}-text-${index}`}
+                  text={textContent}
+                  isStreaming={isStreaming && isStreamingPart}
+                  showCursor={shouldShowCursor && isStreamingPart}
                   onA2UISubmit={onA2UISubmit}
                   a2uiFormId={a2uiFormId}
                   a2uiInitialFormData={a2uiInitialFormData}
                   onA2UIFormChange={onA2UIFormChange}
+                  renderA2UIInline={renderA2UIInline}
                   renderProposedPlanBlocks={renderProposedPlanBlocks}
                   collapseCodeBlocks={collapseCodeBlocks}
                   shouldCollapseCodeBlock={shouldCollapseCodeBlock}
                   onCodeBlockClick={onCodeBlockClick}
-                />
-              );
-            } else if (part.type === "thinking") {
-              // 渲染推理内容片段
-              const isLastPart = index === contentParts.length - 1;
-              return (
-                <ThinkingBlock
-                  key={`thinking-${index}`}
-                  content={part.text}
-                  defaultExpanded={isStreaming && isLastPart}
-                />
-              );
-            } else if (part.type === "tool_use") {
-              // 渲染单个工具调用
-              return (
-                <ToolCallItem
-                  key={part.toolCall.id}
-                  toolCall={part.toolCall}
-                  isMessageStreaming={isStreaming}
-                  onFileClick={onFileClick}
-                  onOpenSavedSiteContent={onOpenSavedSiteContent}
-                />
-              );
-            } else if (part.type === "action_required") {
-              if (
-                isActionRequestA2UICompatible(part.actionRequired) &&
-                (part.actionRequired.status === "submitted" ||
-                  part.actionRequired.status === "queued")
-              ) {
-                return (
-                  <ActionRequestA2UIPreviewCard
-                    key={part.actionRequired.requestId}
-                    request={part.actionRequired}
-                    compact={true}
-                    context="chat"
-                  />
-                );
-              }
-              if (!shouldRenderInlineActionRequest(part.actionRequired)) {
-                return null;
-              }
-              // 渲染权限确认请求
-              return (
-                <DecisionPanel
-                  key={part.actionRequired.requestId}
-                  request={part.actionRequired}
-                  onSubmit={onPermissionResponse || (() => {})}
+                  showBlockActions={showContentBlockActions}
+                  onQuoteContent={onQuoteContent}
                 />
               );
             }
-            return null;
-          })}
+          }
+        });
+      },
+      [
+        a2uiFormId,
+        a2uiInitialFormData,
+        collapseCodeBlocks,
+        isStreaming,
+        onA2UIFormChange,
+        onA2UISubmit,
+        onCodeBlockClick,
+        onQuoteContent,
+        renderA2UIInline,
+        renderProposedPlanBlocks,
+        renderWriteFileIndicator,
+        showContentBlockActions,
+        shouldCollapseCodeBlock,
+        shouldShowCursor,
+      ],
+    );
+
+    const renderInterleavedTextPart = React.useCallback(
+      (part: Extract<ContentPart, { type: "text" }>, index: number) => {
+        const partText = part.text;
+        if (!partText) {
+          return null;
+        }
+
+        const partParsed = interleavedParsedContent[index] || EMPTY_PARSE_RESULT;
+        const isLastPart = index === interleavedContentParts.length - 1;
+        const lastStreamingPartIndex = isLastPart
+          ? partParsed.parts.length - 1
+          : undefined;
+
+        if (partParsed.parts.length > 0) {
+          return (
+            <React.Fragment key={`text-${index}`}>
+              {renderParsedResultParts({
+                parsed: partParsed,
+                keyPrefix: `interleaved-${index}`,
+                lastStreamingPartIndex,
+              })}
+            </React.Fragment>
+          );
+        }
+
+        return (
+          <StreamingText
+            key={`text-${index}`}
+            text={partText}
+            isStreaming={isStreaming && isLastPart}
+            showCursor={shouldShowCursor && isLastPart}
+            onA2UISubmit={onA2UISubmit}
+            a2uiFormId={a2uiFormId}
+            a2uiInitialFormData={a2uiInitialFormData}
+            onA2UIFormChange={onA2UIFormChange}
+            renderProposedPlanBlocks={renderProposedPlanBlocks}
+            collapseCodeBlocks={collapseCodeBlocks}
+            shouldCollapseCodeBlock={shouldCollapseCodeBlock}
+            onCodeBlockClick={onCodeBlockClick}
+            showBlockActions={showContentBlockActions}
+            onQuoteContent={onQuoteContent}
+          />
+        );
+      },
+      [
+        a2uiFormId,
+        a2uiInitialFormData,
+        collapseCodeBlocks,
+        interleavedContentParts.length,
+        interleavedParsedContent,
+        isStreaming,
+        onA2UIFormChange,
+        onA2UISubmit,
+        onCodeBlockClick,
+        onQuoteContent,
+        renderParsedResultParts,
+        renderProposedPlanBlocks,
+        showContentBlockActions,
+        shouldCollapseCodeBlock,
+        shouldShowCursor,
+      ],
+    );
+
+    const hasVisibleContent = useInterleavedMode
+      ? interleavedContentParts.some((part) => {
+          if (part.type === "text") {
+            return part.text.length > 0;
+          }
+          if (suppressProcessFlow) {
+            return false;
+          }
+          if (part.type === "thinking") {
+            return part.text.length > 0;
+          }
+          if (part.type === "tool_use") {
+            return true;
+          }
+          return shouldRenderInlineActionRequest(part.actionRequired);
+        }) ||
+        (isStreaming &&
+          (content.length > 0 ||
+            (externalThinking && externalThinking.length > 0)))
+      : visibleText.length > 0 ||
+        Boolean(finalThinking) ||
+        (toolCalls?.length ?? 0) > 0 ||
+        visibleActionRequests.length > 0;
+
+    // 交错显示模式：按顺序渲染 contentParts
+    if (useInterleavedMode) {
+      const nodes: React.ReactNode[] = [];
+      let processBuffer: StreamingProcessEntry[] = [];
+
+      const flushProcessBuffer = (keySuffix: string) => {
+        if (processBuffer.length === 0) {
+          return;
+        }
+        const renderedRun = renderProcessRun(
+          processBuffer,
+          `interleaved-process-${keySuffix}`,
+        );
+        if (renderedRun) {
+          nodes.push(renderedRun);
+        }
+        processBuffer = [];
+      };
+
+      interleavedContentParts.forEach((part, index) => {
+        if (part.type === "text") {
+          flushProcessBuffer(String(index));
+          const textNode = renderInterleavedTextPart(part, index);
+          if (textNode) {
+            nodes.push(textNode);
+          }
+          return;
+        }
+
+        if (part.type === "thinking") {
+          if (suppressProcessFlow) {
+            return;
+          }
+          if (!part.text) {
+            return;
+          }
+          processBuffer.push({
+            kind: "thinking",
+            id: `thinking-${index}`,
+            text: part.text,
+            defaultExpanded:
+              isStreaming && index === interleavedContentParts.length - 1,
+          });
+          return;
+        }
+
+        if (part.type === "tool_use") {
+          if (suppressProcessFlow) {
+            return;
+          }
+          processBuffer.push({
+            kind: "tool",
+            id: part.toolCall.id,
+            toolCall: part.toolCall,
+          });
+          return;
+        }
+
+        if (!suppressProcessFlow && shouldRenderInlineActionRequest(part.actionRequired)) {
+          processBuffer.push({
+            kind: "action",
+            id: part.actionRequired.requestId,
+            actionRequired: part.actionRequired,
+          });
+        }
+      });
+
+      flushProcessBuffer("tail");
+
+      return (
+        <div className="flex flex-col gap-2">
+          {nodes}
 
           {/* 如果没有内容但正在流式输出，显示光标 */}
           {!hasVisibleContent &&
@@ -1060,12 +1538,32 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
       );
     }
 
-    // 回退模式：传统的 content + toolCalls 分开渲染
+    // 回退模式：将思考、工具和确认收敛成同一条执行过程
     const hasToolCalls = toolCalls && toolCalls.length > 0;
-    const visibleActionRequests = (actionRequests || []).filter(
-      shouldRenderInlineActionRequest,
-    );
     const hasActionRequests = visibleActionRequests.length > 0;
+    const legacyProcessEntries: StreamingProcessEntry[] = [];
+    if (finalThinking) {
+      legacyProcessEntries.push({
+        kind: "thinking",
+        id: "legacy-thinking",
+        text: finalThinking,
+        defaultExpanded: isStreaming,
+      });
+    }
+    for (const toolCall of suppressProcessFlow ? [] : toolCalls || []) {
+      legacyProcessEntries.push({
+        kind: "tool",
+        id: toolCall.id,
+        toolCall,
+      });
+    }
+    for (const request of suppressProcessFlow ? [] : visibleActionRequests) {
+      legacyProcessEntries.push({
+        kind: "action",
+        id: request.requestId,
+        actionRequired: request,
+      });
+    }
     const shouldShowRuntimeStatus =
       showRuntimeStatusInline &&
       Boolean(runtimeStatus) &&
@@ -1075,156 +1573,21 @@ export const StreamingRenderer: React.FC<StreamingRendererProps> = memo(
       !hasActionRequests &&
       !hasRunningTools;
 
-    // 渲染解析后的内容（包括 A2UI、write_file、普通文本）
-    const renderParsedContent = () => {
-      return parsedContent.parts.map((part, index) => {
-        switch (part.type) {
-          case "a2ui":
-            if (!renderA2UIInline) {
-              return null;
-            }
-            // 渲染 A2UI 表单 - content 是 A2UIResponse 类型
-            if (typeof part.content !== "string") {
-              return (
-                <A2UITaskCard
-                  key={`a2ui-${index}`}
-                  response={part.content}
-                  onSubmit={onA2UISubmit}
-                  formId={a2uiFormId}
-                  initialFormData={a2uiInitialFormData}
-                  onFormChange={onA2UIFormChange}
-                  preset={CHAT_A2UI_TASK_CARD_PRESET}
-                />
-              );
-            }
-            return null;
-
-          case "write_file":
-          case "pending_write_file": {
-            // 显示文件写入指示器 - content 是 string 类型
-            const fileContent =
-              typeof part.content === "string" ? part.content : "";
-            return (
-              <div
-                key={`write-${index}`}
-                className="flex items-center gap-2 px-3 py-2 bg-muted/50 rounded-lg text-sm text-muted-foreground cursor-pointer hover:bg-muted/70 transition-colors"
-                onClick={() =>
-                  part.filePath && onFileClick?.(part.filePath, fileContent)
-                }
-              >
-                <FileText className="w-4 h-4" />
-                <span>写入</span>
-                <span className="font-medium text-foreground">
-                  {part.filePath || "文档.md"}
-                </span>
-                {part.filePath ? (
-                  <ExternalLink className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
-                ) : null}
-                {part.type === "pending_write_file" && (
-                  <span className="animate-pulse">...</span>
-                )}
-              </div>
-            );
-          }
-
-          case "pending_a2ui":
-            if (!renderA2UIInline) {
-              return null;
-            }
-            // 显示正在加载的表单
-            return (
-              <div
-                key={`pending-${index}`}
-                className="flex items-center gap-2 px-3 py-4 bg-muted/50 rounded-lg animate-pulse"
-              >
-                <div className="w-4 h-4 rounded-full bg-muted-foreground/20" />
-                <span className="text-sm text-muted-foreground">
-                  表单加载中...
-                </span>
-              </div>
-            );
-
-          case "text":
-          default: {
-            // 渲染普通文本 - content 是 string 类型
-            const textContent =
-              typeof part.content === "string" ? part.content : "";
-            if (!textContent || textContent.trim() === "") return null;
-            return (
-              <StreamingText
-                key={`text-${index}`}
-                text={textContent}
-                isStreaming={
-                  isStreaming && index === parsedContent.parts.length - 1
-                }
-                showCursor={
-                  shouldShowCursor && index === parsedContent.parts.length - 1
-                }
-                onA2UISubmit={onA2UISubmit}
-                a2uiFormId={a2uiFormId}
-                a2uiInitialFormData={a2uiInitialFormData}
-                onA2UIFormChange={onA2UIFormChange}
-                renderA2UIInline={renderA2UIInline}
-                renderProposedPlanBlocks={renderProposedPlanBlocks}
-                collapseCodeBlocks={collapseCodeBlocks}
-                shouldCollapseCodeBlock={shouldCollapseCodeBlock}
-                onCodeBlockClick={onCodeBlockClick}
-              />
-            );
-          }
-        }
-      });
-    };
-
     return (
       <div className="flex flex-col gap-2">
         {shouldShowRuntimeStatus && runtimeStatus ? (
           <AgentRuntimeStatusBlock status={runtimeStatus} />
         ) : null}
-        {/* 思考内容 - 显示在最前面 */}
-        {finalThinking && (
-          <ThinkingBlock
-            content={finalThinking}
-            defaultExpanded={isStreaming}
-          />
-        )}
-
-        {/* 工具调用区域 */}
-        {hasToolCalls && (
-          <ToolCallList
-            toolCalls={toolCalls}
-            isMessageStreaming={isStreaming}
-            onFileClick={onFileClick}
-            onOpenSavedSiteContent={onOpenSavedSiteContent}
-          />
-        )}
-
-        {/* 权限确认区域 */}
-        {hasActionRequests && onPermissionResponse && (
-          <div className="space-y-3">
-            {visibleActionRequests.map((request) =>
-              isActionRequestA2UICompatible(request) &&
-              (request.status === "submitted" ||
-                request.status === "queued") ? (
-                <ActionRequestA2UIPreviewCard
-                  key={request.requestId}
-                  request={request}
-                  compact={true}
-                  context="chat"
-                />
-              ) : (
-                <DecisionPanel
-                  key={request.requestId}
-                  request={request}
-                  onSubmit={onPermissionResponse}
-                />
-              ),
-            )}
-          </div>
-        )}
+        {legacyProcessEntries.length > 0
+          ? renderProcessRun(legacyProcessEntries, "legacy-process")
+          : null}
 
         {/* 解析后的内容区域（包括 A2UI、write_file、普通文本） */}
-        {renderParsedContent()}
+        {renderParsedResultParts({
+          parsed: parsedContent,
+          keyPrefix: "standard",
+          lastStreamingPartIndex: parsedContent.parts.length - 1,
+        })}
 
         {/* 如果没有内容但正在流式输出，显示光标 */}
         {!hasVisibleContent &&

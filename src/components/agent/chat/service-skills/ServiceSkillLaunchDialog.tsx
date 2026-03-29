@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -13,17 +13,32 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
+  siteGetAdapterLaunchReadiness,
+  type SiteAdapterLaunchReadinessResult,
+} from "@/lib/webview-api";
+import {
   createDefaultServiceSkillSlotValues,
   formatServiceSkillPromptPreview,
   validateServiceSkillSlotValues,
 } from "./promptComposer";
-import { isServiceSkillSiteCapabilityBound } from "./siteCapabilityBinding";
+import {
+  getServiceSkillOutputDestination,
+  getServiceSkillPrimaryActionLabel,
+  getServiceSkillTypeLabel,
+  listServiceSkillDependencies,
+} from "./skillPresentation";
 import { supportsServiceSkillLocalAutomation } from "./automationDraft";
+import { isServiceSkillExecutableAsSiteAdapter } from "./siteCapabilityBinding";
 import type {
   ServiceSkillHomeItem,
   ServiceSkillSlotDefinition,
   ServiceSkillSlotValues,
 } from "./types";
+
+type SiteLaunchReadinessState =
+  | { phase: "idle" | "checking" }
+  | { phase: "ready" | "blocked"; result: SiteAdapterLaunchReadinessResult }
+  | { phase: "error"; message: string };
 
 interface ServiceSkillLaunchDialogProps {
   skill: ServiceSkillHomeItem | null;
@@ -34,6 +49,10 @@ interface ServiceSkillLaunchDialogProps {
     slotValues: ServiceSkillSlotValues,
   ) => void | Promise<void>;
   onCreateAutomation?: (
+    skill: ServiceSkillHomeItem,
+    slotValues: ServiceSkillSlotValues,
+  ) => void | Promise<void>;
+  onOpenBrowserRuntime?: (
     skill: ServiceSkillHomeItem,
     slotValues: ServiceSkillSlotValues,
   ) => void | Promise<void>;
@@ -94,14 +113,39 @@ function renderFieldControl(params: {
   );
 }
 
+function renderInfoList(title: string, items?: string[]) {
+  if (!items || items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-medium text-slate-800">{title}</div>
+      <div className="space-y-1 text-xs leading-5 text-slate-600">
+        {items.map((item) => (
+          <div key={`${title}-${item}`} className="flex gap-2">
+            <span className="mt-[6px] h-1.5 w-1.5 rounded-full bg-slate-300" />
+            <span>{item}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ServiceSkillLaunchDialog({
   skill,
   open,
   onOpenChange,
   onLaunch,
   onCreateAutomation,
+  onOpenBrowserRuntime,
 }: ServiceSkillLaunchDialogProps) {
   const [slotValues, setSlotValues] = useState<ServiceSkillSlotValues>({});
+  const [siteLaunchReadiness, setSiteLaunchReadiness] =
+    useState<SiteLaunchReadinessState>({
+      phase: "idle",
+    });
 
   useEffect(() => {
     if (!skill || !open) {
@@ -132,17 +176,114 @@ export function ServiceSkillLaunchDialog({
   );
   const canCreateAutomation =
     supportsAutomation && typeof onCreateAutomation === "function";
-  const isCloudRequired = skill?.executionLocation === "cloud_required";
-  const isSiteCapabilityBound = !!(
-    skill && isServiceSkillSiteCapabilityBound(skill)
+  const isSiteSkill = skill
+    ? isServiceSkillExecutableAsSiteAdapter(skill)
+    : false;
+  const canOpenBrowserRuntime =
+    isSiteSkill && typeof onOpenBrowserRuntime === "function";
+  const dependencyItems = useMemo(
+    () => (skill ? listServiceSkillDependencies(skill) : []),
+    [skill],
   );
-  const primaryActionLabel = canCreateAutomation
-    ? "创建任务并进入工作区"
-    : isCloudRequired
-      ? "提交云端运行"
-      : isSiteCapabilityBound
-        ? "进入浏览器工作台"
-        : "进入工作区";
+  const outputDestination = useMemo(
+    () => (skill ? getServiceSkillOutputDestination(skill) : ""),
+    [skill],
+  );
+  const primaryActionLabel = skill
+    ? isSiteSkill
+      ? "在 Claw 中执行"
+      : getServiceSkillPrimaryActionLabel(skill, canCreateAutomation)
+    : "进入工作区";
+  const canLaunchInClaw =
+    validation.valid && (!isSiteSkill || siteLaunchReadiness.phase === "ready");
+
+  const refreshSiteLaunchReadiness = useCallback(async () => {
+    if (!open || !skill || !isServiceSkillExecutableAsSiteAdapter(skill)) {
+      setSiteLaunchReadiness({ phase: "idle" });
+      return;
+    }
+
+    setSiteLaunchReadiness({ phase: "checking" });
+    try {
+      const result = await siteGetAdapterLaunchReadiness({
+        adapter_name: skill.siteCapabilityBinding.adapterName,
+      });
+      setSiteLaunchReadiness({
+        phase: result.status === "ready" ? "ready" : "blocked",
+        result,
+      });
+    } catch (error) {
+      setSiteLaunchReadiness({
+        phase: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [open, skill]);
+
+  useEffect(() => {
+    if (!open || !skill || !isSiteSkill) {
+      setSiteLaunchReadiness({ phase: "idle" });
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      setSiteLaunchReadiness({ phase: "checking" });
+      try {
+        const result = await siteGetAdapterLaunchReadiness({
+          adapter_name: skill.siteCapabilityBinding.adapterName,
+        });
+        if (cancelled) {
+          return;
+        }
+        setSiteLaunchReadiness({
+          phase: result.status === "ready" ? "ready" : "blocked",
+          result,
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setSiteLaunchReadiness({
+          phase: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSiteSkill, open, skill]);
+
+  const readinessToneClass =
+    siteLaunchReadiness.phase === "ready"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+      : siteLaunchReadiness.phase === "blocked"
+        ? "border-amber-200 bg-amber-50 text-amber-800"
+        : siteLaunchReadiness.phase === "error"
+          ? "border-rose-200 bg-rose-50 text-rose-700"
+          : "border-slate-200 bg-slate-50 text-slate-600";
+  const readinessLabel =
+    siteLaunchReadiness.phase === "ready"
+      ? "可直接执行"
+      : siteLaunchReadiness.phase === "blocked"
+        ? "需要浏览器工作台"
+        : siteLaunchReadiness.phase === "error"
+          ? "检测失败"
+          : "检测中";
+  const readinessMessage =
+    siteLaunchReadiness.phase === "ready" ||
+    siteLaunchReadiness.phase === "blocked"
+      ? siteLaunchReadiness.result.message
+      : siteLaunchReadiness.phase === "error"
+        ? siteLaunchReadiness.message
+        : "正在检查是否存在可复用的真实浏览器会话。";
+  const readinessHint =
+    siteLaunchReadiness.phase === "ready" ||
+    siteLaunchReadiness.phase === "blocked"
+      ? siteLaunchReadiness.result.report_hint
+      : null;
 
   if (!skill) {
     return null;
@@ -150,34 +291,104 @@ export function ServiceSkillLaunchDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[720px] space-y-4">
+      <DialogContent className="max-h-[calc(100vh-32px)] overflow-y-auto overscroll-contain sm:max-w-[720px] space-y-4">
         <DialogHeader>
           <DialogTitle>{skill.title}</DialogTitle>
           <DialogDescription className="space-y-2">
             <span className="block">{skill.summary}</span>
             <span className="block text-xs text-slate-500">
-              {skill.runnerLabel} · 产出：{skill.outputHint}
+              {getServiceSkillTypeLabel(skill)} · {skill.runnerLabel} · 产出：
+              {skill.outputHint}
             </span>
           </DialogDescription>
         </DialogHeader>
 
-        <div className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 text-xs leading-5 text-slate-600">
-          <div className="font-medium text-slate-800">预览</div>
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-600">
+          <div className="font-medium text-slate-800">执行预览</div>
           <div className="mt-1">{preview}</div>
-          {canCreateAutomation ? (
-            <div className="mt-2 text-[11px] text-slate-500">
-              这类任务支持直接生成本地自动化草稿；你也可以只先进入工作区做首版结果。
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+          <div className="grid gap-0 md:grid-cols-3">
+            <div className="border-b border-slate-200 px-4 py-3 md:border-b-0 md:border-r">
+              <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400">
+                执行方式
+              </div>
+              <div className="mt-1 text-sm font-medium text-slate-900">
+                {skill.runnerLabel}
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-600">
+                {skill.runnerDescription}
+              </p>
             </div>
-          ) : skill.executionLocation === "cloud_required" ? (
-            <div className="mt-2 text-[11px] text-slate-500">
-              该任务会直接提交到 OEM
-              云端执行；成功后会把结果回流到本地工作区，但不会创建本地自动化草稿。
+            <div className="border-b border-slate-200 px-4 py-3 md:border-b-0 md:border-r">
+              <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400">
+                依赖条件
+              </div>
+              {dependencyItems.length > 0 ? (
+                <div className="mt-2 space-y-1 text-xs leading-5 text-slate-600">
+                  {dependencyItems.map((item) => (
+                    <div key={item}>{item}</div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                  当前没有额外依赖，补完参数后即可开始。
+                </p>
+              )}
+              {isSiteSkill ? (
+                <div
+                  className={cn(
+                    "mt-3 rounded-2xl border px-3 py-3 text-xs leading-5",
+                    readinessToneClass,
+                  )}
+                  data-testid="service-skill-site-readiness"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-medium">Claw 直跑检测</div>
+                    <span className="text-[11px] font-medium">
+                      {readinessLabel}
+                    </span>
+                  </div>
+                  <p className="mt-2">{readinessMessage}</p>
+                  {readinessHint ? (
+                    <p className="mt-2 text-[11px] opacity-80">
+                      {readinessHint}
+                    </p>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="mt-3 inline-flex items-center rounded-xl border border-current/15 bg-white/70 px-2.5 py-1 text-[11px] font-medium transition hover:bg-white"
+                    data-testid="service-skill-refresh-readiness"
+                    onClick={() => {
+                      void refreshSiteLaunchReadiness();
+                    }}
+                  >
+                    重新检测会话
+                  </button>
+                </div>
+              ) : null}
             </div>
-          ) : isSiteCapabilityBound ? (
-            <div className="mt-2 text-[11px] text-slate-500">
-              该任务会直接进入浏览器工作台，预填站点脚本参数，并优先复用当前浏览器登录态执行。
+            <div className="px-4 py-3">
+              <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-slate-400">
+                结果去向
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-600">
+                {outputDestination}
+              </p>
             </div>
-          ) : null}
+          </div>
+          {(skill.triggerHints?.length ||
+            skill.usageGuidelines?.length ||
+            skill.examples?.length) && (
+            <div className="border-t border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="grid gap-4 md:grid-cols-3">
+                {renderInfoList("适合什么时候用", skill.usageGuidelines)}
+                {renderInfoList("常见触发", skill.triggerHints)}
+                {renderInfoList("示例", skill.examples)}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="grid gap-4">
@@ -239,6 +450,19 @@ export function ServiceSkillLaunchDialog({
               先进入工作区
             </Button>
           ) : null}
+          {canOpenBrowserRuntime ? (
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="service-skill-open-browser-runtime"
+              disabled={!validation.valid}
+              onClick={() => {
+                void onOpenBrowserRuntime?.(skill, slotValues);
+              }}
+            >
+              去浏览器工作台
+            </Button>
+          ) : null}
           <Button
             type="button"
             data-testid={
@@ -246,7 +470,7 @@ export function ServiceSkillLaunchDialog({
                 ? "service-skill-create-automation"
                 : "service-skill-launch"
             }
-            disabled={!validation.valid}
+            disabled={!canLaunchInClaw}
             onClick={() => {
               if (canCreateAutomation && onCreateAutomation) {
                 void onCreateAutomation(skill, slotValues);

@@ -58,6 +58,7 @@ describe("agentStreamUserInputSubmission", () => {
       runtime,
       ensureSession: async () => "session-1",
       executionStrategy: "react",
+      accessMode: "current",
       providerTypeRef: { current: "openai" } as MutableRefObject<string>,
       modelRef: { current: "gpt-5.4" } as MutableRefObject<string>,
       sessionIdRef: { current: null } as MutableRefObject<string | null>,
@@ -119,6 +120,14 @@ describe("agentStreamUserInputSubmission", () => {
     });
 
     expect(runtime.submitOp).toHaveBeenCalledTimes(1);
+    expect(runtime.submitOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preferences: expect.objectContaining({
+          approvalPolicy: "on-request",
+          sandboxPolicy: "workspace-write",
+        }),
+      }),
+    );
     expect(activeStreamRefState.current?.sessionId).toBe("session-1");
     expect(threadTurns).toHaveLength(1);
     expect(threadItems).toHaveLength(1);

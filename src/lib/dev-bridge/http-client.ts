@@ -12,6 +12,8 @@ import {
 
 const BRIDGE_URL = "http://127.0.0.1:3030/invoke";
 const BRIDGE_HEALTH_URL = "http://127.0.0.1:3030/health";
+const BRIDGE_EVENTS_URL = "http://127.0.0.1:3030/events";
+const DEV_BRIDGE_EVENT_CONNECT_TIMEOUT_MS = 1500;
 
 export interface InvokeRequest {
   cmd: string;
@@ -22,6 +24,16 @@ export interface InvokeResponse {
   result?: unknown;
   error?: string;
 }
+
+type DevBridgeEventHandler<T> = (event: { payload: T }) => void;
+
+interface DevBridgeEventHub {
+  listeners: Set<DevBridgeEventHandler<unknown>>;
+  source: EventSource;
+  openPromise: Promise<void>;
+}
+
+const bridgeEventHubs = new Map<string, DevBridgeEventHub>();
 
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -92,6 +104,140 @@ export function isDevBridgeAvailable(): boolean {
       location.hostname === "127.0.0.1");
 
   return isBrowser;
+}
+
+export function hasDevBridgeEventListenerCapability(): boolean {
+  return (
+    isDevBridgeAvailable() &&
+    typeof window !== "undefined" &&
+    typeof window.EventSource === "function"
+  );
+}
+
+function parseBridgeEventPayload<T>(raw: string): { payload: T } | null {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { payload?: T };
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "payload" in parsed
+    ) {
+      return { payload: parsed.payload as T };
+    }
+    return { payload: parsed as T };
+  } catch {
+    return { payload: raw as T };
+  }
+}
+
+export async function listenViaHttpEvent<T = unknown>(
+  event: string,
+  handler: (event: { payload: T }) => void,
+): Promise<() => void> {
+  if (!hasDevBridgeEventListenerCapability()) {
+    throw new Error(`[DevBridge] 浏览器模式事件桥不可用: ${event}`);
+  }
+
+  const normalizedEvent = event.trim();
+  if (!normalizedEvent) {
+    throw new Error("[DevBridge] 事件名不能为空");
+  }
+
+  let hub = bridgeEventHubs.get(normalizedEvent);
+  if (!hub) {
+    const source = new window.EventSource(
+      `${BRIDGE_EVENTS_URL}?event=${encodeURIComponent(normalizedEvent)}`,
+    );
+    const listeners = new Set<DevBridgeEventHandler<unknown>>();
+    let hasOpened = false;
+    let settleOpen:
+      | ((value: void | PromiseLike<void>) => void)
+      | null = null;
+    let settleOpenError: ((reason?: unknown) => void) | null = null;
+    const openPromise = new Promise<void>((resolve, reject) => {
+      settleOpen = resolve;
+      settleOpenError = reject;
+    });
+    const connectTimeout = window.setTimeout(() => {
+      if (hasOpened) {
+        return;
+      }
+      bridgeEventHubs.delete(normalizedEvent);
+      source.close();
+      settleOpenError?.(
+        new Error(`[DevBridge] 事件流连接超时: ${normalizedEvent}`),
+      );
+    }, DEV_BRIDGE_EVENT_CONNECT_TIMEOUT_MS);
+
+    source.onmessage = (messageEvent) => {
+      const parsed = parseBridgeEventPayload<unknown>(messageEvent.data);
+      if (!parsed) {
+        return;
+      }
+      for (const listener of listeners) {
+        try {
+          listener(parsed);
+        } catch (error) {
+          console.error(
+            `[DevBridge] 事件监听器执行失败: ${normalizedEvent}`,
+            error,
+          );
+        }
+      }
+    };
+
+    source.onopen = () => {
+      hasOpened = true;
+      window.clearTimeout(connectTimeout);
+      settleOpen?.();
+      settleOpen = null;
+      settleOpenError = null;
+    };
+
+    source.onerror = (error) => {
+      console.warn(`[DevBridge] 事件流异常: ${normalizedEvent}`, error);
+      if (hasOpened) {
+        return;
+      }
+      window.clearTimeout(connectTimeout);
+      bridgeEventHubs.delete(normalizedEvent);
+      source.close();
+      settleOpenError?.(
+        new Error(`[DevBridge] 事件流连接失败: ${normalizedEvent}`),
+      );
+      settleOpen = null;
+      settleOpenError = null;
+    };
+
+    hub = {
+      listeners,
+      source,
+      openPromise,
+    };
+    bridgeEventHubs.set(normalizedEvent, hub);
+  }
+
+  const listener = handler as DevBridgeEventHandler<unknown>;
+  hub.listeners.add(listener);
+
+  await hub.openPromise;
+
+  return () => {
+    const currentHub = bridgeEventHubs.get(normalizedEvent);
+    if (!currentHub) {
+      return;
+    }
+    currentHub.listeners.delete(listener);
+    if (currentHub.listeners.size > 0) {
+      return;
+    }
+    currentHub.source.close();
+    bridgeEventHubs.delete(normalizedEvent);
+  };
 }
 
 /**

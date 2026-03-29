@@ -10,12 +10,14 @@ import {
 } from "../test-utils";
 import { useImageSearch } from "./useImageSearch";
 
-const { mockInvoke } = vi.hoisted(() => ({
-  mockInvoke: vi.fn(),
+const { mockSearchPixabayImages, mockSearchWebImages } = vi.hoisted(() => ({
+  mockSearchPixabayImages: vi.fn(),
+  mockSearchWebImages: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
-  invoke: mockInvoke,
+vi.mock("@/lib/api/imageSearch", () => ({
+  searchPixabayImages: mockSearchPixabayImages,
+  searchWebImages: mockSearchWebImages,
 }));
 
 interface HookHarness {
@@ -56,26 +58,21 @@ afterEach(() => {
 
 describe("useImageSearch", () => {
   it("应正确映射 Pixabay 结果", async () => {
-    mockInvoke.mockImplementation((command) => {
-      if (command === "search_pixabay_images") {
-        return Promise.resolve({
-          total: 100,
-          total_hits: 2,
-          hits: [
-            {
-              id: 1,
-              preview_url: "https://pixabay.example/preview.jpg",
-              large_image_url: "https://pixabay.example/large.jpg",
-              image_width: 1200,
-              image_height: 800,
-              tags: "forest,tree",
-              page_url: "https://pixabay.com/photos/forest",
-              user: "pixabay-user",
-            },
-          ],
-        });
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
+    mockSearchPixabayImages.mockResolvedValue({
+      total: 100,
+      total_hits: 2,
+      hits: [
+        {
+          id: 1,
+          preview_url: "https://pixabay.example/preview.jpg",
+          large_image_url: "https://pixabay.example/large.jpg",
+          image_width: 1200,
+          image_height: 800,
+          tags: "forest,tree",
+          page_url: "https://pixabay.com/photos/forest",
+          user: "pixabay-user",
+        },
+      ],
     });
 
     const harness = mountHook();
@@ -95,25 +92,20 @@ describe("useImageSearch", () => {
   });
 
   it("应正确映射联网（Pexels）结果", async () => {
-    mockInvoke.mockImplementation((command) => {
-      if (command === "search_web_images") {
-        return Promise.resolve({
-          total: 1,
-          provider: "pexels",
-          hits: [
-            {
-              id: "pex-1",
-              thumbnail_url: "https://pexels.example/thumb.jpg",
-              content_url: "https://pexels.example/original.jpg",
-              width: 1080,
-              height: 1920,
-              name: "city night",
-              host_page_url: "https://www.pexels.com/photo/city-night",
-            },
-          ],
-        });
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
+    mockSearchWebImages.mockResolvedValue({
+      total: 1,
+      provider: "pexels",
+      hits: [
+        {
+          id: "pex-1",
+          thumbnail_url: "https://pexels.example/thumb.jpg",
+          content_url: "https://pexels.example/original.jpg",
+          width: 1080,
+          height: 1920,
+          name: "city night",
+          host_page_url: "https://www.pexels.com/photo/city-night",
+        },
+      ],
     });
 
     const harness = mountHook();
@@ -134,25 +126,20 @@ describe("useImageSearch", () => {
   });
 
   it("应兼容联网（Pexels）camelCase 字段", async () => {
-    mockInvoke.mockImplementation((command) => {
-      if (command === "search_web_images") {
-        return Promise.resolve({
-          total: 2,
-          provider: "pexels",
-          hits: [
-            {
-              id: "pex-camel-1",
-              thumbnailUrl: "https://pexels.example/camel-thumb.jpg",
-              contentUrl: "https://pexels.example/camel-original.jpg",
-              width: 1200,
-              height: 800,
-              name: "camel city",
-              hostPageUrl: "https://www.pexels.com/photo/camel-city",
-            },
-          ],
-        });
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
+    mockSearchWebImages.mockResolvedValue({
+      total: 2,
+      provider: "pexels",
+      hits: [
+        {
+          id: "pex-camel-1",
+          thumbnailUrl: "https://pexels.example/camel-thumb.jpg",
+          contentUrl: "https://pexels.example/camel-original.jpg",
+          width: 1200,
+          height: 800,
+          name: "camel city",
+          hostPageUrl: "https://www.pexels.com/photo/camel-city",
+        },
+      ],
     });
 
     const harness = mountHook();
@@ -173,27 +160,24 @@ describe("useImageSearch", () => {
   });
 
   it("loadMore 应使用下一页请求并追加结果", async () => {
-    mockInvoke.mockImplementation((command, payload) => {
-      if (command === "search_pixabay_images") {
-        const page = payload.req.page;
-        return Promise.resolve({
-          total: 40,
-          total_hits: 40,
-          hits: [
-            {
-              id: page,
-              preview_url: `https://pixabay.example/${page}-preview.jpg`,
-              large_image_url: `https://pixabay.example/${page}-large.jpg`,
-              image_width: 1200,
-              image_height: 800,
-              tags: `tag-${page}`,
-              page_url: `https://pixabay.com/photos/${page}`,
-              user: "pixabay-user",
-            },
-          ],
-        });
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
+    mockSearchPixabayImages.mockImplementation(async (req) => {
+      const page = req.page;
+      return {
+        total: 40,
+        total_hits: 40,
+        hits: [
+          {
+            id: page,
+            preview_url: `https://pixabay.example/${page}-preview.jpg`,
+            large_image_url: `https://pixabay.example/${page}-large.jpg`,
+            image_width: 1200,
+            image_height: 800,
+            tags: `tag-${page}`,
+            page_url: `https://pixabay.com/photos/${page}`,
+            user: "pixabay-user",
+          },
+        ],
+      };
     });
 
     const harness = mountHook();
@@ -216,50 +200,41 @@ describe("useImageSearch", () => {
     expect(state.page).toBe(2);
     expect(state.results.map((item) => item.id)).toEqual(["1", "2"]);
 
-    const pageCalls = mockInvoke.mock.calls
-      .filter(([command]) => command === "search_pixabay_images")
-      .map(([, payload]) => payload.req.page);
+    const pageCalls = mockSearchPixabayImages.mock.calls.map(([req]) => req.page);
     expect(pageCalls).toEqual([1, 2]);
   });
 
   it("应维护来源独立缓存（互不污染）", async () => {
-    mockInvoke.mockImplementation((command) => {
-      if (command === "search_pixabay_images") {
-        return Promise.resolve({
-          total: 1,
-          total_hits: 1,
-          hits: [
-            {
-              id: 100,
-              preview_url: "https://pixabay.example/p.jpg",
-              large_image_url: "https://pixabay.example/l.jpg",
-              image_width: 1000,
-              image_height: 700,
-              tags: "pixabay-only",
-              page_url: "https://pixabay.com/photos/pixabay-only",
-              user: "pix-user",
-            },
-          ],
-        });
-      }
-      if (command === "search_web_images") {
-        return Promise.resolve({
-          total: 1,
-          provider: "pexels",
-          hits: [
-            {
-              id: "w-1",
-              thumbnail_url: "https://pexels.example/w-thumb.jpg",
-              content_url: "https://pexels.example/w.jpg",
-              width: 700,
-              height: 1000,
-              name: "web-only",
-              host_page_url: "https://www.pexels.com/photo/web-only",
-            },
-          ],
-        });
-      }
-      return Promise.reject(new Error(`unexpected command: ${command}`));
+    mockSearchPixabayImages.mockResolvedValue({
+      total: 1,
+      total_hits: 1,
+      hits: [
+        {
+          id: 100,
+          preview_url: "https://pixabay.example/p.jpg",
+          large_image_url: "https://pixabay.example/l.jpg",
+          image_width: 1000,
+          image_height: 700,
+          tags: "pixabay-only",
+          page_url: "https://pixabay.com/photos/pixabay-only",
+          user: "pix-user",
+        },
+      ],
+    });
+    mockSearchWebImages.mockResolvedValue({
+      total: 1,
+      provider: "pexels",
+      hits: [
+        {
+          id: "w-1",
+          thumbnail_url: "https://pexels.example/w-thumb.jpg",
+          content_url: "https://pexels.example/w.jpg",
+          width: 700,
+          height: 1000,
+          name: "web-only",
+          host_page_url: "https://www.pexels.com/photo/web-only",
+        },
+      ],
     });
 
     const harness = mountHook();

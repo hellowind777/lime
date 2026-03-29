@@ -35,7 +35,7 @@ function createBaseItem(
 }
 
 describe("agentThreadGrouping", () => {
-  it("应按连续语义合并浏览器项并聚合摘要 chip", () => {
+  it("应按真实时序把连续执行项收成一个过程块", () => {
     const items: AgentThreadItem[] = [
       {
         ...createBaseItem("browser-1", 1),
@@ -64,22 +64,17 @@ describe("agentThreadGrouping", () => {
 
     const model = buildAgentThreadDisplayModel(items);
 
-    expect(model.groups.map((group) => group.kind)).toEqual([
-      "browser",
-      "search",
-      "browser",
-    ]);
-    expect(model.groups[0]?.items).toHaveLength(2);
+    expect(model.groups.map((group) => group.kind)).toEqual(["process"]);
+    expect(model.groups[0]?.items).toHaveLength(4);
     expect(model.groups[0]?.previewLines).toContain("打开了 https://example.com");
     expect(model.groups[0]?.previewLines).toContain("点了 #submit");
-    expect(model.groups[1]?.previewLines).toContain("搜了 Lime CDP 并行渲染");
+    expect(model.groups[0]?.previewLines).toContain("搜了 Lime CDP 并行渲染");
     expect(model.summaryChips).toEqual([
-      { kind: "browser", label: "页面操作", count: 3 },
-      { kind: "search", label: "联网搜索", count: 1 },
+      { kind: "process", label: "执行过程", count: 4 },
     ]);
   });
 
-  it("应识别文件与命令分组，并从最新 thinking 项提取 summaryText", () => {
+  it("应保留产物块，并把前后执行项收成过程块", () => {
     const items: AgentThreadItem[] = [
       {
         ...createBaseItem("plan-1", 1),
@@ -109,15 +104,19 @@ describe("agentThreadGrouping", () => {
 
     const model = buildAgentThreadDisplayModel(items);
 
-    expect(model.summaryText).toBe("已决定：已完成 CDP 页面检查");
-    expect(model.groups.map((group) => group.kind)).toEqual(["file", "command"]);
-    expect(model.groups[0]?.previewLines).toEqual(["产出了 wechat-draft.md"]);
-    expect(model.groups[1]?.previewLines).toEqual([
-      "执行了 npm test -- AgentThreadTimeline",
+    expect(model.summaryText).toBe("已完成 CDP 页面检查");
+    expect(model.groups.map((group) => group.kind)).toEqual([
+      "process",
+      "artifact",
+      "process",
     ]);
+    expect(model.groups[1]?.previewLines).toEqual(["产出了 wechat-draft.md"]);
+    expect(model.groups[2]?.previewLines).toContain(
+      "执行了 npm test -- AgentThreadTimeline",
+    );
     expect(model.summaryChips).toEqual([
-      { kind: "file", label: "文件和产物", count: 1 },
-      { kind: "command", label: "命令", count: 1 },
+      { kind: "process", label: "执行过程", count: 3 },
+      { kind: "artifact", label: "文件和产物", count: 1 },
     ]);
   });
 
@@ -137,7 +136,7 @@ describe("agentThreadGrouping", () => {
 
     const model = buildAgentThreadDisplayModel(items);
 
-    expect(model.groups.map((group) => group.kind)).toEqual(["file"]);
+    expect(model.groups.map((group) => group.kind)).toEqual(["process"]);
     expect(model.groups[0]?.previewLines).toEqual(["写了 nested-draft.md"]);
   });
 
@@ -163,11 +162,11 @@ describe("agentThreadGrouping", () => {
 
     const model = buildAgentThreadDisplayModel(items);
 
-    expect(model.groups.map((group) => group.kind)).toEqual(["file"]);
+    expect(model.groups.map((group) => group.kind)).toEqual(["process"]);
     expect(model.groups[0]?.previewLines).toEqual(["看了 reports", "动了 run.log"]);
   });
 
-  it("思考块应保留在真实时序中，而不是整体前置", () => {
+  it("思考与工具步骤应保持原始时序并收进同一个过程块", () => {
     const items: AgentThreadItem[] = [
       {
         ...createBaseItem("browser-1", 1),
@@ -190,13 +189,13 @@ describe("agentThreadGrouping", () => {
 
     const model = buildAgentThreadDisplayModel(items);
 
-    expect(model.orderedBlocks.map((block) => block.kind)).toEqual([
-      "browser",
-      "thinking",
-      "search",
+    expect(model.orderedBlocks.map((block) => block.kind)).toEqual(["process"]);
+    expect(model.groups.map((group) => group.kind)).toEqual(["process"]);
+    expect(model.orderedBlocks[0]?.previewLines).toEqual([
+      "打开了 https://mp.weixin.qq.com",
+      "已打开公众号后台",
+      "搜了 微信公众号 封面尺寸",
     ]);
-    expect(model.groups.map((group) => group.kind)).toEqual(["browser", "search"]);
-    expect(model.orderedBlocks[1]?.previewLines).toEqual(["已决定：已打开公众号后台"]);
   });
 
   it("结构化问答摘要不应回退为原始 a2ui 代码块", () => {
@@ -216,7 +215,7 @@ describe("agentThreadGrouping", () => {
 
     const model = buildAgentThreadDisplayModel(items);
 
-    expect(model.summaryText).toBe("已决定：请先确认以下选项：");
-    expect(model.orderedBlocks[0]?.previewLines).toEqual(["已决定：请先确认以下选项："]);
+    expect(model.summaryText).toBe("请先确认以下选项：");
+    expect(model.orderedBlocks[0]?.previewLines).toEqual(["请先确认以下选项："]);
   });
 });

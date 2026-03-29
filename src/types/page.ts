@@ -68,6 +68,7 @@ export const WORKSPACE_PAGE_THEME_MAP: Record<
 export type Page =
   | "openclaw"
   | "agent"
+  | "skills"
   | "style"
   | ThemeWorkspacePage
   | "image-gen"
@@ -160,6 +161,8 @@ export interface AgentPageParams {
   immersiveHome?: boolean;
   /** 进入 Agent 后立即打开浏览器协助 */
   openBrowserAssistOnMount?: boolean;
+  /** 进入 Agent 后执行一次站点技能启动 */
+  initialSiteSkillLaunch?: AgentSiteSkillLaunchParams;
   /** 首页点击触发的新会话标记（时间戳） */
   newChatAt?: number;
   /** 主题工作台重置标记（时间戳） */
@@ -234,6 +237,17 @@ export interface BrowserRuntimePageParams {
   initialAutoRun?: boolean;
   initialRequireAttachedSession?: boolean;
   initialSaveTitle?: string;
+}
+
+export interface AgentSiteSkillLaunchParams {
+  adapterName: string;
+  args?: Record<string, unknown>;
+  autoRun?: boolean;
+  profileKey?: string;
+  targetId?: string;
+  requireAttachedSession?: boolean;
+  saveTitle?: string;
+  skillTitle?: string;
 }
 
 /**

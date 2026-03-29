@@ -235,6 +235,13 @@ impl AsterAgentWrapper {
         lime_agent::persist_session_recent_preferences(session_id, preferences).await
     }
 
+    pub async fn persist_session_recent_access_mode(
+        session_id: &str,
+        recent_access_mode: lime_agent::SessionExecutionRuntimeAccessMode,
+    ) -> Result<(), String> {
+        lime_agent::persist_session_recent_access_mode(session_id, recent_access_mode).await
+    }
+
     pub async fn persist_session_recent_team_selection(
         session_id: &str,
         recent_team_selection: lime_agent::SessionExecutionRuntimeRecentTeamSelection,

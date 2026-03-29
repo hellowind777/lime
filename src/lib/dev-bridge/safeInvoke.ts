@@ -12,8 +12,10 @@ import { invoke as baseInvoke } from "@tauri-apps/api/core";
 import { listen as baseListen, emit as baseEmit } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
+  hasDevBridgeEventListenerCapability,
   invokeViaHttp,
   isDevBridgeAvailable,
+  listenViaHttpEvent,
   normalizeDevBridgeError,
 } from "./http-client";
 import { shouldPreferMockInBrowser } from "./mockPriorityCommands";
@@ -492,6 +494,15 @@ export async function safeListen<T = any>(
         return () => {};
       }
       throw error;
+    }
+  }
+
+  if (hasDevBridgeEventListenerCapability()) {
+    try {
+      return await listenViaHttpEvent(event, handler);
+    } catch (error) {
+      console.warn(`[safeListen] DevBridge 事件流调用失败，跳过监听: ${event}`, error);
+      return () => {};
     }
   }
 

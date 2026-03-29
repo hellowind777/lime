@@ -52,7 +52,7 @@ beforeEach(() => {
 
 describe("ToolCallDisplay", () => {
   it("WebSearch 工具结果应在 AI 对话区展示搜索列表并支持悬浮预览", async () => {
-    renderTool({
+    const { container } = renderTool({
       id: "tool-search-1",
       name: "WebSearch",
       arguments: JSON.stringify({ query: "3月13日国际新闻" }),
@@ -79,6 +79,10 @@ describe("ToolCallDisplay", () => {
     expect(document.body.textContent).toContain(
       "Friday morning news: March 13, 2026 | WORLD - wng.org",
     );
+    expect(
+      container.querySelector('[data-testid="tool-call-rendered-result"]'),
+    ).toBeNull();
+    expect(document.body.textContent).toContain("查看原始输出");
 
     const firstSearchResult = document.body.querySelector(
       '[aria-label="预览搜索结果：Xinhua world news summary at 0030 GMT, March 13"]',
@@ -95,6 +99,21 @@ describe("ToolCallDisplay", () => {
       "全球要闻摘要，覆盖国际局势与市场动态。",
     );
     expect(document.body.textContent).toContain("https://example.com/xinhua");
+    expect(document.body.querySelector('[data-side="bottom"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-side="left"]')).toBeNull();
+
+    act(() => {
+      const rawToggle = document.body.querySelector(
+        'button[aria-label="查看搜索原始输出"]',
+      ) as HTMLButtonElement | null;
+      rawToggle?.click();
+    });
+
+    expect(document.body.textContent).toContain("收起原始输出");
+    expect(
+      container.querySelector('[data-testid="tool-call-rendered-result"]'),
+    ).not.toBeNull();
+    expect(document.body.textContent).toContain("https://example.com/wng");
 
     const collapseButton = document.body.querySelector(
       'button[title="收起结果"]',
@@ -119,6 +138,34 @@ describe("ToolCallDisplay", () => {
     expect(document.body.textContent).toContain(
       "Xinhua world news summary at 0030 GMT, March 13",
     );
+  });
+
+  it("WebSearch 未命中结构化搜索结果时应继续展示原始输出", () => {
+    const { container } = renderTool({
+      id: "tool-search-plain-1",
+      name: "WebSearch",
+      arguments: JSON.stringify({ query: "golang 学习建议" }),
+      status: "completed",
+      result: {
+        success: true,
+        output: "本次检索未返回可解析链接，请稍后重试。",
+      },
+      startTime: new Date("2026-03-13T12:05:00.000Z"),
+      endTime: new Date("2026-03-13T12:05:02.000Z"),
+    });
+
+    act(() => {
+      const expandButton = container.querySelector(
+        'button[title="查看结果"]',
+      ) as HTMLButtonElement | null;
+      expandButton?.click();
+    });
+
+    expect(
+      container.querySelector('[data-testid="tool-call-rendered-result"]'),
+    ).not.toBeNull();
+    expect(container.textContent).toContain("本次检索未返回可解析链接，请稍后重试。");
+    expect(container.textContent).not.toContain("查看原始输出");
   });
 
   it("连续多次 WebSearch 应在对话区按搜索批次分组展示", () => {
@@ -248,7 +295,7 @@ describe("ToolCallDisplay", () => {
       container.querySelector('[data-testid="tool-call-rendered-result"]'),
     ).toBeTruthy();
     expect(container.textContent).toContain("text");
-    expect(container.textContent).toContain("Copy");
+    expect(container.textContent).toContain("复制");
   });
 
   it("站点能力工具结果应展示自动保存结果与脚本来源", () => {

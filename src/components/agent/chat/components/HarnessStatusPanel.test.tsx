@@ -1390,14 +1390,14 @@ describe("HarnessStatusPanel", () => {
         plan: {
           phase: "ready",
           items: [],
-          summaryText: "已决定：直接回答优先\n当前请求无需工具介入。",
+          summaryText: "直接回答优先\n当前请求无需工具介入。",
         },
       }),
     });
 
     expect(document.body.textContent).toContain("计划状态");
     expect(document.body.textContent).toContain("已就绪");
-    expect(document.body.textContent).toContain("已决定：直接回答优先");
+    expect(document.body.textContent).toContain("直接回答优先");
     expect(document.body.textContent).toContain("规划状态");
   });
 

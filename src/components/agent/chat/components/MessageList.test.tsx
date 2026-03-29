@@ -15,9 +15,16 @@ const mockStreamingRenderer = vi.fn(
   ({
     content,
     onOpenSavedSiteContent,
+    suppressProcessFlow,
+    showContentBlockActions,
+    onQuoteContent,
   }: {
     content: string;
     renderA2UIInline?: boolean;
+    suppressedActionRequestId?: string | null;
+    suppressProcessFlow?: boolean;
+    showContentBlockActions?: boolean;
+    onQuoteContent?: (content: string) => void;
     onOpenSavedSiteContent?: (target: {
       projectId: string;
       contentId: string;
@@ -27,6 +34,9 @@ const mockStreamingRenderer = vi.fn(
     <div
       data-testid="streaming-renderer"
       data-has-open-saved-site-content={onOpenSavedSiteContent ? "yes" : "no"}
+      data-suppress-process-flow={suppressProcessFlow ? "yes" : "no"}
+      data-show-content-block-actions={showContentBlockActions ? "yes" : "no"}
+      data-has-on-quote-content={onQuoteContent ? "yes" : "no"}
     >
       {content || "<empty-assistant>"}
     </div>
@@ -59,6 +69,7 @@ vi.mock("./StreamingRenderer", () => ({
   StreamingRenderer: (props: {
     content: string;
     renderA2UIInline?: boolean;
+    suppressedActionRequestId?: string | null;
   }) => mockStreamingRenderer(props),
 }));
 
@@ -178,6 +189,61 @@ describe("MessageList", () => {
     );
   });
 
+  it("当前由聊天区底部承载的 assistant A2UI 不应继续在正文里内联渲染", () => {
+    const now = new Date();
+    const messages: Message[] = [
+      {
+        id: "msg-assistant-active-a2ui",
+        role: "assistant",
+        content: "```a2ui\n{}\n```",
+        timestamp: now,
+      },
+    ];
+
+    render(messages, {
+      activePendingA2UISource: {
+        kind: "assistant_message",
+        messageId: "msg-assistant-active-a2ui",
+      },
+    });
+
+    expect(mockStreamingRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({ renderA2UIInline: false }),
+    );
+  });
+
+  it("当前由聊天区底部承载的 action_request 不应继续在正文里渲染内联确认卡", () => {
+    const now = new Date();
+    const messages: Message[] = [
+      {
+        id: "msg-assistant-action",
+        role: "assistant",
+        content: "请先确认执行方式。",
+        timestamp: now,
+        actionRequests: [
+          {
+            requestId: "req-action-1",
+            actionType: "ask_user",
+            status: "pending",
+            prompt: "请选择执行方式",
+            questions: [{ question: "请选择执行方式" }],
+          },
+        ],
+      },
+    ];
+
+    render(messages, {
+      activePendingA2UISource: {
+        kind: "action_request",
+        requestId: "req-action-1",
+      },
+    });
+
+    expect(mockStreamingRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({ suppressedActionRequestId: "req-action-1" }),
+    );
+  });
+
   it("应向助手消息正文透传已保存站点内容打开回调", () => {
     const onOpenSavedSiteContent = vi.fn();
     const now = new Date();
@@ -194,6 +260,52 @@ describe("MessageList", () => {
 
     expect(mockStreamingRenderer).toHaveBeenCalledWith(
       expect.objectContaining({ onOpenSavedSiteContent }),
+    );
+  });
+
+  it("存在主执行轨迹时应抑制正文内重复过程流", () => {
+    const now = new Date();
+    const messages: Message[] = [
+      {
+        id: "msg-assistant-process-suppressed",
+        role: "assistant",
+        content: "最终说明",
+        timestamp: now,
+      },
+    ];
+
+    render(messages, {
+      currentTurnId: "turn-process-suppressed",
+      turns: [
+        {
+          id: "turn-process-suppressed",
+          thread_id: "thread-1",
+          prompt_text: "继续执行",
+          status: "running",
+          started_at: "2026-03-28T12:00:00Z",
+          created_at: "2026-03-28T12:00:00Z",
+          updated_at: "2026-03-28T12:00:01Z",
+        },
+      ],
+      threadItems: [
+        {
+          id: "item-process-suppressed",
+          thread_id: "thread-1",
+          turn_id: "turn-process-suppressed",
+          sequence: 1,
+          status: "completed",
+          started_at: "2026-03-28T12:00:01Z",
+          completed_at: "2026-03-28T12:00:02Z",
+          updated_at: "2026-03-28T12:00:02Z",
+          type: "tool_call",
+          tool_name: "functions.exec_command",
+          arguments: { cmd: "rg -n process src" },
+        },
+      ],
+    });
+
+    expect(mockStreamingRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({ suppressProcessFlow: true }),
     );
   });
 
@@ -241,9 +353,120 @@ describe("MessageList", () => {
     expect(groups[0]?.textContent).toContain("先打开公众号后台");
     expect(groups[0]?.textContent).toContain("已打开登录页。");
     expect(groups[0]?.textContent).toContain("等待你完成扫码。");
-    expect(groups[0]?.textContent).toContain("2 条回复");
     expect(groups[1]?.textContent).toContain("我已扫码，继续发布");
     expect(groups[1]?.textContent).toContain("已继续执行发布流程。");
+    expect(
+      container.querySelector('[data-testid="message-turn-group:1:header"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector('[data-testid="message-turn-group:2:divider"]'),
+    ).toBeNull();
+  });
+
+  it("传入 onQuoteMessage 时应渲染引用按钮并回调消息内容", () => {
+    const onQuoteMessage = vi.fn();
+    const now = new Date();
+    const messages: Message[] = [
+      {
+        id: "msg-user-quote",
+        role: "user",
+        content: "请引用这一段内容",
+        timestamp: now,
+      },
+    ];
+
+    const container = render(messages, { onQuoteMessage });
+    const quoteButton = container.querySelector(
+      'button[aria-label="引用消息"]',
+    );
+
+    expect(quoteButton).toBeTruthy();
+
+    act(() => {
+      quoteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onQuoteMessage).toHaveBeenCalledWith(
+      "请引用这一段内容",
+      "msg-user-quote",
+    );
+    expect(container.querySelector('button[aria-label="编辑消息"]')).toBeNull();
+  });
+
+  it("助手正文应将区块级引用/复制能力透传给 StreamingRenderer", () => {
+    const onQuoteMessage = vi.fn();
+    const now = new Date();
+    const messages: Message[] = [
+      {
+        id: "msg-assistant-block-actions",
+        role: "assistant",
+        content: "这是需要块级操作的输出",
+        timestamp: now,
+      },
+    ];
+
+    render(messages, { onQuoteMessage });
+
+    expect(mockStreamingRenderer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        showContentBlockActions: true,
+        onQuoteContent: expect.any(Function),
+      }),
+    );
+  });
+
+  it("聊天主列与助手消息气泡应保持更宽的桌面阅读宽度", () => {
+    const now = new Date();
+    const messages: Message[] = [
+      {
+        id: "msg-assistant-wide-reading",
+        role: "assistant",
+        content: "这里是一段较长的结构化输出，用于验证桌面阅读宽度。",
+        timestamp: now,
+      },
+    ];
+
+    const container = render(messages);
+    const messageColumn = container.querySelector(
+      '[data-testid="message-list-column"]',
+    );
+    const assistantBubble = container.querySelector('[aria-label="Lime"]');
+
+    expect(messageColumn?.className).toContain("max-w-[1040px]");
+    expect(assistantBubble).not.toBeNull();
+    expect(window.getComputedStyle(assistantBubble as Element).maxWidth).toContain(
+      "1040px",
+    );
+  });
+
+  it("助手消息不应再渲染旧的继续处理标签或品牌头像", () => {
+    const now = new Date();
+    const messages: Message[] = [
+      {
+        id: "msg-user-seed",
+        role: "user",
+        content: "继续",
+        timestamp: new Date(now.getTime()),
+      },
+      {
+        id: "msg-assistant-first",
+        role: "assistant",
+        content: "第一条回复",
+        timestamp: new Date(now.getTime() + 1000),
+      },
+      {
+        id: "msg-assistant-second",
+        role: "assistant",
+        content: "第二条回复",
+        timestamp: new Date(now.getTime() + 2000),
+      },
+    ];
+
+    const container = render(messages);
+
+    expect(container.textContent).not.toContain("阶段 00");
+    expect(container.textContent).not.toContain("继续处理");
+    expect(container.querySelector('img[alt="Lime"]')).toBeNull();
   });
 
   it("用户图片消息不应渲染内部图片占位文本", () => {

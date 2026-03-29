@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { safeListen } from "@/lib/dev-bridge";
+import { onClaudeOAuthAuthUrl } from "@/lib/api/providerAuthEvents";
 import { Cookie, Key, FileJson } from "lucide-react";
 import { providerPoolApi } from "@/lib/api/providerPool";
 import { FileImportForm } from "./FileImportForm";
@@ -47,12 +47,9 @@ export function ClaudeOAuthForm({
     let unlisten: (() => void) | undefined;
 
     const setupListener = async () => {
-      unlisten = await safeListen<{ auth_url: string }>(
-        "claude-oauth-auth-url",
-        (event) => {
-          setAuthUrl(event.payload.auth_url);
-        },
-      );
+      unlisten = await onClaudeOAuthAuthUrl((payload) => {
+        setAuthUrl(payload.auth_url);
+      });
     };
 
     setupListener();

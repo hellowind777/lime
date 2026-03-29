@@ -23,7 +23,7 @@ interface AgentSkillsPanelProps {
   skills: string[];
   /** 是否正在加载 */
   loading: boolean;
-  /** 点击"管理 Skills"按钮的回调 */
+  /** 点击“打开技能中心”按钮的回调 */
   onManageClick: () => void;
 }
 
@@ -33,8 +33,8 @@ interface AgentSkillsPanelProps {
  * 功能：
  * - 显示已加载 Skills 数量
  * - 以紧凑格式显示 Skill 名称列表（用 · 分隔）
- * - 提供"管理 Skills"按钮导航到 Skills 设置页面
- * - 无 Skills 时显示提示文本和安装链接
+ * - 提供“打开技能中心”按钮导航到 Skills 主入口
+ * - 无 Skills 时显示提示文本和技能中心入口
  * - 显示使用提示
  *
  * @param skills - 已加载的 Skills 名称列表
@@ -101,19 +101,19 @@ export function AgentSkillsPanel({
                   className="w-full"
                 >
                   <Settings2 className="h-4 w-4 mr-2" />
-                  管理 Skills
+                  打开技能中心
                 </Button>
               </>
             ) : (
               <>
                 {/* 无 Skills 提示 */}
                 <p className="text-sm text-muted-foreground">
-                  暂无已安装的 Skills，
+                  暂无已安装的技能，
                   <button
                     onClick={onManageClick}
                     className="text-primary underline hover:no-underline"
                   >
-                    去安装
+                    去技能中心
                   </button>
                 </p>
               </>

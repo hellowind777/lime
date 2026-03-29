@@ -1,5 +1,10 @@
 import { useState, useCallback } from "react";
 import type { Skill } from "@/lib/api/skills";
+import {
+  createSkillSelectionProps,
+  type SkillSelectionProps,
+  type SkillSelectionSourceProps,
+} from "../components/skillSelectionBindings";
 
 export function useActiveSkill() {
   const [activeSkill, setActiveSkill] = useState<Skill | null>(null);
@@ -13,6 +18,22 @@ export function useActiveSkill() {
   );
 
   const clearActiveSkill = useCallback(() => setActiveSkill(null), []);
+  const buildSkillSelection = useCallback(
+    (source: SkillSelectionSourceProps): SkillSelectionProps =>
+      createSkillSelectionProps({
+        ...source,
+        activeSkill,
+        onSelectSkill: setActiveSkill,
+        onClearSkill: clearActiveSkill,
+      }),
+    [activeSkill, clearActiveSkill],
+  );
 
-  return { activeSkill, setActiveSkill, wrapTextWithSkill, clearActiveSkill };
+  return {
+    activeSkill,
+    setActiveSkill,
+    wrapTextWithSkill,
+    clearActiveSkill,
+    buildSkillSelection,
+  };
 }

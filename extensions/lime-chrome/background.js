@@ -19,6 +19,7 @@ let activeTabId = null;
 let monitoringEnabled = true;
 let latestPageInfo = null;
 let lastSettings = { ...DEFAULT_SETTINGS };
+const expectedClosedSockets = new WeakSet();
 
 function logInfo(message, payload) {
   if (payload === undefined) {
@@ -62,6 +63,10 @@ function buildObserverUrl(settings) {
   return `${normalized}/lime-chrome-observer/${encodeURIComponent(bridgeKey)}?profileKey=${profileKey}`;
 }
 
+function isCapturableUrl(url) {
+  return /^https?:\/\//i.test(String(url || "").trim());
+}
+
 async function connectObserver(forceReconnect = false) {
   if (ws && ws.readyState === WebSocket.OPEN && !forceReconnect) {
     return;
@@ -83,15 +88,14 @@ async function connectObserver(forceReconnect = false) {
   }
 
   if (forceReconnect && ws) {
-    try {
-      ws.close();
-    } catch (_) {}
+    closeObserverSocket(ws, { shouldReconnect: false });
   }
 
   logInfo(`连接 observer: ${url}`);
-  ws = new WebSocket(url);
+  const socket = new WebSocket(url);
+  ws = socket;
 
-  ws.onopen = () => {
+  socket.onopen = () => {
     reconnectAttempts = 0;
     setConnectionState(true);
     startHeartbeat();
@@ -99,7 +103,7 @@ async function connectObserver(forceReconnect = false) {
     triggerPageCapture("ws_open");
   };
 
-  ws.onmessage = async (event) => {
+  socket.onmessage = async (event) => {
     try {
       const payload = JSON.parse(event.data);
       await handleObserverMessage(payload);
@@ -108,14 +112,22 @@ async function connectObserver(forceReconnect = false) {
     }
   };
 
-  ws.onclose = () => {
+  socket.onclose = () => {
+    const shouldReconnect = !expectedClosedSockets.has(socket);
+    if (ws === socket) {
+      ws = null;
+    }
     setConnectionState(false);
     clearHeartbeatTimer();
-    scheduleReconnect();
+    if (shouldReconnect) {
+      scheduleReconnect();
+    } else {
+      reconnectAttempts = 0;
+    }
     broadcastStatus();
   };
 
-  ws.onerror = (error) => {
+  socket.onerror = (error) => {
     logWarn("WebSocket 错误", error?.message || error);
   };
 }
@@ -124,14 +136,24 @@ function disconnectObserver(manual = true) {
   clearReconnectTimer();
   clearHeartbeatTimer();
   if (ws) {
-    try {
-      ws.close();
-    } catch (_) {}
+    closeObserverSocket(ws, { shouldReconnect: false });
   }
   if (manual) {
     setConnectionState(false);
     broadcastStatus();
   }
+}
+
+function closeObserverSocket(socket, { shouldReconnect }) {
+  if (!socket) {
+    return;
+  }
+  if (!shouldReconnect) {
+    expectedClosedSockets.add(socket);
+  }
+  try {
+    socket.close();
+  } catch (_) {}
 }
 
 function setConnectionState(connected) {
@@ -209,6 +231,11 @@ function broadcastStatus(extra) {
 async function handleObserverMessage(payload) {
   const type = payload?.type;
   if (type === "heartbeat_ack" || type === "connection_ack") {
+    return;
+  }
+  if (type === "force_disconnect") {
+    logInfo("收到桌面端主动断开指令");
+    disconnectObserver(true);
     return;
   }
   if (type !== "command" || !payload.data) {
@@ -530,6 +557,17 @@ async function triggerPageCapture(reason, retry = 0) {
     return;
   }
 
+  let tab = null;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (_) {
+    tab = null;
+  }
+
+  if (!tab || !isCapturableUrl(tab.url)) {
+    return;
+  }
+
   try {
     await sendCommandToTab(tabId, {
       type: "REQUEST_PAGE_CAPTURE",
@@ -736,8 +774,16 @@ async function loadAutoConfig() {
       logWarn("自动配置缺少必要字段", config);
     }
   } catch (error) {
-    // 文件不存在或解析失败时记录错误
-    logWarn("加载自动配置失败", error?.message || String(error));
+    const message = error?.message || String(error);
+    if (
+      /failed to fetch/i.test(message) ||
+      /not found/i.test(message) ||
+      /networkerror/i.test(message)
+    ) {
+      logInfo("未检测到 auto_config.json，继续使用本地设置");
+      return;
+    }
+    logWarn("加载自动配置失败", message);
   }
 }
 

@@ -1,10 +1,10 @@
-import { safeListen } from "@/lib/dev-bridge";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   createSubmitTurnRequestFromAgentOp,
   type AgentEvent,
   type AgentOp,
 } from "@/lib/api/agentProtocol";
+import { listenAgentRuntimeEvent } from "@/lib/api/agentRuntimeEvents";
 import {
   compactAgentRuntimeSession,
   createAgentRuntimeSession,
@@ -26,6 +26,7 @@ import {
   type AsterSessionDetail,
   type AsterSessionInfo,
 } from "@/lib/api/agentRuntime";
+import type { AgentAccessMode } from "./agentChatStorage";
 import type { ActionRequiredScope } from "../types";
 
 export interface AgentRuntimeActionResponse {
@@ -59,6 +60,10 @@ export interface AgentRuntimeAdapter {
   setSessionExecutionStrategy(
     sessionId: string,
     executionStrategy: AsterExecutionStrategy,
+  ): Promise<void>;
+  setSessionAccessMode?(
+    sessionId: string,
+    accessMode: AgentAccessMode,
   ): Promise<void>;
   setSessionProviderSelection(
     sessionId: string,
@@ -117,6 +122,12 @@ export const defaultAgentRuntimeAdapter: AgentRuntimeAdapter = {
     await updateAgentRuntimeSession({
       session_id: sessionId,
       execution_strategy: executionStrategy,
+    });
+  },
+  async setSessionAccessMode(sessionId, accessMode) {
+    await updateAgentRuntimeSession({
+      session_id: sessionId,
+      recent_access_mode: accessMode,
     });
   },
   async setSessionProviderSelection(sessionId, providerType, model) {
@@ -185,9 +196,9 @@ export const defaultAgentRuntimeAdapter: AgentRuntimeAdapter = {
     });
   },
   async listenToTurnEvents(eventName, handler) {
-    return safeListen<AgentEvent>(eventName, handler);
+    return listenAgentRuntimeEvent(eventName, handler);
   },
   async listenToTeamEvents(eventName, handler) {
-    return safeListen<AgentEvent>(eventName, handler);
+    return listenAgentRuntimeEvent(eventName, handler);
   },
 };

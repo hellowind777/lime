@@ -6,9 +6,8 @@
 
 import React, {
   Suspense,
-  lazy,
-  useState,
   useEffect,
+  useState,
   useMemo,
   useRef,
   useCallback,
@@ -23,25 +22,23 @@ import {
   filterCodexSlashCommands,
   type CodexSlashCommandDefinition,
 } from "../../../commands";
-import { scheduleIdleModulePreload } from "./scheduleIdleModulePreload";
 import {
   filterBuiltinCommands,
   type BuiltinInputCommand,
 } from "./builtinCommands";
-
-const preloadCharacterMentionPanel = () => import("./CharacterMentionPanel");
-
-const CharacterMentionPanel = lazy(async () => {
-  const module = await preloadCharacterMentionPanel();
-  return { default: module.CharacterMentionPanel };
-});
+import {
+  LazyCharacterMentionPanel,
+  preloadCharacterMentionPanel,
+} from "./characterMentionPanelLoader";
+import { partitionMentionableSkills } from "./skillQuery";
+import { useIdleModulePreload } from "./useIdleModulePreload";
 
 interface CharacterMentionProps {
   /** 角色列表 */
   characters: Character[];
   /** 技能列表 */
   skills?: Skill[];
-  /** 服务型技能列表 */
+  /** 技能目录项列表 */
   serviceSkills?: ServiceSkillHomeItem[];
   /** 输入框 ref */
   inputRef: React.RefObject<HTMLTextAreaElement>;
@@ -53,7 +50,7 @@ interface CharacterMentionProps {
   onSelectCharacter?: (character: Character) => void;
   /** 选择已安装技能回调 */
   onSelectSkill?: (skill: Skill) => void;
-  /** 选择服务型技能回调 */
+  /** 选择技能目录项回调 */
   onSelectServiceSkill?: (skill: ServiceSkillHomeItem) => void;
   /** 选择内建命令回调 */
   onSelectBuiltinCommand?: (command: BuiltinInputCommand) => void;
@@ -148,11 +145,9 @@ export function CharacterMention({
   const commandRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    return scheduleIdleModulePreload(() => {
-      void preloadCharacterMentionPanel();
-    });
-  }, []);
+  useIdleModulePreload(() => {
+    void preloadCharacterMentionPanel();
+  });
 
   const filteredBuiltinCommands = useMemo(
     () => filterBuiltinCommands(mentionQuery),
@@ -177,29 +172,10 @@ export function CharacterMention({
     );
   }, [characters, mentionQuery]);
 
-  const installedSkills = useMemo(() => {
-    const installed = skills.filter((s) => s.installed);
-    if (!mentionQuery) return installed;
-    const query = mentionQuery.toLowerCase();
-    return installed.filter(
-      (s) =>
-        s.name.toLowerCase().includes(query) ||
-        s.key.toLowerCase().includes(query) ||
-        s.description?.toLowerCase().includes(query),
-    );
-  }, [skills, mentionQuery]);
-
-  const availableSkills = useMemo(() => {
-    const available = skills.filter((s) => !s.installed);
-    if (!mentionQuery) return available;
-    const query = mentionQuery.toLowerCase();
-    return available.filter(
-      (s) =>
-        s.name.toLowerCase().includes(query) ||
-        s.key.toLowerCase().includes(query) ||
-        s.description?.toLowerCase().includes(query),
-    );
-  }, [skills, mentionQuery]);
+  const { installedSkills, availableSkills } = useMemo(
+    () => partitionMentionableSkills(skills, mentionQuery),
+    [skills, mentionQuery],
+  );
 
   const updateMentionState = useCallback(() => {
     const textarea = inputRef.current;
@@ -398,7 +374,7 @@ export function CharacterMention({
     toast.info(`技能「${skill.name}」尚未安装`, {
       action: onNavigateToSettings
         ? {
-            label: "去安装",
+            label: "去技能中心",
             onClick: onNavigateToSettings,
           }
         : undefined,
@@ -596,7 +572,7 @@ export function CharacterMention({
             </div>
           }
         >
-          <CharacterMentionPanel
+          <LazyCharacterMentionPanel
             mode={triggerMode}
             mentionQuery={mentionQuery}
             builtinCommands={filteredBuiltinCommands}

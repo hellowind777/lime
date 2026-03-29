@@ -1,9 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
-  User,
   Copy,
-  Edit2,
-  Trash2,
+  Quote,
   Check,
   FileText,
   Loader2,
@@ -16,12 +14,7 @@ import { resolveArtifactProtocolFilePath } from "@/lib/artifact-protocol";
 import {
   MessageListContainer,
   MessageWrapper,
-  AvatarColumn,
   ContentColumn,
-  MessageHeader,
-  AvatarCircle,
-  SenderName,
-  TimeStamp,
   MessageBubble,
   MessageActions,
 } from "../styles";
@@ -37,7 +30,6 @@ import {
 import {
   sanitizeContentPartsForDisplay,
   sanitizeMessageTextForDisplay,
-  sanitizeMessageTextForPreview,
 } from "../utils/internalImagePlaceholder";
 import {
   Message,
@@ -46,6 +38,7 @@ import {
   type AgentThreadTurn,
   type SiteSavedContentTarget,
   type WriteArtifactContext,
+  type PendingA2UISource,
 } from "../types";
 import type { A2UIFormData } from "@/components/content-creator/a2ui/types";
 import type { ConfirmResponse } from "../types";
@@ -71,6 +64,7 @@ interface MessageListProps {
   assistantLabel?: string;
   onDeleteMessage?: (id: string) => void;
   onEditMessage?: (id: string, content: string) => void;
+  onQuoteMessage?: (content: string, id: string) => void;
   /** A2UI 表单提交回调 */
   onA2UISubmit?: (formData: A2UIFormData, messageId: string) => void;
   /** 是否渲染消息内联 A2UI */
@@ -122,6 +116,8 @@ interface MessageListProps {
   focusedTimelineItemId?: string | null;
   /** 触发 timeline item 聚焦的请求序号 */
   timelineFocusRequestKey?: number;
+  /** 当前由聊天区底部承载的待处理 A2UI 来源 */
+  activePendingA2UISource?: PendingA2UISource | null;
 }
 
 function isDeferredTimelineItem(item: AgentThreadItem): boolean {
@@ -135,8 +131,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
   currentTurnId = null,
   threadRead = null,
   assistantLabel = "Lime",
-  onDeleteMessage,
-  onEditMessage,
+  onQuoteMessage,
   onA2UISubmit,
   renderA2UIInline = true,
   a2uiFormDataMap,
@@ -155,12 +150,11 @@ const MessageListInner: React.FC<MessageListProps> = ({
   compactLeadingSpacing = false,
   focusedTimelineItemId = null,
   timelineFocusRequestKey = 0,
+  activePendingA2UISource = null,
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editContent, setEditContent] = useState("");
   const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [shouldAutoScroll, setShouldAutoScroll] = useState(true);
 
@@ -243,25 +237,6 @@ const MessageListInner: React.FC<MessageListProps> = ({
     }
   }, [visibleMessages, shouldAutoScroll, isUserScrolling]);
 
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  };
-
-  const formatGroupNumber = (index: number) => {
-    return String(index + 1).padStart(2, "0");
-  };
-
-  const truncatePreview = (value: string, maxLength = 56) => {
-    const normalized = value.trim().replace(/\s+/g, " ");
-    if (!normalized) {
-      return "继续当前任务";
-    }
-    if (normalized.length <= maxLength) {
-      return normalized;
-    }
-    return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
-  };
-
   const handleCopy = async (content: string, id: string) => {
     try {
       await navigator.clipboard.writeText(content);
@@ -273,37 +248,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
     }
   };
 
-  const handleEdit = (msg: Message) => {
-    setEditingId(msg.id);
-    setEditContent(msg.content);
-  };
-
-  const handleSaveEdit = (id: string) => {
-    if (onEditMessage && editContent.trim()) {
-      onEditMessage(id, editContent);
-    }
-    setEditingId(null);
-    setEditContent("");
-  };
-
-  const handleCancelEdit = () => {
-    setEditingId(null);
-    setEditContent("");
-  };
-
-  const handleDelete = (id: string) => {
-    if (onDeleteMessage) {
-      onDeleteMessage(id);
-      toast.success("消息已删除");
-    }
-  };
-
-  const renderMessageItem = (
-    msg: Message,
-    options?: {
-      showIdentity?: boolean;
-    },
-  ) => {
+  const renderMessageItem = (msg: Message) => {
     const hasImages = Array.isArray(msg.images) && msg.images.length > 0;
     const displayContent = sanitizeMessageTextForDisplay(msg.content || "", {
       role: msg.role,
@@ -343,7 +288,21 @@ const MessageListInner: React.FC<MessageListProps> = ({
       primaryTimelineItems.length > 0 ? msg.actionRequests : undefined;
     const trailingActionRequests =
       primaryTimelineItems.length === 0 ? msg.actionRequests : undefined;
-    const showIdentity = options?.showIdentity ?? true;
+    const shouldSuppressInlineA2UI =
+      activePendingA2UISource?.kind !== "action_request" &&
+      activePendingA2UISource?.messageId === msg.id;
+    const suppressedActionRequestId =
+      activePendingA2UISource?.kind === "action_request" &&
+      (msg.actionRequests || []).some(
+        (request) => request.requestId === activePendingA2UISource.requestId,
+      )
+        ? activePendingA2UISource.requestId
+        : null;
+    const actionContent = displayContent.trim();
+    const canQuoteMessage = Boolean(onQuoteMessage && actionContent);
+    const canCopyMessage = Boolean(actionContent);
+    const showMessageActions =
+      msg.role === "user" && (canQuoteMessage || canCopyMessage);
 
     return (
       <MessageWrapper
@@ -351,67 +310,12 @@ const MessageListInner: React.FC<MessageListProps> = ({
         $isUser={msg.role === "user"}
         $compactLeadingSpacing={compactLeadingSpacing}
       >
-        <AvatarColumn>
-          {msg.role === "user" ? (
-            <AvatarCircle $isUser={true}>
-              <User size={20} />
-            </AvatarCircle>
-          ) : showIdentity ? (
-            <img
-              src={logoImg}
-              alt="Lime"
-              style={{
-                width: 45,
-                height: 45,
-                minWidth: 45,
-                minHeight: 45,
-                borderRadius: 8,
-                display: "block",
-              }}
-            />
-          ) : (
-            <div className="flex h-[45px] w-[45px] items-start justify-center pt-4">
-              <span className="h-2.5 w-2.5 rounded-full bg-slate-300/90 dark:bg-slate-600/90" />
-            </div>
-          )}
-        </AvatarColumn>
-
-        <ContentColumn>
-          {showIdentity ? (
-            <MessageHeader>
-              <SenderName>
-                {msg.role === "user" ? "用户" : assistantLabel}
-              </SenderName>
-              <TimeStamp>{formatTime(msg.timestamp)}</TimeStamp>
-            </MessageHeader>
-          ) : (
-            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <span className="inline-flex items-center rounded-full border border-slate-200/80 bg-slate-50/80 px-2 py-0.5 font-medium text-slate-600 dark:border-slate-700/70 dark:bg-slate-900/40 dark:text-slate-300">
-                继续处理
-              </span>
-              <span>{formatTime(msg.timestamp)}</span>
-            </div>
-          )}
-
-          <MessageBubble $isUser={msg.role === "user"}>
-            {editingId === msg.id ? (
-              <div className="flex flex-col gap-2">
-                <textarea
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  className="w-full min-h-[100px] p-2 rounded border border-border bg-background resize-none focus:outline-none focus:ring-1 focus:ring-primary"
-                  autoFocus
-                />
-                <div className="flex gap-2 justify-end">
-                  <Button variant="ghost" size="sm" onClick={handleCancelEdit}>
-                    取消
-                  </Button>
-                  <Button size="sm" onClick={() => handleSaveEdit(msg.id)}>
-                    保存
-                  </Button>
-                </div>
-              </div>
-            ) : msg.role === "assistant" ? (
+        <ContentColumn $isUser={msg.role === "user"}>
+          <MessageBubble
+            $isUser={msg.role === "user"}
+            aria-label={msg.role === "assistant" ? assistantLabel : undefined}
+          >
+            {msg.role === "assistant" ? (
               <>
                 {primaryTimeline ? (
                   <AgentThreadTimeline
@@ -448,7 +352,9 @@ const MessageListInner: React.FC<MessageListProps> = ({
                   a2uiFormId={a2uiFormDataMap?.[msg.id]?.formId}
                   a2uiInitialFormData={a2uiFormDataMap?.[msg.id]?.formData}
                   onA2UIFormChange={onA2UIFormChange}
-                  renderA2UIInline={renderA2UIInline}
+                  renderA2UIInline={
+                    renderA2UIInline && !shouldSuppressInlineA2UI
+                  }
                   onWriteFile={
                     onWriteFile
                       ? (content, fileName, context) =>
@@ -466,25 +372,31 @@ const MessageListInner: React.FC<MessageListProps> = ({
                   shouldCollapseCodeBlock={shouldCollapseCodeBlock}
                   onCodeBlockClick={onCodeBlockClick}
                   promoteActionRequestsToA2UI={promoteActionRequestsToA2UI}
+                  suppressedActionRequestId={suppressedActionRequestId}
+                  suppressProcessFlow={Boolean(primaryTimeline)}
                   renderProposedPlanBlocks={!timeline}
-                />
-              </>
-            ) : (
-              displayContent ? (
-                <MarkdownRenderer
-                  content={displayContent}
-                  onA2UISubmit={
-                    onA2UISubmit
-                      ? (formData) => onA2UISubmit(formData, msg.id)
+                  showContentBlockActions={Boolean(actionContent)}
+                  onQuoteContent={
+                    onQuoteMessage
+                      ? (quotedContent) => onQuoteMessage(quotedContent, msg.id)
                       : undefined
                   }
-                  renderA2UIInline={renderA2UIInline}
                 />
-              ) : null
-            )}
+              </>
+            ) : displayContent ? (
+              <MarkdownRenderer
+                content={displayContent}
+                onA2UISubmit={
+                  onA2UISubmit
+                    ? (formData) => onA2UISubmit(formData, msg.id)
+                    : undefined
+                }
+                renderA2UIInline={renderA2UIInline}
+              />
+            ) : null}
 
             {msg.images && msg.images.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-3">
+              <div className="flex flex-wrap gap-2">
                 {msg.images.map((img, i) => (
                   <img
                     key={i}
@@ -524,7 +436,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
               !msg.isThinking &&
               msg.contextTrace &&
               msg.contextTrace.length > 0 && (
-                <details className="mt-3 rounded border border-border/60 bg-muted/20">
+                <details className="rounded border border-border/60 bg-muted/20">
                   <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground hover:text-foreground">
                     上下文轨迹 ({msg.contextTrace.length})
                   </summary>
@@ -544,40 +456,38 @@ const MessageListInner: React.FC<MessageListProps> = ({
                 </details>
               )}
 
-            {editingId !== msg.id && (
+            {showMessageActions ? (
               <MessageActions className="message-actions">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                  onClick={() => handleCopy(msg.content, msg.id)}
-                >
-                  {copiedId === msg.id ? (
-                    <Check size={12} className="text-green-500" />
-                  ) : (
-                    <Copy size={12} />
-                  )}
-                </Button>
-                {msg.role === "user" && (
+                {canQuoteMessage ? (
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                    onClick={() => handleEdit(msg)}
+                    className="h-7 w-7 rounded-full border border-slate-200/90 bg-white/92 text-slate-400 shadow-sm shadow-slate-950/5 hover:bg-slate-50 hover:text-slate-700"
+                    onClick={() => onQuoteMessage?.(actionContent, msg.id)}
+                    aria-label="引用消息"
+                    title="引用消息"
                   >
-                    <Edit2 size={12} />
+                    <Quote size={12} />
                   </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-muted-foreground hover:text-destructive"
-                  onClick={() => handleDelete(msg.id)}
-                >
-                  <Trash2 size={12} />
-                </Button>
+                ) : null}
+                {canCopyMessage ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 rounded-full border border-slate-200/90 bg-white/92 text-slate-400 shadow-sm shadow-slate-950/5 hover:bg-slate-50 hover:text-slate-700"
+                    onClick={() => handleCopy(actionContent, msg.id)}
+                    aria-label="复制消息"
+                    title="复制消息"
+                  >
+                    {copiedId === msg.id ? (
+                      <Check size={12} className="text-emerald-600" />
+                    ) : (
+                      <Copy size={12} />
+                    )}
+                  </Button>
+                ) : null}
               </MessageActions>
-            )}
+            ) : null}
           </MessageBubble>
         </ContentColumn>
       </MessageWrapper>
@@ -590,7 +500,7 @@ const MessageListInner: React.FC<MessageListProps> = ({
     }
 
     return (
-      <div className="mt-3 flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         {artifacts.map((artifact) => {
           const filePath = resolveArtifactProtocolFilePath(artifact);
           const writePhase = resolveArtifactWritePhase(artifact);
@@ -646,10 +556,11 @@ const MessageListInner: React.FC<MessageListProps> = ({
   return (
     <MessageListContainer ref={containerRef}>
       <div
+        data-testid="message-list-column"
         className={
           compactLeadingSpacing
-            ? "mx-auto flex w-full max-w-[1180px] flex-col gap-4 py-3 pl-2.5 pr-3"
-            : "mx-auto flex w-full max-w-[1180px] flex-col gap-4 py-3 pl-5 pr-4"
+            ? "mx-auto flex w-full max-w-[1040px] flex-col gap-4 py-4 pl-2.5 pr-3"
+            : "mx-auto flex w-full max-w-[1040px] flex-col gap-4 py-4 pl-4 pr-4"
         }
       >
         {messageGroups.length === 0 && (
@@ -664,78 +575,15 @@ const MessageListInner: React.FC<MessageListProps> = ({
         )}
 
         {messageGroups.map((group, groupIndex) => {
-          const previewSource = group.userMessage
-            ? sanitizeMessageTextForPreview(group.userMessage.content || "", {
-                role: group.userMessage.role,
-                hasImages:
-                  Array.isArray(group.userMessage.images) &&
-                  group.userMessage.images.length > 0,
-              }) || "继续当前任务"
-            : group.assistantMessages[0]
-              ? sanitizeMessageTextForPreview(
-                  group.assistantMessages[0].content || "",
-                  {
-                    role: group.assistantMessages[0].role,
-                    hasImages:
-                      Array.isArray(group.assistantMessages[0].images) &&
-                      group.assistantMessages[0].images.length > 0,
-                  },
-                ) || "继续当前任务"
-              : "继续当前任务";
-          const hasTimeline = group.messages.some((message) =>
-            timelineByMessageId.has(message.id),
-          );
-          let assistantMessageCount = 0;
-
           return (
             <section
               key={group.id}
               data-testid="message-turn-group"
               data-group-index={groupIndex + 1}
-              className={
-                compactLeadingSpacing
-                  ? "border-t border-slate-200/70 py-4 pl-0 pr-0 first:border-t-0 first:pt-0 dark:border-slate-800/70"
-                  : "border-t border-slate-200/70 py-4 pl-2 pr-1 first:border-t-0 first:pt-0 dark:border-slate-800/70"
-              }
+              className="py-2"
             >
-              <div
-                data-testid={`message-turn-group:${groupIndex + 1}:header`}
-                className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-              >
-                <span className="inline-flex items-center rounded-full border border-slate-200/80 bg-white/90 px-2.5 py-1 font-medium text-slate-700 shadow-sm shadow-slate-950/5 dark:border-slate-700/80 dark:bg-slate-900/80 dark:text-slate-200">
-                  阶段 {formatGroupNumber(groupIndex)}
-                </span>
-                <span>{formatTime(group.startedAt)}</span>
-                {group.endedAt.getTime() !== group.startedAt.getTime() ? (
-                  <span>至 {formatTime(group.endedAt)}</span>
-                ) : null}
-                {group.assistantMessages.length > 1 ? (
-                  <span className="inline-flex items-center rounded-full border border-sky-200/70 bg-sky-50/80 px-2 py-0.5 text-sky-700 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
-                    {group.assistantMessages.length} 条回复
-                  </span>
-                ) : hasTimeline ? (
-                  <span className="inline-flex items-center rounded-full border border-emerald-200/70 bg-emerald-50/80 px-2 py-0.5 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
-                    含执行轨迹
-                  </span>
-                ) : null}
-                <span className="min-w-0 flex-1 rounded-full bg-slate-100/80 px-2.5 py-1 text-slate-600 dark:bg-slate-800/70 dark:text-slate-300">
-                  <span className="block truncate">
-                    {truncatePreview(previewSource)}
-                  </span>
-                </span>
-              </div>
-
               <div className="space-y-1">
-                {group.messages.map((msg) => {
-                  const showIdentity =
-                    msg.role === "user" || assistantMessageCount === 0;
-
-                  if (msg.role === "assistant") {
-                    assistantMessageCount += 1;
-                  }
-
-                  return renderMessageItem(msg, { showIdentity });
-                })}
+                {group.messages.map((msg) => renderMessageItem(msg))}
               </div>
             </section>
           );

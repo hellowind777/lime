@@ -11,9 +11,17 @@ interface SkillsCache {
 const CACHE_TTL_MS = 30_000;
 const cache = new Map<AppType, SkillsCache>();
 
-export function useSkills(app: AppType = "lime") {
+interface UseSkillsOptions {
+  includeRepos?: boolean;
+}
+
+export function useSkills(
+  app: AppType = "lime",
+  options?: UseSkillsOptions,
+) {
   const cached = cache.get(app);
   const isCacheFresh = cached && Date.now() - cached.timestamp < CACHE_TTL_MS;
+  const includeRepos = options?.includeRepos ?? true;
 
   const [skills, setSkills] = useState<Skill[]>(cached?.skills ?? []);
   const [repos, setRepos] = useState<SkillRepo[]>(cached?.repos ?? []);
@@ -86,8 +94,10 @@ export function useSkills(app: AppType = "lime") {
         setLoading(false);
       });
 
-    fetchRepos();
-  }, [app, isCacheFresh, fetchAllSkills, fetchRepos, updateCache]);
+    if (includeRepos) {
+      fetchRepos();
+    }
+  }, [app, fetchAllSkills, fetchRepos, includeRepos, isCacheFresh, updateCache]);
 
   const install = async (directory: string) => {
     await skillsApi.install(directory, app);

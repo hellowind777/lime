@@ -7,6 +7,20 @@
  * @module lib/webview-api
  */
 
+import {
+  siteApplyAdapterCatalogBootstrap as applySiteAdapterCatalogBootstrapViaRuntime,
+  siteClearAdapterCatalogCache as clearSiteAdapterCatalogCacheViaRuntime,
+  siteDebugRunAdapter as debugRunSiteAdapterViaRuntime,
+  siteGetAdapterCatalogStatus as getSiteAdapterCatalogStatusViaRuntime,
+  siteGetAdapterInfo as getSiteAdapterInfoViaRuntime,
+  siteGetAdapterLaunchReadiness as getSiteAdapterLaunchReadinessViaRuntime,
+  siteImportAdapterYamlBundle as importSiteAdapterYamlBundleViaRuntime,
+  siteListAdapters as listSiteAdaptersViaRuntime,
+  siteRecommendAdapters as recommendSiteAdaptersViaRuntime,
+  siteRunAdapter as runSiteAdapterViaRuntime,
+  siteSaveAdapterResult as saveSiteAdapterResultViaRuntime,
+  siteSearchAdapters as searchSiteAdaptersViaRuntime,
+} from "@/lib/api/agentRuntime";
 import { safeInvoke } from "@/lib/dev-bridge";
 
 /**
@@ -255,6 +269,12 @@ export interface ChromeBridgeStatusSnapshot {
   pending_commands: ChromeBridgePendingCommandSnapshot[];
 }
 
+export interface ChromeBridgeDisconnectResult {
+  disconnected_observer_count: number;
+  disconnected_control_count: number;
+  status: ChromeBridgeStatusSnapshot;
+}
+
 export interface ChromeBridgeCommandRequest {
   profile_key?: string;
   command: string;
@@ -282,6 +302,10 @@ export interface SystemConnectorSnapshot {
   description: string;
   enabled: boolean;
   available: boolean;
+  visible: boolean;
+  authorization_status: string;
+  last_error?: string | null;
+  capabilities: string[];
 }
 
 export interface BrowserConnectorSettingsSnapshot {
@@ -380,7 +404,7 @@ export interface SiteAdapterDefinition {
   example_args: Record<string, unknown>;
   example: string;
   auth_hint?: string;
-  source_kind?: "bundled" | "server_synced";
+  source_kind?: "bundled" | "imported" | "server_synced";
   source_version?: string;
 }
 
@@ -395,13 +419,42 @@ export interface SiteAdapterRecommendation {
 
 export interface SiteAdapterCatalogStatus {
   exists: boolean;
-  source_kind: "bundled" | "server_synced";
+  source_kind: "bundled" | "imported" | "server_synced";
   registry_version: number;
   directory?: string;
   catalog_version?: string;
   tenant_id?: string;
   synced_at?: string;
   adapter_count: number;
+}
+
+export interface SiteAdapterImportYamlBundleRequest {
+  yaml_bundle: string;
+  catalog_version?: string;
+  source_version?: string;
+  read_only?: boolean;
+}
+
+export interface SiteAdapterImportResult {
+  directory: string;
+  adapter_count: number;
+  catalog_version?: string;
+}
+
+export interface SiteAdapterLaunchReadinessRequest {
+  adapter_name: string;
+  profile_key?: string;
+  target_id?: string;
+}
+
+export interface SiteAdapterLaunchReadinessResult {
+  status: "ready" | "requires_browser_runtime";
+  adapter: string;
+  domain: string;
+  profile_key?: string;
+  target_id?: string;
+  message: string;
+  report_hint?: string;
 }
 
 export interface RunSiteAdapterRequest {
@@ -413,6 +466,8 @@ export interface RunSiteAdapterRequest {
   content_id?: string;
   project_id?: string;
   save_title?: string;
+  require_attached_session?: boolean;
+  skill_title?: string;
 }
 
 export interface SiteAdapterRunResult {
@@ -838,6 +893,15 @@ export async function getChromeBridgeStatus(): Promise<ChromeBridgeStatusSnapsho
   return safeInvoke<ChromeBridgeStatusSnapshot>("get_chrome_bridge_status");
 }
 
+export async function disconnectBrowserConnectorSession(params?: {
+  profile_key?: string;
+}): Promise<ChromeBridgeDisconnectResult> {
+  return safeInvoke<ChromeBridgeDisconnectResult>(
+    "disconnect_browser_connector_session",
+    params,
+  );
+}
+
 export async function getBrowserConnectorSettings(): Promise<BrowserConnectorSettingsSnapshot> {
   return safeInvoke<BrowserConnectorSettingsSnapshot>(
     "get_browser_connector_settings_cmd",
@@ -1077,78 +1141,69 @@ export async function browserExecuteAction(
 }
 
 export async function siteListAdapters(): Promise<SiteAdapterDefinition[]> {
-  return safeInvoke<SiteAdapterDefinition[]>("site_list_adapters");
+  return listSiteAdaptersViaRuntime();
 }
 
 export async function siteRecommendAdapters(
   limit?: number,
 ): Promise<SiteAdapterRecommendation[]> {
-  return safeInvoke<SiteAdapterRecommendation[]>("site_recommend_adapters", {
-    request: { limit },
-  });
+  return recommendSiteAdaptersViaRuntime(limit);
 }
 
 export async function siteSearchAdapters(
   query: string,
 ): Promise<SiteAdapterDefinition[]> {
-  return safeInvoke<SiteAdapterDefinition[]>("site_search_adapters", {
-    request: { query },
-  });
+  return searchSiteAdaptersViaRuntime(query);
 }
 
 export async function siteGetAdapterInfo(
   name: string,
 ): Promise<SiteAdapterDefinition> {
-  return safeInvoke<SiteAdapterDefinition>("site_get_adapter_info", {
-    request: { name },
-  });
+  return getSiteAdapterInfoViaRuntime(name);
+}
+
+export async function siteGetAdapterLaunchReadiness(
+  request: SiteAdapterLaunchReadinessRequest,
+): Promise<SiteAdapterLaunchReadinessResult> {
+  return getSiteAdapterLaunchReadinessViaRuntime(request);
 }
 
 export async function siteGetAdapterCatalogStatus(): Promise<SiteAdapterCatalogStatus> {
-  return safeInvoke<SiteAdapterCatalogStatus>(
-    "site_get_adapter_catalog_status",
-  );
+  return getSiteAdapterCatalogStatusViaRuntime();
 }
 
 export async function siteApplyAdapterCatalogBootstrap(
   payload: unknown,
 ): Promise<SiteAdapterCatalogStatus> {
-  return safeInvoke<SiteAdapterCatalogStatus>(
-    "site_apply_adapter_catalog_bootstrap",
-    {
-      request: {
-        payload,
-      },
-    },
-  );
+  return applySiteAdapterCatalogBootstrapViaRuntime(payload);
 }
 
 export async function siteClearAdapterCatalogCache(): Promise<SiteAdapterCatalogStatus> {
-  return safeInvoke<SiteAdapterCatalogStatus>(
-    "site_clear_adapter_catalog_cache",
-  );
+  return clearSiteAdapterCatalogCacheViaRuntime();
+}
+
+export async function siteImportAdapterYamlBundle(
+  request: SiteAdapterImportYamlBundleRequest,
+): Promise<SiteAdapterImportResult> {
+  return importSiteAdapterYamlBundleViaRuntime(request);
 }
 
 export async function siteRunAdapter(
   request: RunSiteAdapterRequest,
 ): Promise<SiteAdapterRunResult> {
-  return safeInvoke<SiteAdapterRunResult>("site_run_adapter", { request });
+  return runSiteAdapterViaRuntime(request);
 }
 
 export async function siteDebugRunAdapter(
   request: RunSiteAdapterRequest,
 ): Promise<SiteAdapterRunResult> {
-  return safeInvoke<SiteAdapterRunResult>("site_debug_run_adapter", {
-    request,
-  });
+  return debugRunSiteAdapterViaRuntime(request);
 }
 
 export async function siteSaveAdapterResult(
   request: SaveSiteAdapterResultRequest,
 ): Promise<SavedSiteAdapterContent> {
-  return safeInvoke<SavedSiteAdapterContent>("site_save_adapter_result", {
-    request,
-  });
+  return saveSiteAdapterResultViaRuntime(request);
 }
 
 export async function getBrowserRuntimeAuditLogs(

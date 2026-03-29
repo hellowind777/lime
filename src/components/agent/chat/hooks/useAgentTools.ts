@@ -23,6 +23,7 @@ import { upsertAssistantActionRequest } from "./agentChatActionState";
 import { markThreadActionItemSubmitted } from "./agentThreadState";
 import { buildActionRequestSubmissionContext } from "../utils/actionRequestA2UI";
 import { buildActionResumeRuntimeStatus } from "../utils/agentRuntimeStatus";
+import { governActionRequest } from "../utils/actionRequestGovernance";
 
 interface UseAgentToolsOptions {
   runtime: AgentRuntimeAdapter;
@@ -77,11 +78,14 @@ export function useAgentTools(options: UseAgentToolsOptions) {
         const pendingAction = pendingActions.find(
           (item) => item.requestId === response.requestId,
         );
-        const persistedAction =
+        const persistedActionRaw =
           pendingAction ||
           messages
             .flatMap((message) => message.actionRequests || [])
             .find((item) => item.requestId === response.requestId);
+        const persistedAction = persistedActionRaw
+          ? governActionRequest(persistedActionRaw)
+          : undefined;
         const actionType = response.actionType || persistedAction?.actionType;
         if (!actionType) {
           throw new Error("缺少 actionType，无法提交确认");
@@ -191,7 +195,7 @@ export function useAgentTools(options: UseAgentToolsOptions) {
               }
 
               effectiveRequestId = resolvedAction.requestId;
-              metadataAction = resolvedAction;
+              metadataAction = governActionRequest(resolvedAction);
               acknowledgedRequestIds.add(resolvedAction.requestId);
             }
           }

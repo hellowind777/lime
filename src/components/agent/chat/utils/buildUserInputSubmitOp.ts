@@ -5,9 +5,11 @@ import type {
   AutoContinueRequestPayload,
   ImageInput,
 } from "@/lib/api/agentRuntime";
+import type { AgentAccessMode } from "../hooks/agentChatStorage";
 import type { SessionModelPreference } from "../hooks/agentChatShared";
 import type { MessageImage } from "../types";
 import type { ChatToolPreferences } from "./chatToolPreferences";
+import { createRuntimePoliciesFromAccessMode } from "./accessModeRuntime";
 import { buildSubmitOpRuntimeCompaction } from "./submitOpRuntimeCompaction";
 
 function buildSubmitImages(images: MessageImage[]): ImageInput[] | undefined {
@@ -36,6 +38,7 @@ export interface BuildUserInputSubmitOpOptions {
   syncedSessionModelPreference?: SessionModelPreference | null;
   syncedExecutionStrategy?: AsterExecutionStrategy | null;
   effectiveExecutionStrategy: AsterExecutionStrategy;
+  effectiveAccessMode: AgentAccessMode;
   effectiveProviderType: string;
   effectiveModel: string;
   modelOverride?: string;
@@ -62,6 +65,7 @@ export function buildUserInputSubmitOp(
     syncedSessionModelPreference,
     syncedExecutionStrategy,
     effectiveExecutionStrategy,
+    effectiveAccessMode,
     effectiveProviderType,
     effectiveModel,
     modelOverride,
@@ -83,6 +87,7 @@ export function buildUserInputSubmitOp(
     webSearch,
     thinking,
   });
+  const runtimePolicies = createRuntimePoliciesFromAccessMode(effectiveAccessMode);
 
   return {
     type: "user_input",
@@ -100,6 +105,8 @@ export function buildUserInputSubmitOp(
         ? effectiveModel
         : undefined,
       thinking: compaction.shouldSubmitThinking ? thinking : undefined,
+      approvalPolicy: runtimePolicies.approvalPolicy,
+      sandboxPolicy: runtimePolicies.sandboxPolicy,
       executionStrategy: compaction.shouldSubmitExecutionStrategy
         ? effectiveExecutionStrategy
         : undefined,

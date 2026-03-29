@@ -71,6 +71,12 @@ pub struct AsterChatRequest {
     /// 是否偏好 reasoning 变体
     #[serde(default, alias = "thinkingEnabled")]
     pub thinking_enabled: Option<bool>,
+    /// 执行权限审批策略
+    #[serde(default, alias = "approvalPolicy")]
+    pub approval_policy: Option<String>,
+    /// 执行沙箱策略
+    #[serde(default, alias = "sandboxPolicy")]
+    pub sandbox_policy: Option<String>,
     /// 项目 ID（可选，用于注入项目上下文到 System Prompt）
     #[serde(default, alias = "projectId")]
     pub project_id: Option<String>,
@@ -116,6 +122,10 @@ pub struct AgentTurnConfigSnapshot {
     pub model_preference: Option<String>,
     #[serde(default, alias = "thinkingEnabled")]
     pub thinking_enabled: Option<bool>,
+    #[serde(default, alias = "approvalPolicy")]
+    pub approval_policy: Option<String>,
+    #[serde(default, alias = "sandboxPolicy")]
+    pub sandbox_policy: Option<String>,
     #[serde(default, alias = "executionStrategy")]
     pub execution_strategy: Option<AsterExecutionStrategy>,
     #[serde(default, alias = "webSearch")]
@@ -172,6 +182,12 @@ impl From<AgentRuntimeSubmitTurnRequest> for AsterChatRequest {
             thinking_enabled: turn_config
                 .as_ref()
                 .and_then(|config| config.thinking_enabled),
+            approval_policy: turn_config
+                .as_ref()
+                .and_then(|config| config.approval_policy.clone()),
+            sandbox_policy: turn_config
+                .as_ref()
+                .and_then(|config| config.sandbox_policy.clone()),
             project_id: None,
             workspace_id: request.workspace_id.unwrap_or_default(),
             web_search: turn_config.as_ref().and_then(|config| config.web_search),
@@ -1595,6 +1611,8 @@ pub struct AgentRuntimeUpdateSessionRequest {
     pub model_name: Option<String>,
     #[serde(default, alias = "executionStrategy")]
     pub execution_strategy: Option<AsterExecutionStrategy>,
+    #[serde(default, alias = "recentAccessMode")]
+    pub recent_access_mode: Option<lime_agent::SessionExecutionRuntimeAccessMode>,
     #[serde(default, alias = "recentPreferences")]
     pub recent_preferences: Option<lime_agent::SessionExecutionRuntimePreferences>,
     #[serde(default, alias = "recentTeamSelection")]

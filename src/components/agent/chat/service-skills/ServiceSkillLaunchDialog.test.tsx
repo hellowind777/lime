@@ -5,11 +5,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ServiceSkillLaunchDialog } from "./ServiceSkillLaunchDialog";
 import type { ServiceSkillHomeItem } from "./types";
 
+const mockSiteGetAdapterLaunchReadiness = vi.fn();
+
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div data-testid="service-skill-dialog">{children}</div> : null,
-  DialogContent: ({ children }: { children: React.ReactNode }) => (
-    <div>{children}</div>
+  DialogContent: ({
+    children,
+    className,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+  }) => (
+    <div data-testid="service-skill-dialog-content" className={className}>
+      {children}
+    </div>
   ),
   DialogDescription: ({ children }: { children: React.ReactNode }) => (
     <div>{children}</div>
@@ -57,14 +67,29 @@ vi.mock("@/components/ui/label", () => ({
   ),
 }));
 
+vi.mock("@/lib/webview-api", () => ({
+  siteGetAdapterLaunchReadiness: (...args: unknown[]) =>
+    mockSiteGetAdapterLaunchReadiness(...args),
+}));
+
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
 const MOCK_SKILL: ServiceSkillHomeItem = {
   id: "short-video-script-replication",
+  skillType: "service",
   title: "复制短视频脚本",
   summary: "围绕参考视频的结构和节奏，输出一版可继续加工的脚本。",
   category: "视频创作",
   outputHint: "脚本大纲 + 镜头节奏",
+  usageGuidelines: ["适合先锁定结构和节奏，再继续补镜头和口播细节。"],
+  setupRequirements: [
+    "需要已选择可用模型。",
+    "建议在视频项目内启动，方便脚本直接回到当前工作区。",
+  ],
+  triggerHints: ["已经有参考视频，希望快速得到一版同结构脚本时使用。"],
+  examples: ["参考这个视频结构，帮我先写一版节奏接近的脚本。"],
+  outputDestination:
+    "结果会写回当前工作区中的脚本草稿，方便继续补镜头与口播。",
   source: "cloud_catalog",
   runnerType: "instant",
   defaultExecutorBinding: "agent_turn",
@@ -94,9 +119,34 @@ const MOCK_SKILL: ServiceSkillHomeItem = {
   isRecent: false,
   runnerLabel: "本地即时执行",
   runnerTone: "emerald",
-  runnerDescription: "客户端起步版可直接进入工作区执行。",
+  runnerDescription: "会直接在当前工作区生成首版结果，方便继续补充与改写。",
   actionLabel: "填写参数",
   automationStatus: null,
+};
+
+const METADATA_ONLY_SKILL: ServiceSkillHomeItem = {
+  ...MOCK_SKILL,
+  id: "metadata-only-site-skill",
+  skillType: undefined,
+  outputDestination: undefined,
+  siteCapabilityBinding: undefined,
+  skillBundle: {
+    name: "metadata-only-site-skill",
+    description: "只通过标准摘要回退展示技能类型与结果去向。",
+    metadata: {
+      Lime_skill_type: "site",
+      Lime_output_destination: "结果会回流到当前工作区顶部结果区，便于继续整理。",
+    },
+    resourceSummary: {
+      hasScripts: false,
+      hasReferences: false,
+      hasAssets: false,
+    },
+    standardCompliance: {
+      isStandard: true,
+      deprecatedFields: [],
+    },
+  },
 };
 
 beforeEach(() => {
@@ -105,6 +155,14 @@ beforeEach(() => {
       IS_REACT_ACT_ENVIRONMENT?: boolean;
     }
   ).IS_REACT_ACT_ENVIRONMENT = true;
+  mockSiteGetAdapterLaunchReadiness.mockResolvedValue({
+    status: "ready",
+    adapter: "github/search",
+    domain: "github.com",
+    profile_key: "attached-github",
+    target_id: "tab-github",
+    message: "已检测到 github.com 的真实浏览器页面，Claw 可以直接复用当前会话执行。",
+  });
 });
 
 afterEach(() => {
@@ -177,6 +235,53 @@ function setFormValue(
 }
 
 describe("ServiceSkillLaunchDialog", () => {
+  it("应展示技能标准信息区块", async () => {
+    renderDialog();
+
+    await flushEffects();
+
+    expect(document.body.textContent).toContain("业务技能");
+    expect(document.body.textContent).toContain("执行方式");
+    expect(document.body.textContent).toContain("依赖条件");
+    expect(document.body.textContent).toContain("结果去向");
+    expect(document.body.textContent).toContain(
+      "结果会写回当前工作区中的脚本草稿，方便继续补镜头与口播。",
+    );
+    expect(document.body.textContent).toContain(
+      "适合先锁定结构和节奏，再继续补镜头和口播细节。",
+    );
+    expect(document.body.textContent).toContain(
+      "参考这个视频结构，帮我先写一版节奏接近的脚本。",
+    );
+  });
+
+  it("小屏幕下应为弹窗内容提供高度上限和内部滚动", async () => {
+    renderDialog();
+
+    await flushEffects();
+
+    const dialogContent = document.body.querySelector(
+      '[data-testid="service-skill-dialog-content"]',
+    ) as HTMLDivElement | null;
+
+    expect(dialogContent?.className).toContain("max-h-[calc(100vh-32px)]");
+    expect(dialogContent?.className).toContain("overflow-y-auto");
+    expect(dialogContent?.className).toContain("overscroll-contain");
+  });
+
+  it("缺少平铺字段时应从 skillBundle metadata 回退展示类型与结果去向", async () => {
+    renderDialog({
+      skill: METADATA_ONLY_SKILL,
+    });
+
+    await flushEffects();
+
+    expect(document.body.textContent).toContain("站点技能");
+    expect(document.body.textContent).toContain(
+      "结果会回流到当前工作区顶部结果区，便于继续整理。",
+    );
+  });
+
   it("应在必填参数补齐后允许进入工作区并透传槽位值", async () => {
     const onLaunch = vi.fn();
 
@@ -272,19 +377,112 @@ describe("ServiceSkillLaunchDialog", () => {
     );
   });
 
-  it("站点型服务技能应展示浏览器工作台入口文案", async () => {
+  it("站点型服务技能应展示 Claw 主执行与浏览器工作台次级动作", async () => {
+    const onOpenBrowserRuntime = vi.fn();
     renderDialog({
       skill: {
         ...MOCK_SKILL,
         id: "github-repo-radar",
+        skillType: "site",
         title: "GitHub 仓库线索检索",
         defaultExecutorBinding: "browser_assist",
         summary:
           "复用你当前浏览器里的 GitHub 登录态，直接检索主题仓库并沉淀成结构化线索。",
-        runnerLabel: "浏览器站点执行",
+        runnerLabel: "站点登录态采集",
         runnerDescription:
-          "直接进入浏览器工作台，复用真实登录态执行站点脚本并沉淀结果。",
-        actionLabel: "启动采集",
+          "会复用当前浏览器里的真实登录态执行站点任务，并优先把结果沉淀到当前工作区。",
+        actionLabel: "开始执行",
+        setupRequirements: [
+          "需要浏览器里已有 GitHub 登录态。",
+          "建议在目标项目内启动，方便结果优先写回当前内容。",
+        ],
+        usageGuidelines: [
+          "适合先做一轮主题检索，再回到工作区筛选值得继续跟进的仓库。",
+        ],
+        triggerHints: ["需要围绕某个技术主题快速找 GitHub 仓库线索时使用。"],
+        examples: ["帮我查一批和 MCP browser automation 相关的 GitHub 仓库。"],
+        outputDestination:
+          "采集结果会优先写回当前内容；如果当前内容不可用，再沉淀为项目资源。",
+        siteCapabilityBinding: {
+          adapterName: "github/search",
+          autoRun: true,
+          saveMode: "current_content",
+          slotArgMap: {
+            reference_video: "query",
+          },
+        },
+      },
+      onOpenBrowserRuntime,
+    });
+
+    await flushEffects();
+
+    expect(document.body.textContent).toContain("站点技能");
+    expect(document.body.textContent).toContain("站点登录态采集");
+    expect(document.body.textContent).toContain(
+      "需要浏览器里已有 GitHub 登录态。",
+    );
+    expect(document.body.textContent).toContain(
+      "采集结果会优先写回当前内容；如果当前内容不可用，再沉淀为项目资源。",
+    );
+    expect(document.body.textContent).toContain(
+      "帮我查一批和 MCP browser automation 相关的 GitHub 仓库。",
+    );
+    expect(document.body.textContent).toContain("Claw 直跑检测");
+    expect(document.body.textContent).toContain("可直接执行");
+    const launchButton = document.body.querySelector(
+      '[data-testid="service-skill-launch"]',
+    ) as HTMLButtonElement | null;
+    const browserRuntimeButton = document.body.querySelector(
+      '[data-testid="service-skill-open-browser-runtime"]',
+    ) as HTMLButtonElement | null;
+    expect(launchButton?.textContent).toBe("在 Claw 中执行");
+    expect(browserRuntimeButton?.textContent).toBe("去浏览器工作台");
+
+    const referenceInput = document.body.querySelector(
+      '[data-testid="service-skill-slot-reference_video"]',
+    ) as HTMLInputElement | null;
+
+    act(() => {
+      if (referenceInput) {
+        setFormValue(referenceInput, "browser assist mcp");
+      }
+    });
+
+    await flushEffects();
+
+    act(() => {
+      browserRuntimeButton?.click();
+    });
+
+    expect(onOpenBrowserRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "github-repo-radar",
+      }),
+      {
+        reference_video: "browser assist mcp",
+        platform: "douyin",
+      },
+    );
+  });
+
+  it("站点技能缺少附着会话时应禁用 Claw 主执行按钮并提示转去浏览器工作台", async () => {
+    mockSiteGetAdapterLaunchReadiness.mockResolvedValueOnce({
+      status: "requires_browser_runtime",
+      adapter: "github/search",
+      domain: "github.com",
+      message:
+        "当前没有检测到已附着到真实浏览器的 github.com 页面，请先去浏览器工作台连接浏览器并打开目标页面。",
+      report_hint:
+        "Claw 不会在后台偷偷启动浏览器；请先进入浏览器工作台连接真实浏览器并打开目标站点页面，再返回 Claw 重试。",
+    });
+
+    renderDialog({
+      skill: {
+        ...MOCK_SKILL,
+        id: "github-repo-radar",
+        skillType: "site",
+        defaultExecutorBinding: "browser_assist",
         siteCapabilityBinding: {
           adapterName: "github/search",
           autoRun: true,
@@ -298,13 +496,24 @@ describe("ServiceSkillLaunchDialog", () => {
 
     await flushEffects();
 
-    expect(document.body.textContent).toContain(
-      "该任务会直接进入浏览器工作台，预填站点脚本参数，并优先复用当前浏览器登录态执行。",
-    );
+    const referenceInput = document.body.querySelector(
+      '[data-testid="service-skill-slot-reference_video"]',
+    ) as HTMLInputElement | null;
     const launchButton = document.body.querySelector(
       '[data-testid="service-skill-launch"]',
     ) as HTMLButtonElement | null;
-    expect(launchButton?.textContent).toBe("进入浏览器工作台");
+
+    act(() => {
+      if (referenceInput) {
+        setFormValue(referenceInput, "browser assist mcp");
+      }
+    });
+
+    await flushEffects();
+
+    expect(document.body.textContent).toContain("需要浏览器工作台");
+    expect(document.body.textContent).toContain("Claw 不会在后台偷偷启动浏览器");
+    expect(launchButton?.disabled).toBe(true);
   });
 
   it("云端托管技能应显示云端运行文案且不暴露本地自动化入口", async () => {
@@ -320,8 +529,9 @@ describe("ServiceSkillLaunchDialog", () => {
         defaultExecutorBinding: "cloud_scene",
         runnerLabel: "云端托管执行",
         runnerTone: "slate",
-        runnerDescription: "提交到 OEM 云端执行，结果由服务端异步返回。",
+        runnerDescription: "会提交到 OEM 云端执行，完成后再把结果回流到当前工作区。",
         actionLabel: "提交云端",
+        outputDestination: "运行结果会在云端完成后回流到当前工作区。",
       },
       onLaunch,
       onCreateAutomation,
@@ -331,7 +541,7 @@ describe("ServiceSkillLaunchDialog", () => {
 
     expect(document.body.textContent).toContain("提交云端运行");
     expect(document.body.textContent).toContain(
-      "成功后会把结果回流到本地工作区，但不会创建本地自动化草稿",
+      "运行结果会在云端完成后回流到当前工作区。",
     );
     expect(
       document.body.querySelector(

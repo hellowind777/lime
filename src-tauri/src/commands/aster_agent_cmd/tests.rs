@@ -928,6 +928,8 @@ mod tests {
                 provider_preference: None,
                 model_preference: None,
                 thinking_enabled: None,
+                approval_policy: None,
+                sandbox_policy: None,
                 project_id: Some("project-1".to_string()),
                 workspace_id: "workspace-1".to_string(),
                 web_search: Some(false),
@@ -1112,6 +1114,8 @@ mod tests {
                 provider_preference: None,
                 model_preference: None,
                 thinking_enabled: None,
+                approval_policy: None,
+                sandbox_policy: None,
                 project_id: Some("project-1".to_string()),
                 workspace_id: "workspace-1".to_string(),
                 web_search: Some(false),
@@ -1185,6 +1189,8 @@ mod tests {
                 provider_preference: None,
                 model_preference: None,
                 thinking_enabled: None,
+                approval_policy: None,
+                sandbox_policy: None,
                 project_id: Some("project-1".to_string()),
                 workspace_id: "workspace-1".to_string(),
                 web_search: None,
@@ -1232,6 +1238,66 @@ mod tests {
                 .get("subagent_mode_enabled")
                 .and_then(serde_json::Value::as_bool),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn test_build_chat_run_metadata_base_derives_access_mode_from_formal_turn_context() {
+        let metadata = build_chat_run_metadata_base(
+            &AsterChatRequest {
+                message: "hello".to_string(),
+                session_id: "session-access".to_string(),
+                event_name: "event-access".to_string(),
+                images: None,
+                provider_config: None,
+                provider_preference: None,
+                model_preference: None,
+                thinking_enabled: None,
+                approval_policy: Some("never".to_string()),
+                sandbox_policy: Some("danger-full-access".to_string()),
+                project_id: None,
+                workspace_id: "workspace-1".to_string(),
+                web_search: Some(false),
+                search_mode: None,
+                execution_strategy: Some(AsterExecutionStrategy::React),
+                auto_continue: None,
+                system_prompt: None,
+                metadata: None,
+                turn_id: None,
+                queue_if_busy: None,
+                queued_turn_id: None,
+            },
+            "workspace-1",
+            AsterExecutionStrategy::React,
+            &RequestToolPolicy {
+                search_mode: RequestToolPolicyMode::Disabled,
+                effective_web_search: false,
+                required_tools: vec![],
+                allowed_tools: vec![],
+                disallowed_tools: vec![],
+            },
+            false,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            metadata
+                .get("approval_policy")
+                .and_then(serde_json::Value::as_str),
+            Some("never")
+        );
+        assert_eq!(
+            metadata
+                .get("sandbox_policy")
+                .and_then(serde_json::Value::as_str),
+            Some("danger-full-access")
+        );
+        assert_eq!(
+            metadata
+                .get("access_mode")
+                .and_then(serde_json::Value::as_str),
+            Some("full-access")
         );
     }
 

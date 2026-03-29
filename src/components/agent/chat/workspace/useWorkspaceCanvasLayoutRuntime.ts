@@ -12,6 +12,7 @@ const FALLBACK_CANVAS_CONTENT = "# 新文档\n\n在这里开始编写内容...";
 interface UseWorkspaceCanvasLayoutRuntimeParams {
   activeTheme: string;
   isThemeWorkbench: boolean;
+  hasPendingA2UIForm: boolean;
   layoutMode: LayoutMode;
   showChatPanel: boolean;
   showSidebar: boolean;
@@ -46,6 +47,7 @@ interface UseWorkspaceCanvasLayoutRuntimeParams {
 export function useWorkspaceCanvasLayoutRuntime({
   activeTheme,
   isThemeWorkbench,
+  hasPendingA2UIForm,
   layoutMode,
   showChatPanel,
   showSidebar,
@@ -134,6 +136,42 @@ export function useWorkspaceCanvasLayoutRuntime({
     setLayoutMode,
     setShowSidebar,
     showChatPanel,
+  ]);
+
+  useEffect(() => {
+    if (!hasPendingA2UIForm) {
+      return;
+    }
+
+    dismissActiveTeamWorkbenchAutoOpen();
+    suppressGeneralCanvasArtifactAutoOpen();
+    suppressBrowserAssistCanvasAutoOpen();
+
+    if (isThemeWorkbench && showSidebar) {
+      setShowSidebar(false);
+    }
+
+    if (layoutMode !== "chat") {
+      setLayoutMode("chat");
+    }
+
+    if (activeTheme === "general") {
+      setGeneralCanvasState((previous) =>
+        previous.isOpen ? { ...previous, isOpen: false } : previous,
+      );
+    }
+  }, [
+    activeTheme,
+    dismissActiveTeamWorkbenchAutoOpen,
+    hasPendingA2UIForm,
+    isThemeWorkbench,
+    layoutMode,
+    setGeneralCanvasState,
+    setLayoutMode,
+    setShowSidebar,
+    showSidebar,
+    suppressBrowserAssistCanvasAutoOpen,
+    suppressGeneralCanvasArtifactAutoOpen,
   ]);
 
   useEffect(() => {

@@ -12,6 +12,7 @@ type ThemeWorkbenchSidebarWorkflowParams = Omit<
 interface UseThemeWorkbenchSidebarPresentationParams {
   showChatPanel: boolean;
   showSidebar: boolean;
+  hasPendingA2UIForm: boolean;
   isThemeWorkbench: boolean;
   shouldUseCompactThemeWorkbench: boolean;
   enablePanelCollapse: boolean;
@@ -36,6 +37,7 @@ interface ThemeWorkbenchSidebarPresentationResult {
 export function useThemeWorkbenchSidebarPresentation({
   showChatPanel,
   showSidebar,
+  hasPendingA2UIForm,
   isThemeWorkbench,
   shouldUseCompactThemeWorkbench,
   enablePanelCollapse,
@@ -49,12 +51,14 @@ export function useThemeWorkbenchSidebarPresentation({
   const showThemeWorkbenchSidebar =
     showChatPanel &&
     showSidebar &&
+    !hasPendingA2UIForm &&
     isThemeWorkbench &&
     shouldShowThemeWorkbenchSidebarForTheme &&
     (!enablePanelCollapse || !sidebarCollapsed);
   const showThemeWorkbenchLeftExpandButton =
     showChatPanel &&
     showSidebar &&
+    !hasPendingA2UIForm &&
     isThemeWorkbench &&
     shouldShowThemeWorkbenchSidebarForTheme &&
     enablePanelCollapse &&

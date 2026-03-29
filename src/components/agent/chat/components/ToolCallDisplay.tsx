@@ -665,6 +665,8 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
   groupMarker = "•",
 }) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [showRawSearchResultOutput, setShowRawSearchResultOutput] =
+    useState(false);
   const [previewImageSrc, setPreviewImageSrc] = useState<string | null>(null);
   const hasUserToggledExpandedRef = useRef(false);
 
@@ -900,6 +902,12 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
   );
   const hasResultImages = resultImages.length > 0;
   const hasSearchResults = searchResultItems.length > 0;
+  const shouldShowRawSearchResultToggle =
+    hasSearchResults && resultText !== "(无输出)";
+  const shouldRenderResultPanel =
+    isExpanded &&
+    hasResult &&
+    (!hasSearchResults || showRawSearchResultOutput);
 
   const handleOpenExternalUrl = useCallback(async (url: string) => {
     try {
@@ -925,6 +933,12 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
   useEffect(() => {
     if (hasSearchResults && !hasUserToggledExpandedRef.current) {
       setIsExpanded(true);
+    }
+  }, [hasSearchResults]);
+
+  useEffect(() => {
+    if (!hasSearchResults) {
+      setShowRawSearchResultOutput(false);
     }
   }, [hasSearchResults]);
 
@@ -1079,13 +1093,33 @@ export const ToolCallDisplay: React.FC<ToolCallDisplayProps> = ({
           <SearchResultPreviewList
             items={searchResultItems}
             onOpenUrl={handleOpenExternalUrl}
-            popoverSide="right"
+            popoverSide="bottom"
             popoverAlign="start"
           />
+          {shouldShowRawSearchResultToggle ? (
+            <div className="mt-2">
+              <button
+                type="button"
+                className="rounded-md px-2 py-1 text-[11px] text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                aria-label={
+                  showRawSearchResultOutput
+                    ? "收起搜索原始输出"
+                    : "查看搜索原始输出"
+                }
+                onClick={() =>
+                  setShowRawSearchResultOutput((current) => !current)
+                }
+              >
+                {showRawSearchResultOutput
+                  ? "收起原始输出"
+                  : "查看原始输出"}
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
 
-      {isExpanded && hasResult && (
+      {shouldRenderResultPanel && (
         <div
           className="mb-2 ml-6 mt-1.5 space-y-2"
           data-testid="tool-call-result-panel"

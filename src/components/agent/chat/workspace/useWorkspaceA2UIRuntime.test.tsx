@@ -82,6 +82,47 @@ afterEach(() => {
 });
 
 describe("useWorkspaceA2UIRuntime", () => {
+  it("官方 JSONL A2UI 消息应直接提升为输入区表单", async () => {
+    const jsonlA2UIMessage = createAssistantMessage(
+      "assistant-jsonl",
+      [
+        "```a2ui",
+        '{"version":"v0.9","createSurface":{"surfaceId":"main","catalogId":"https://a2ui.org/specification/v0_9/basic_catalog.json"}}',
+        '{"version":"v0.9","updateComponents":{"surfaceId":"main","components":[{"id":"root","component":"Column","children":["header","date-picker"]},{"id":"header","component":"Text","text":"# Book Your Table","variant":"h1"},{"id":"date-picker","component":"DateTimeInput","label":"Select Date","value":{"path":"/reservation/date"},"enableDate":true}]}}',
+        '{"version":"v0.9","updateDataModel":{"surfaceId":"main","path":"/reservation","value":{"date":"2025-12-15"}}}',
+        "```",
+      ].join("\n"),
+    );
+    const { render, getValue } = renderHook({
+      messages: [jsonlA2UIMessage],
+    });
+
+    await render({ messages: [jsonlA2UIMessage] });
+
+    expect(getValue().pendingA2UIForm).toMatchObject({
+      id: "surface-main",
+      root: "root",
+      data: {
+        reservation: {
+          date: "2025-12-15",
+        },
+      },
+    });
+    expect(getValue().pendingA2UIForm?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "date-picker",
+          component: "DateTimeInput",
+        }),
+      ]),
+    );
+    expect(getValue().pendingA2UISource).toEqual({
+      kind: "assistant_message",
+      messageId: "assistant-jsonl",
+    });
+    expect(getValue().a2uiSubmissionNotice).toBeNull();
+  });
+
   it("内联 A2UI 在消息内容短暂变成不完整 JSON 时应保留最后一份有效表单", async () => {
     const validA2UIMessage = createAssistantMessage(
       "assistant-a2ui",
@@ -93,7 +134,7 @@ describe("useWorkspaceA2UIRuntime", () => {
     );
     const truncatedA2UIMessage = createAssistantMessage(
       "assistant-a2ui",
-      ['```a2ui', '{"type":"form","title":"补充信息"'].join("\n"),
+      ["```a2ui", '{"type":"form","title":"补充信息"'].join("\n"),
     );
     const { render, getValue } = renderHook({
       messages: [validA2UIMessage],
@@ -101,10 +142,18 @@ describe("useWorkspaceA2UIRuntime", () => {
 
     await render({ messages: [validA2UIMessage] });
     expect(getValue().pendingA2UIForm?.components.length).toBeGreaterThan(0);
+    expect(getValue().pendingA2UISource).toEqual({
+      kind: "assistant_message",
+      messageId: "assistant-a2ui",
+    });
     expect(getValue().a2uiSubmissionNotice).toBeNull();
 
     await render({ messages: [truncatedA2UIMessage] });
     expect(getValue().pendingA2UIForm?.components.length).toBeGreaterThan(0);
+    expect(getValue().pendingA2UISource).toEqual({
+      kind: "assistant_message",
+      messageId: "assistant-a2ui",
+    });
     expect(getValue().a2uiSubmissionNotice).toBeNull();
   });
 
@@ -144,14 +193,18 @@ describe("useWorkspaceA2UIRuntime", () => {
     });
 
     await render({ messages: [pendingMessage] });
-    expect(getValue().pendingA2UIForm?.id).toBe(
-      "action-request-req-a2ui-1",
-    );
+    expect(getValue().pendingA2UIForm?.id).toBe("action-request-req-a2ui-1");
+    expect(getValue().pendingA2UISource).toEqual({
+      kind: "action_request",
+      requestId: "req-a2ui-1",
+    });
 
     await render({ messages: [queuedMessage] });
-    expect(getValue().pendingA2UIForm?.id).toBe(
-      "action-request-req-a2ui-1",
-    );
+    expect(getValue().pendingA2UIForm?.id).toBe("action-request-req-a2ui-1");
+    expect(getValue().pendingA2UISource).toEqual({
+      kind: "action_request",
+      requestId: "req-a2ui-1",
+    });
     expect(getValue().a2uiSubmissionNotice).toBeNull();
   });
 
@@ -175,6 +228,85 @@ describe("useWorkspaceA2UIRuntime", () => {
       messages: [createUserMessage("user-new-thread", "这是新的会话内容")],
     });
     expect(getValue().pendingA2UIForm).toBeNull();
+    expect(getValue().pendingA2UISource).toBeNull();
     expect(getValue().a2uiSubmissionNotice).toBeNull();
+  });
+
+  it("多问题 action_required 应只展示当前一问，并直接提交当前回答", async () => {
+    const pendingMessage: Message = {
+      id: "assistant-action-progressive",
+      role: "assistant",
+      content: "请补充执行偏好。",
+      timestamp: new Date("2026-03-27T10:01:00.000Z"),
+      actionRequests: [
+        {
+          requestId: "req-a2ui-progressive",
+          actionType: "ask_user",
+          prompt: "继续前先确认几个点",
+          questions: [
+            {
+              question: "你要我先聚焦哪一部分？",
+            },
+            {
+              question: "这一步更看重速度还是完整度？",
+            },
+            {
+              question: "是否还有额外限制？",
+            },
+          ],
+          status: "pending",
+        },
+      ],
+    };
+    const { render, getValue } = renderHook({
+      messages: [pendingMessage],
+    });
+
+    await render({ messages: [pendingMessage] });
+
+    expect(getValue().pendingA2UIForm?.data).toMatchObject({
+      governance: {
+        originalQuestionCount: 3,
+        deferredQuestionCount: 2,
+      },
+    });
+    expect(getValue().pendingA2UIForm?.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: "TextField",
+          label: "你要我先聚焦哪一部分？",
+        }),
+      ]),
+    );
+    expect(getValue().pendingA2UIForm?.components).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "这一步更看重速度还是完整度？",
+        }),
+      ]),
+    );
+
+    const currentField = getValue().pendingA2UIForm?.components.find(
+      (component) =>
+        component.component === "TextField" && typeof component.id === "string",
+    ) as { id: string } | undefined;
+
+    let submissionResult:
+      | ReturnType<ReturnType<typeof getValue>["resolvePendingA2UISubmit"]>
+      | undefined;
+
+    await act(async () => {
+      submissionResult = getValue().resolvePendingA2UISubmit({
+        [currentField?.id || ""]: "先看 A2UI 对话呈现",
+      });
+      await Promise.resolve();
+    });
+
+    expect(submissionResult).toMatchObject({
+      status: "submit",
+      formData: {
+        [currentField?.id || ""]: "先看 A2UI 对话呈现",
+      },
+    });
   });
 });

@@ -6,7 +6,10 @@ import { useState, useEffect } from "react";
 import styled from "styled-components";
 import { Keyboard, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { safeListen } from "@/lib/dev-bridge";
+import {
+  onVoiceStartRecording,
+  onVoiceStopRecording,
+} from "@/lib/api/voiceShortcutEvents";
 
 const Container = styled.div`
   padding: 32px 24px;
@@ -113,12 +116,12 @@ export function VoiceShortcutTestStep({
     const setupListener = async () => {
       try {
         // 监听录音开始事件（快捷键按下）
-        const unlistenStart = await safeListen("voice-start-recording", () => {
+        const unlistenStart = await onVoiceStartRecording(() => {
           setIsPressed(true);
         });
 
         // 监听录音停止事件（快捷键释放）
-        const unlistenStop = await safeListen("voice-stop-recording", () => {
+        const unlistenStop = await onVoiceStopRecording(() => {
           setIsPressed(false);
           setTestSuccess(true);
           // 取消录音（因为这只是测试）

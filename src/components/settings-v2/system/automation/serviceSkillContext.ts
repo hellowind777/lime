@@ -18,7 +18,7 @@ export interface AutomationServiceSkillContext {
   userInput: string | null;
 }
 
-const DEFAULT_SERVICE_SKILL_TITLE = "服务型技能任务";
+const DEFAULT_SERVICE_SKILL_TITLE = "技能任务";
 const UNKNOWN_SERVICE_SKILL_LABEL = "未标记";
 
 function isRecord(value: unknown): value is Record<string, unknown> {

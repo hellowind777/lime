@@ -259,13 +259,11 @@ export class ArtifactParser {
         const artifactAttrs = parseArtifactAttributes(line);
         if (artifactAttrs) {
           // artifact fence 开始
-          console.log("[ArtifactParser] 检测到 artifact fence:", line);
           this.startFence(artifactAttrs, lineStart, lineEnd + 1);
         } else {
           const codeFence = parseCodeFence(line);
           if (codeFence && this.config.treatCodeBlockAsArtifact) {
             // 标准 code fence 开始
-            console.log("[ArtifactParser] 检测到 code fence:", line, codeFence);
             const type = this.config.autoDetectLanguage
               ? inferTypeFromLanguage(codeFence.language)
               : "code";

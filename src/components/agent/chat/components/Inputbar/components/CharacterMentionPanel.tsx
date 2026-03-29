@@ -20,6 +20,69 @@ import type { ServiceSkillHomeItem } from "@/components/agent/chat/service-skill
 import type { CodexSlashCommandDefinition } from "../../../commands";
 import type { BuiltinInputCommand } from "./builtinCommands";
 
+interface MentionServiceSkillGroup {
+  key: string;
+  title: string;
+  sort: number;
+  skills: ServiceSkillHomeItem[];
+}
+
+const SERVICE_SKILL_GROUP_META: Record<
+  string,
+  { title: string; sort: number }
+> = {
+  github: { title: "GitHub", sort: 10 },
+  zhihu: { title: "知乎", sort: 20 },
+  "linux-do": { title: "Linux.do", sort: 30 },
+  bilibili: { title: "Bilibili", sort: 40 },
+  "36kr": { title: "36Kr", sort: 50 },
+  smzdm: { title: "什么值得买", sort: 60 },
+  "yahoo-finance": { title: "Yahoo Finance", sort: 70 },
+  general: { title: "通用技能", sort: 90 },
+};
+
+function resolveServiceSkillGroupKey(skill: ServiceSkillHomeItem): string {
+  const normalized = skill.groupKey?.trim();
+  return normalized ? normalized : "general";
+}
+
+function resolveServiceSkillGroupTitle(groupKey: string): string {
+  return SERVICE_SKILL_GROUP_META[groupKey]?.title ?? groupKey;
+}
+
+function resolveServiceSkillGroupSort(groupKey: string): number {
+  return SERVICE_SKILL_GROUP_META[groupKey]?.sort ?? 80;
+}
+
+function groupMentionServiceSkills(
+  skills: ServiceSkillHomeItem[],
+): MentionServiceSkillGroup[] {
+  const groups = new Map<string, MentionServiceSkillGroup>();
+
+  for (const skill of skills) {
+    const groupKey = resolveServiceSkillGroupKey(skill);
+    const current = groups.get(groupKey);
+    if (current) {
+      current.skills.push(skill);
+      continue;
+    }
+
+    groups.set(groupKey, {
+      key: groupKey,
+      title: resolveServiceSkillGroupTitle(groupKey),
+      sort: resolveServiceSkillGroupSort(groupKey),
+      skills: [skill],
+    });
+  }
+
+  return Array.from(groups.values()).sort((left, right) => {
+    if (left.sort !== right.sort) {
+      return left.sort - right.sort;
+    }
+    return left.title.localeCompare(right.title, "zh-CN");
+  });
+}
+
 interface CharacterMentionPanelProps {
   mode: "mention" | "slash";
   mentionQuery: string;
@@ -60,13 +123,17 @@ export const CharacterMentionPanel: React.FC<CharacterMentionPanelProps> = ({
   onNavigateToSettings,
 }) => {
   const visibleBuiltinCommands = mode === "mention" ? builtinCommands : [];
-  const visibleServiceSkills = mode === "mention" ? mentionServiceSkills : [];
+  const visibleServiceSkillGroups = React.useMemo(
+    () =>
+      mode === "mention" ? groupMentionServiceSkills(mentionServiceSkills) : [],
+    [mentionServiceSkills, mode],
+  );
   const visibleCharacters = mode === "mention" ? filteredCharacters : [];
   const visibleSlashCommands = mode === "slash" ? slashCommands : [];
   const hasFilteredResults =
     visibleSlashCommands.length > 0 ||
     visibleBuiltinCommands.length > 0 ||
-    visibleServiceSkills.length > 0 ||
+    visibleServiceSkillGroups.length > 0 ||
     visibleCharacters.length > 0 ||
     installedSkills.length > 0 ||
     availableSkills.length > 0;
@@ -93,13 +160,13 @@ export const CharacterMentionPanel: React.FC<CharacterMentionPanelProps> = ({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={onNavigateToSettings}
               >
-                去技能设置
+                去技能中心
               </button>
             ) : null}
           </div>
         ) : null}
         {visibleSlashCommands.length > 0 ? (
-          <CommandGroup heading="Codex 命令">
+          <CommandGroup heading="Lime 命令">
             {visibleSlashCommands.map((command) => (
               <CommandItem
                 key={command.key}
@@ -143,9 +210,9 @@ export const CharacterMentionPanel: React.FC<CharacterMentionPanelProps> = ({
             ))}
           </CommandGroup>
         ) : null}
-        {visibleServiceSkills.length > 0 ? (
-          <CommandGroup heading="服务技能">
-            {visibleServiceSkills.map((skill) => (
+        {visibleServiceSkillGroups.map((group) => (
+          <CommandGroup key={group.key} heading={`技能组 · ${group.title}`}>
+            {group.skills.map((skill) => (
               <CommandItem
                 key={skill.id}
                 onSelect={() => onSelectServiceSkill(skill)}
@@ -153,7 +220,12 @@ export const CharacterMentionPanel: React.FC<CharacterMentionPanelProps> = ({
               >
                 <Sparkles className="mr-2 h-4 w-4 text-emerald-600" />
                 <div className="flex-1">
-                  <div className="font-medium">{skill.title}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-medium">{skill.title}</div>
+                    <span className="text-[10px] text-muted-foreground">
+                      {group.title}
+                    </span>
+                  </div>
                   <div className="text-xs text-muted-foreground line-clamp-1">
                     {resolveServiceSkillEntryDescription(skill)}
                   </div>
@@ -161,7 +233,7 @@ export const CharacterMentionPanel: React.FC<CharacterMentionPanelProps> = ({
               </CommandItem>
             ))}
           </CommandGroup>
-        ) : null}
+        ))}
         {visibleCharacters.length > 0 ? (
           <CommandGroup heading="角色">
             {visibleCharacters.map((character) => (

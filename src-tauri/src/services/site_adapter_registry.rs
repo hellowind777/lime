@@ -7,6 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const BUNDLED_ADAPTER_RELATIVE_DIR: &str = "resources/site-adapters/bundled";
+const IMPORTED_ADAPTER_RELATIVE_DIR: &str = "site-adapters/imported";
 const SERVER_SYNCED_ADAPTER_RELATIVE_DIR: &str = "site-adapters/server-synced";
 const BUNDLED_INDEX_FALLBACK: &str =
     include_str!("../../resources/site-adapters/bundled/index.json");
@@ -35,6 +36,7 @@ impl SiteAdapterArgType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SiteAdapterSourceKind {
     Bundled,
+    Imported,
     ServerSynced,
 }
 
@@ -42,6 +44,7 @@ impl SiteAdapterSourceKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Bundled => "bundled",
+            Self::Imported => "imported",
             Self::ServerSynced => "server_synced",
         }
     }
@@ -81,7 +84,7 @@ pub struct SiteAdapterSpec {
 
 #[derive(Debug, Deserialize, Serialize)]
 struct SiteAdapterRegistryDocument {
-    #[serde(default = "default_registry_version")]
+    #[serde(default = "default_registry_version", alias = "registryVersion")]
     registry_version: u32,
     #[serde(default, alias = "catalogVersion", alias = "version")]
     catalog_version: Option<String>,
@@ -118,6 +121,7 @@ struct SiteAdapterArgManifest {
     name: String,
     description: String,
     required: bool,
+    #[serde(alias = "argType")]
     arg_type: SiteAdapterArgTypeManifest,
     #[serde(default)]
     example: Option<Value>,
@@ -175,7 +179,7 @@ pub struct SiteAdapterCatalogStatus {
 
 #[derive(Debug, Deserialize)]
 struct SiteAdapterCatalogBootstrapDocument {
-    #[serde(default = "default_registry_version")]
+    #[serde(default = "default_registry_version", alias = "registryVersion")]
     registry_version: u32,
     #[serde(default, alias = "catalogVersion", alias = "version")]
     catalog_version: Option<String>,
@@ -203,7 +207,8 @@ struct SiteAdapterCatalogBootstrapEntry {
     entry: SiteAdapterEntryManifest,
     #[serde(default, alias = "sourceVersion")]
     source_version: Option<String>,
-    script: String,
+    #[serde(default)]
+    script: Option<String>,
 }
 
 pub fn normalize_site_adapter_name(value: &str) -> String {
@@ -212,6 +217,9 @@ pub fn normalize_site_adapter_name(value: &str) -> String {
 
 pub fn load_site_adapter_specs() -> Result<Vec<SiteAdapterSpec>, String> {
     let mut merged = BTreeMap::new();
+    for spec in load_imported_site_adapters()? {
+        merged.insert(normalize_site_adapter_name(&spec.name), spec);
+    }
     for spec in load_bundled_site_adapters()? {
         merged.insert(normalize_site_adapter_name(&spec.name), spec);
     }
@@ -230,7 +238,26 @@ pub fn find_site_adapter_spec(name: &str) -> Result<Option<SiteAdapterSpec>, Str
 }
 
 pub fn get_site_adapter_catalog_status() -> Result<SiteAdapterCatalogStatus, String> {
-    get_site_adapter_catalog_status_from_dir(resolve_server_synced_adapter_dir())
+    let server_synced = get_site_adapter_catalog_status_from_dir(
+        resolve_server_synced_adapter_dir(),
+        SiteAdapterSourceKind::ServerSynced,
+    )?;
+    if server_synced.exists {
+        return Ok(server_synced);
+    }
+
+    let imported = get_site_adapter_catalog_status_from_dir(
+        resolve_imported_adapter_dir(),
+        SiteAdapterSourceKind::Imported,
+    )?;
+    if imported.exists {
+        return Ok(imported);
+    }
+
+    Ok(empty_site_adapter_catalog_status(
+        SiteAdapterSourceKind::Bundled,
+        None,
+    ))
 }
 
 pub fn apply_site_adapter_catalog_bootstrap(
@@ -243,7 +270,9 @@ pub fn apply_site_adapter_catalog_bootstrap(
 }
 
 pub fn clear_site_adapter_catalog_cache() -> Result<SiteAdapterCatalogStatus, String> {
-    clear_site_adapter_catalog_cache_at_dir(resolve_server_synced_adapter_dir())
+    clear_site_adapter_catalog_cache_at_dir(resolve_server_synced_adapter_dir())?;
+    clear_site_adapter_catalog_cache_at_dir(resolve_imported_adapter_dir())?;
+    get_site_adapter_catalog_status()
 }
 
 pub fn build_entry_url(
@@ -275,35 +304,27 @@ fn load_server_synced_site_adapters() -> Result<Vec<SiteAdapterSpec>, String> {
     load_site_adapters_from_dir(&dir, SiteAdapterSourceKind::ServerSynced)
 }
 
+fn load_imported_site_adapters() -> Result<Vec<SiteAdapterSpec>, String> {
+    let Some(dir) = resolve_imported_adapter_dir() else {
+        return Ok(Vec::new());
+    };
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    load_site_adapters_from_dir(&dir, SiteAdapterSourceKind::Imported)
+}
+
 fn get_site_adapter_catalog_status_from_dir(
     dir: Option<PathBuf>,
+    source_kind: SiteAdapterSourceKind,
 ) -> Result<SiteAdapterCatalogStatus, String> {
-    let directory = dir.as_ref().map(|value| value.display().to_string());
     let Some(dir) = dir else {
-        return Ok(SiteAdapterCatalogStatus {
-            exists: false,
-            source_kind: SiteAdapterSourceKind::ServerSynced.as_str().to_string(),
-            registry_version: default_registry_version(),
-            directory,
-            catalog_version: None,
-            tenant_id: None,
-            synced_at: None,
-            adapter_count: 0,
-        });
+        return Ok(empty_site_adapter_catalog_status(source_kind, None));
     };
 
     let index_path = dir.join("index.json");
     if !index_path.exists() {
-        return Ok(SiteAdapterCatalogStatus {
-            exists: false,
-            source_kind: SiteAdapterSourceKind::ServerSynced.as_str().to_string(),
-            registry_version: default_registry_version(),
-            directory,
-            catalog_version: None,
-            tenant_id: None,
-            synced_at: None,
-            adapter_count: 0,
-        });
+        return Ok(empty_site_adapter_catalog_status(source_kind, Some(dir)));
     }
 
     let content = fs::read_to_string(&index_path)
@@ -313,9 +334,9 @@ fn get_site_adapter_catalog_status_from_dir(
 
     Ok(SiteAdapterCatalogStatus {
         exists: true,
-        source_kind: SiteAdapterSourceKind::ServerSynced.as_str().to_string(),
+        source_kind: source_kind.as_str().to_string(),
         registry_version: document.registry_version,
-        directory,
+        directory: Some(dir.display().to_string()),
         catalog_version: document.catalog_version,
         tenant_id: document.tenant_id,
         synced_at: document.synced_at,
@@ -331,7 +352,10 @@ fn apply_site_adapter_catalog_bootstrap_to_dir(
         .ok_or_else(|| "payload 中未找到 siteAdapterCatalog".to_string())?;
     let document = parse_site_adapter_catalog_bootstrap_document(catalog_value)?;
     write_server_synced_catalog_to_dir(dir, document)?;
-    get_site_adapter_catalog_status_from_dir(Some(dir.to_path_buf()))
+    get_site_adapter_catalog_status_from_dir(
+        Some(dir.to_path_buf()),
+        SiteAdapterSourceKind::ServerSynced,
+    )
 }
 
 fn clear_site_adapter_catalog_cache_at_dir(
@@ -356,7 +380,23 @@ fn clear_site_adapter_catalog_cache_at_dir(
             .map_err(|error| format!("清理站点适配器缓存失败 {}: {error}", dir.display()))?;
     }
 
-    get_site_adapter_catalog_status_from_dir(Some(dir))
+    get_site_adapter_catalog_status_from_dir(Some(dir), SiteAdapterSourceKind::ServerSynced)
+}
+
+fn empty_site_adapter_catalog_status(
+    source_kind: SiteAdapterSourceKind,
+    dir: Option<PathBuf>,
+) -> SiteAdapterCatalogStatus {
+    SiteAdapterCatalogStatus {
+        exists: false,
+        source_kind: source_kind.as_str().to_string(),
+        registry_version: default_registry_version(),
+        directory: dir.map(|value| value.display().to_string()),
+        catalog_version: None,
+        tenant_id: None,
+        synced_at: None,
+        adapter_count: 0,
+    }
 }
 
 fn load_site_adapters_from_dir(
@@ -524,7 +564,7 @@ fn write_server_synced_catalog_to_dir(
             return Err(format!("站点适配器重复: {}", entry.name));
         }
 
-        let script = normalize_required_text(&entry.script, "script")?;
+        let script = resolve_server_synced_entry_script(&entry)?;
         let script_file = build_server_synced_script_file(&entry.name);
         let script_path = dir.join(&script_file);
         if let Some(parent) = script_path.parent() {
@@ -569,6 +609,39 @@ fn write_server_synced_catalog_to_dir(
         .map_err(|error| format!("写入站点适配器索引失败 {}: {error}", index_path.display()))
 }
 
+fn resolve_server_synced_entry_script(
+    entry: &SiteAdapterCatalogBootstrapEntry,
+) -> Result<String, String> {
+    if let Some(script) = entry
+        .script
+        .as_ref()
+        .and_then(|value| normalize_optional_text(Some(value.clone())))
+    {
+        return Ok(script);
+    }
+
+    let bundled_manifest = find_embedded_bundled_manifest_entry(&entry.name)?.ok_or_else(|| {
+        format!(
+            "站点适配器 {} 缺少 script，且未命中 bundled 回退",
+            entry.name
+        )
+    })?;
+    load_embedded_bundled_script(&bundled_manifest.script_file).map(|value| value.to_string())
+}
+
+fn find_embedded_bundled_manifest_entry(
+    adapter_name: &str,
+) -> Result<Option<SiteAdapterManifestEntry>, String> {
+    let document: SiteAdapterRegistryDocument = serde_json::from_str(BUNDLED_INDEX_FALLBACK)
+        .map_err(|error| format!("解析内置站点适配器索引失败: {error}"))?;
+    let normalized_name = normalize_site_adapter_name(adapter_name);
+
+    Ok(document
+        .adapters
+        .into_iter()
+        .find(|entry| normalize_site_adapter_name(&entry.name) == normalized_name))
+}
+
 fn load_embedded_bundled_script(script_file: &str) -> Result<&'static str, String> {
     match script_file {
         "scripts/36kr-newsflash.js" => Ok(include_str!(
@@ -582,6 +655,18 @@ fn load_embedded_bundled_script(script_file: &str) -> Result<&'static str, Strin
         )),
         "scripts/github-search.js" => Ok(include_str!(
             "../../resources/site-adapters/bundled/scripts/github-search.js"
+        )),
+        "scripts/linux-do-categories.js" => Ok(include_str!(
+            "../../resources/site-adapters/bundled/scripts/linux-do-categories.js"
+        )),
+        "scripts/linux-do-hot.js" => Ok(include_str!(
+            "../../resources/site-adapters/bundled/scripts/linux-do-hot.js"
+        )),
+        "scripts/smzdm-search.js" => Ok(include_str!(
+            "../../resources/site-adapters/bundled/scripts/smzdm-search.js"
+        )),
+        "scripts/yahoo-finance-quote.js" => Ok(include_str!(
+            "../../resources/site-adapters/bundled/scripts/yahoo-finance-quote.js"
         )),
         "scripts/zhihu-hot.js" => Ok(include_str!(
             "../../resources/site-adapters/bundled/scripts/zhihu-hot.js"
@@ -608,6 +693,12 @@ fn resolve_server_synced_adapter_dir() -> Option<PathBuf> {
     lime_core::app_paths::preferred_data_dir()
         .ok()
         .map(|root| root.join(SERVER_SYNCED_ADAPTER_RELATIVE_DIR))
+}
+
+pub(crate) fn resolve_imported_adapter_dir() -> Option<PathBuf> {
+    lime_core::app_paths::preferred_data_dir()
+        .ok()
+        .map(|root| root.join(IMPORTED_ADAPTER_RELATIVE_DIR))
 }
 
 fn resolve_packaged_resource_root() -> Option<PathBuf> {
@@ -784,7 +875,14 @@ fn default_registry_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::site_adapter_import_service::{
+        compile_imported_yaml_adapter_bundle, persist_compiled_imported_adapters,
+        ImportedYamlCompileOptions,
+    };
     use tempfile::tempdir;
+
+    const REAL_WORLD_IMPORTED_ADAPTER_BUNDLE_FIXTURE: &str =
+        include_str!("../../tests/fixtures/site-adapters/imported-real-world-bundle.yaml");
 
     #[test]
     fn should_load_bundled_registry_from_resources() {
@@ -799,6 +897,72 @@ mod tests {
         assert_eq!(github.source_kind, SiteAdapterSourceKind::Bundled);
         assert_eq!(github.source_version.as_deref(), Some("2026-03-25"));
         assert!(github.script.contains("a.v-align-middle"));
+    }
+
+    #[test]
+    fn should_load_selected_bundled_market_finance_and_community_adapters_from_embedded_index() {
+        let adapters = load_site_adapters_from_embedded_index(SiteAdapterSourceKind::Bundled)
+            .expect("embedded bundled adapters should load");
+
+        let linux_do_hot = adapters
+            .iter()
+            .find(|adapter| adapter.name == "linux-do/hot")
+            .expect("linux-do/hot should exist");
+        assert_eq!(linux_do_hot.source_kind, SiteAdapterSourceKind::Bundled);
+        assert_eq!(linux_do_hot.source_version.as_deref(), Some("2026-03-28"));
+        assert!(matches!(
+            linux_do_hot.entry,
+            SiteAdapterEntrySpec::FixedUrl { ref url } if url == "https://linux.do"
+        ));
+        assert_eq!(
+            linux_do_hot.auth_hint.as_deref(),
+            Some("请先在浏览器中登录 linux.do，再重试该命令。")
+        );
+        assert!(linux_do_hot.script.contains("/top.json?period="));
+
+        let linux_do_categories = adapters
+            .iter()
+            .find(|adapter| adapter.name == "linux-do/categories")
+            .expect("linux-do/categories should exist");
+        assert_eq!(
+            linux_do_categories.source_kind,
+            SiteAdapterSourceKind::Bundled
+        );
+        assert_eq!(
+            linux_do_categories.source_version.as_deref(),
+            Some("2026-03-28")
+        );
+        assert!(matches!(
+            linux_do_categories.entry,
+            SiteAdapterEntrySpec::FixedUrl { ref url } if url == "https://linux.do"
+        ));
+        assert!(linux_do_categories.script.contains("/categories.json"));
+
+        let yahoo = adapters
+            .iter()
+            .find(|adapter| adapter.name == "yahoo-finance/quote")
+            .expect("yahoo-finance/quote should exist");
+        assert_eq!(yahoo.source_kind, SiteAdapterSourceKind::Bundled);
+        assert_eq!(yahoo.source_version.as_deref(), Some("2026-03-28"));
+        assert!(matches!(
+            yahoo.entry,
+            SiteAdapterEntrySpec::UrlTemplate { ref template }
+                if template == "https://finance.yahoo.com/quote/{{symbol|urlencode}}/"
+        ));
+        assert!(yahoo.script.contains("query1.finance.yahoo.com"));
+
+        let smzdm = adapters
+            .iter()
+            .find(|adapter| adapter.name == "smzdm/search")
+            .expect("smzdm/search should exist");
+        assert_eq!(smzdm.source_kind, SiteAdapterSourceKind::Bundled);
+        assert_eq!(smzdm.source_version.as_deref(), Some("2026-03-28"));
+        assert!(matches!(
+            smzdm.entry,
+            SiteAdapterEntrySpec::UrlTemplate { ref template }
+                if template == "https://search.smzdm.com/?c=home&s={{query|urlencode}}&v=b"
+        ));
+        assert!(smzdm.script.contains("li.feed-row-wide"));
     }
 
     #[test]
@@ -874,6 +1038,114 @@ mod tests {
         assert_eq!(adapters[0].name, "github/search");
         assert_eq!(adapters[0].source_kind, SiteAdapterSourceKind::ServerSynced);
         assert_eq!(adapters[0].source_version.as_deref(), Some("sync-1"));
+    }
+
+    #[test]
+    fn should_load_imported_adapters_from_imported_catalog() {
+        let temp_dir = tempdir().expect("temp dir should exist");
+        let dir = temp_dir.path();
+        fs::create_dir_all(dir.join("scripts")).expect("scripts dir should exist");
+        fs::write(
+            dir.join("index.json"),
+            r#"
+            {
+              "catalog_version": "imported-catalog-1",
+              "adapters": [
+                {
+                  "name": "reddit/hot",
+                  "domain": "www.reddit.com",
+                  "description": "imported reddit hot",
+                  "read_only": true,
+                  "capabilities": ["research", "hot"],
+                  "args": [],
+                  "example": "reddit/hot {}",
+                  "entry": {
+                    "kind": "fixed_url",
+                    "url": "https://www.reddit.com"
+                  },
+                  "script_file": "scripts/reddit-hot.js",
+                  "source_version": "imported-1"
+                }
+              ]
+            }
+            "#,
+        )
+        .expect("index should write");
+        fs::write(
+            dir.join("scripts/reddit-hot.js"),
+            "async () => ({ ok: true, data: { items: [] } })",
+        )
+        .expect("script should write");
+
+        let adapters = load_site_adapters_from_dir(dir, SiteAdapterSourceKind::Imported)
+            .expect("imported adapters should load");
+        assert_eq!(adapters.len(), 1);
+        assert_eq!(adapters[0].name, "reddit/hot");
+        assert_eq!(adapters[0].source_kind, SiteAdapterSourceKind::Imported);
+        assert_eq!(adapters[0].source_version.as_deref(), Some("imported-1"));
+    }
+
+    #[test]
+    fn should_load_real_world_imported_bundle_persisted_by_import_service() {
+        let temp_dir = tempdir().expect("temp dir should exist");
+        let adapters = compile_imported_yaml_adapter_bundle(
+            REAL_WORLD_IMPORTED_ADAPTER_BUNDLE_FIXTURE,
+            &ImportedYamlCompileOptions {
+                read_only: true,
+                source_version: Some("fixture-real-world".to_string()),
+            },
+        )
+        .expect("real world bundle should compile");
+
+        let persist_result = persist_compiled_imported_adapters(
+            temp_dir.path(),
+            &adapters,
+            Some("fixture-imported-catalog".to_string()),
+        )
+        .expect("real world bundle should persist");
+        assert_eq!(persist_result.adapter_count, 5);
+
+        let status = get_site_adapter_catalog_status_from_dir(
+            Some(temp_dir.path().to_path_buf()),
+            SiteAdapterSourceKind::Imported,
+        )
+        .expect("imported catalog status should load");
+        assert!(status.exists);
+        assert_eq!(status.source_kind, "imported");
+        assert_eq!(
+            status.catalog_version.as_deref(),
+            Some("fixture-imported-catalog")
+        );
+        assert_eq!(status.adapter_count, 5);
+
+        let loaded = load_site_adapters_from_dir(temp_dir.path(), SiteAdapterSourceKind::Imported)
+            .expect("imported adapters should load");
+        assert_eq!(loaded.len(), 5);
+
+        let yahoo_quote = loaded
+            .iter()
+            .find(|adapter| adapter.name == "yahoo-finance/quote")
+            .expect("yahoo-finance/quote should exist");
+        assert_eq!(yahoo_quote.source_kind, SiteAdapterSourceKind::Imported);
+        assert_eq!(
+            yahoo_quote.source_version.as_deref(),
+            Some("fixture-real-world")
+        );
+        assert!(matches!(
+            yahoo_quote.entry,
+            SiteAdapterEntrySpec::UrlTemplate { ref template }
+                if template == "https://finance.yahoo.com/quote/{{symbol|urlencode}}/"
+        ));
+        assert_eq!(
+            yahoo_quote.auth_hint.as_deref(),
+            Some("该适配器依赖已有浏览器上下文，必要时请先在目标站点完成登录。")
+        );
+
+        let smzdm_search = loaded
+            .iter()
+            .find(|adapter| adapter.name == "smzdm/search")
+            .expect("smzdm/search should exist");
+        assert!(smzdm_search.capabilities.contains(&"search".to_string()));
     }
 
     #[test]
@@ -1016,6 +1288,60 @@ mod tests {
         assert_eq!(adapters.len(), 1);
         assert_eq!(adapters[0].name, "github/search");
         assert_eq!(adapters[0].source_version.as_deref(), Some("tenant-sync-1"));
+    }
+
+    #[test]
+    fn should_persist_server_synced_bootstrap_catalog_with_bundled_script_fallback() {
+        let temp_dir = tempdir().expect("temp dir should exist");
+        let payload = serde_json::json!({
+            "siteAdapterCatalog": {
+                "registryVersion": 1,
+                "catalogVersion": "tenant-sync-2",
+                "tenantId": "tenant-demo",
+                "syncedAt": "2026-03-28T10:00:00.000Z",
+                "adapters": [
+                    {
+                        "name": "github/search",
+                        "domain": "github.com",
+                        "description": "server synced github search",
+                        "readOnly": true,
+                        "capabilities": ["search"],
+                        "args": [
+                            {
+                                "name": "query",
+                                "description": "搜索关键词",
+                                "required": true,
+                                "argType": "string",
+                                "example": "lime"
+                            }
+                        ],
+                        "example": "github/search {\"query\":\"lime\"}",
+                        "entry": {
+                            "kind": "url_template",
+                            "template": "https://github.com/search?q={{query|urlencode}}&type=repositories"
+                        },
+                        "sourceVersion": "tenant-sync-2"
+                    }
+                ]
+            }
+        });
+
+        let status = apply_site_adapter_catalog_bootstrap_to_dir(temp_dir.path(), &payload)
+            .expect("bootstrap catalog should persist with bundled fallback");
+        assert!(status.exists);
+        assert_eq!(status.catalog_version.as_deref(), Some("tenant-sync-2"));
+
+        let script_content = fs::read_to_string(temp_dir.path().join("scripts/github-search.js"))
+            .expect("fallback bundled script should be written");
+        assert!(script_content.contains("helpers.uniqueBy"));
+
+        let adapters =
+            load_site_adapters_from_dir(temp_dir.path(), SiteAdapterSourceKind::ServerSynced)
+                .expect("persisted adapters should load");
+        assert_eq!(adapters.len(), 1);
+        assert_eq!(adapters[0].name, "github/search");
+        assert_eq!(adapters[0].source_version.as_deref(), Some("tenant-sync-2"));
+        assert_eq!(adapters[0].source_kind, SiteAdapterSourceKind::ServerSynced);
     }
 
     #[test]

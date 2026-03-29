@@ -28,7 +28,7 @@ export const Navbar = styled.div<{ $compact?: boolean }>`
 
 export const MessageListContainer = styled(ScrollArea)`
   flex: 1;
-  padding: 6px 0 14px;
+  padding: 6px 0 16px;
   background:
     linear-gradient(
       180deg,
@@ -46,90 +46,81 @@ export const MessageWrapper = styled.div<{
   display: flex;
   flex-direction: row;
   align-items: flex-start;
+  justify-content: ${({ $isUser }) => ($isUser ? "flex-end" : "flex-start")};
   padding: ${({ $compactLeadingSpacing }) =>
-    $compactLeadingSpacing ? "14px 2px" : "14px 6px"};
-  gap: ${({ $compactLeadingSpacing }) =>
-    $compactLeadingSpacing ? "10px" : "12px"};
+    $compactLeadingSpacing ? "8px 2px" : "8px 4px"};
+  gap: 0;
   width: 100%;
   max-width: none;
   margin: 0;
 
-  &:hover .message-actions {
+  &:hover .message-actions,
+  &:focus-within .message-actions {
     opacity: 1;
+    max-height: 40px;
+    margin-top: 8px;
+    transform: translateY(0);
+    pointer-events: auto;
   }
 `;
 
-export const AvatarColumn = styled.div`
-  flex-shrink: 0;
-  padding-top: 2px;
-`;
-
-export const ContentColumn = styled.div`
+export const ContentColumn = styled.div<{ $isUser: boolean }>`
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
+  align-items: ${({ $isUser }) => ($isUser ? "flex-end" : "stretch")};
 `;
 
-export const MessageHeader = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--foreground);
-`;
-
-export const SenderName = styled.span`
-  font-size: 14px;
-  font-weight: 600;
-`;
-
-// Placeholder for time if needed
-export const TimeStamp = styled.span`
-  font-size: 12px;
-  color: var(--muted-foreground);
-  font-weight: normal;
-`;
-
-export const AvatarCircle = styled.div<{ $isUser: boolean }>`
-  width: 36px;
-  height: 36px;
-  min-width: 36px;
-  min-height: 36px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(203, 213, 225, 0.82);
-  background:
-    linear-gradient(
-      180deg,
-      rgba(15, 23, 42, 0.94) 0%,
-      rgba(30, 41, 59, 0.98) 100%
-    );
-  color: white;
-  font-size: 14px;
-  overflow: hidden;
-  box-shadow: 0 10px 24px -18px rgba(15, 23, 42, 0.5);
-`;
-
-// Removed Bubble Styling - Now Transparent Text Block
 export const MessageBubble = styled.div<{ $isUser: boolean }>`
-  width: 100%;
-  color: var(--foreground);
+  width: ${({ $isUser }) => ($isUser ? "fit-content" : "100%")};
+  max-width: ${({ $isUser }) =>
+    $isUser ? "min(72%, 560px)" : "min(100%, 1040px)"};
+  padding: ${({ $isUser }) => ($isUser ? "12px 16px" : "15px 17px")};
+  display: flex;
+  flex-direction: column;
+  gap: ${({ $isUser }) => ($isUser ? "8px" : "12px")};
+  border-radius: 18px;
+  border: 1px solid
+    ${({ $isUser }) =>
+      $isUser ? "rgba(148, 163, 184, 0.34)" : "rgba(203, 213, 225, 0.72)"};
+  background:
+    ${({ $isUser }) =>
+      $isUser
+        ? "linear-gradient(180deg, rgba(248, 250, 252, 0.98) 0%, rgba(241, 245, 249, 0.96) 100%)"
+        : "linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, rgba(248, 250, 252, 0.96) 100%)"};
+  box-shadow:
+    ${({ $isUser }) =>
+      $isUser
+        ? "0 16px 36px -30px rgba(15, 23, 42, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.74)"
+        : "0 14px 34px -30px rgba(15, 23, 42, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.78)"};
+  color: ${({ $isUser }) =>
+    $isUser ? "rgb(15, 23, 42)" : "var(--foreground)"};
   font-size: 15px;
   line-height: 1.7;
   position: relative;
-  /* Markdown styling would go here */
+
+  .markdown-renderer,
+  .markdown-renderer * {
+    color: inherit;
+  }
 `;
 
 export const MessageActions = styled.div`
   display: flex;
   gap: 4px;
+  align-self: flex-end;
+  max-height: 0;
+  overflow: hidden;
   opacity: 0;
-  transition: opacity 0.2s;
+  pointer-events: none;
+  margin-top: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.18s ease,
+    max-height 0.18s ease,
+    margin-top 0.18s ease,
+    transform 0.18s ease;
   background-color: transparent;
-  margin-top: 10px;
 `;

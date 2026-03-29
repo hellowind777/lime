@@ -17,11 +17,7 @@ import type {
   QueuedTurnSnapshot,
 } from "@/lib/api/agentRuntime";
 import { logAgentDebug } from "@/lib/agentDebug";
-import { normalizeQueuedTurnSnapshots } from "@/lib/api/queuedTurn";
-import {
-  isAsterSessionNotFoundError,
-  resolveRestorableSessionId,
-} from "@/lib/asterSessionRecovery";
+import { isAsterSessionNotFoundError } from "@/lib/asterSessionRecovery";
 import type { AgentThreadItem, AgentThreadTurn, Message } from "../types";
 import {
   mapSessionToTopic,
@@ -33,11 +29,7 @@ import {
   loadPersistedSessionWorkspaceId,
   savePersistedSessionWorkspaceId,
 } from "./agentProjectStorage";
-import {
-  hydrateSessionDetailMessages,
-  mergeHydratedMessagesWithLocalState,
-  normalizeHistoryMessages,
-} from "./agentChatHistory";
+import { normalizeHistoryMessages } from "./agentChatHistory";
 import { getAgentSessionScopedKeys } from "./agentSessionScopedStorage";
 import {
   getExecutionStrategyStorageKey,
@@ -50,15 +42,25 @@ import {
 } from "./agentChatStorage";
 import { normalizeExecutionStrategy } from "./agentChatCoreUtils";
 import type { AgentRuntimeAdapter } from "./agentRuntimeAdapter";
+import { filterConversationThreadItems } from "../utils/threadTimelineView";
 import {
-  mergeThreadItems,
-  mergeThreadTurns,
-} from "../utils/threadTimelineView";
-import {
-  createExecutionRuntimeFromSessionDetail,
+  createSessionAccessModeFromExecutionRuntime,
   createSessionModelPreferenceFromExecutionRuntime,
 } from "../utils/sessionExecutionRuntime";
 import { normalizeProjectId } from "../utils/topicProjectResolution";
+import {
+  buildHydratedAgentSessionSnapshot,
+  createEmptyAgentSessionSnapshot,
+  hasSessionHydrationActivity,
+  resolveRestorableTopicSessionId,
+  type AgentSessionSnapshot,
+} from "./agentSessionState";
+import {
+  refreshAgentSessionDetailState,
+  refreshAgentSessionReadModelState,
+} from "./agentSessionRefresh";
+import type { AgentAccessMode } from "./agentChatStorage";
+import { normalizeLegacyThreadItems } from "@/lib/api/agentTextNormalization";
 
 interface UseAgentSessionOptions {
   runtime: AgentRuntimeAdapter;
@@ -66,6 +68,7 @@ interface UseAgentSessionOptions {
   disableSessionRestore: boolean;
   preserveRestoredMessages: boolean;
   executionStrategy: AsterExecutionStrategy;
+  accessMode: AgentAccessMode;
   providerTypeRef: MutableRefObject<string>;
   modelRef: MutableRefObject<string>;
   sessionIdRef: MutableRefObject<string | null>;
@@ -93,10 +96,13 @@ interface UseAgentSessionOptions {
     sessionId: string,
     executionStrategy: AsterExecutionStrategy,
   ) => void;
+  persistSessionAccessMode: (sessionId: string, accessMode: AgentAccessMode) => void;
+  loadSessionAccessMode: (sessionId: string) => AgentAccessMode | null;
   filterSessionsByWorkspace: <T extends { id: string }>(sessions: T[]) => T[];
   setExecutionStrategyState: (
     executionStrategy: AsterExecutionStrategy,
   ) => void;
+  setAccessModeState: (accessMode: AgentAccessMode) => void;
 }
 
 export function useAgentSession(options: UseAgentSessionOptions) {
@@ -106,6 +112,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     disableSessionRestore,
     preserveRestoredMessages,
     executionStrategy,
+    accessMode,
     providerTypeRef,
     modelRef,
     sessionIdRef,
@@ -117,8 +124,11 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     applySessionModelPreference,
     markSessionModelPreferenceSynced,
     markSessionExecutionStrategySynced,
+    persistSessionAccessMode,
+    loadSessionAccessMode,
     filterSessionsByWorkspace,
     setExecutionStrategyState,
+    setAccessModeState,
   } = options;
   const scopedKeys = useMemo(
     () => getAgentSessionScopedKeys(workspaceId),
@@ -150,7 +160,11 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   const [threadItems, setThreadItems] = useState<AgentThreadItem[]>(() =>
     disableSessionRestore || !workspaceId?.trim()
       ? []
-      : loadTransient<AgentThreadItem[]>(scopedKeys.itemsKey, []),
+      : filterConversationThreadItems(
+          normalizeLegacyThreadItems(
+            loadTransient<AgentThreadItem[]>(scopedKeys.itemsKey, []),
+          ),
+        ),
   );
   const [currentTurnId, setCurrentTurnId] = useState<string | null>(() =>
     disableSessionRestore || !workspaceId?.trim()
@@ -181,6 +195,8 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   const messagesRef = useRef<Message[]>(messages);
   const threadTurnsRef = useRef<AgentThreadTurn[]>(threadTurns);
   const threadItemsRef = useRef<AgentThreadItem[]>(threadItems);
+  const executionRuntimeRef =
+    useRef<AsterSessionExecutionRuntime | null>(executionRuntime);
   const restoreCandidateSessionIdRef = useRef<string | null>(
     loadScopedSessionRestoreCandidate(),
   );
@@ -199,6 +215,31 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       savePersisted(scopedKeys.persistedSessionKey, nextSessionId);
     },
     [scopedKeys],
+  );
+
+  const applySessionSnapshot = useCallback((snapshot: AgentSessionSnapshot) => {
+    setSessionId(snapshot.sessionId);
+    setMessages(snapshot.messages);
+    setThreadTurns(snapshot.threadTurns);
+    setThreadItems(snapshot.threadItems);
+    setCurrentTurnId(snapshot.currentTurnId);
+    setQueuedTurns(snapshot.queuedTurns);
+    setThreadRead(snapshot.threadRead);
+    setExecutionRuntime(snapshot.executionRuntime);
+    setTodoItems(snapshot.todoItems);
+    setChildSubagentSessions(snapshot.childSubagentSessions);
+    setSubagentParentContext(snapshot.subagentParentContext);
+  }, []);
+
+  const applyReadModelSnapshot = useCallback(
+    (snapshot: {
+      queuedTurns: QueuedTurnSnapshot[];
+      threadRead: AgentRuntimeThreadReadModel | null;
+    }) => {
+      setQueuedTurns(snapshot.queuedTurns);
+      setThreadRead(snapshot.threadRead);
+    },
+    [],
   );
 
   useEffect(() => {
@@ -286,6 +327,10 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   }, [threadItems]);
 
   useEffect(() => {
+    executionRuntimeRef.current = executionRuntime;
+  }, [executionRuntime]);
+
+  useEffect(() => {
     const resolvedWorkspaceId = workspaceId?.trim();
     if (
       !resolvedWorkspaceId ||
@@ -299,17 +344,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
   useEffect(() => {
     if (disableSessionRestore || !workspaceId?.trim()) {
       sessionStateWorkspaceRef.current = null;
-      setSessionId(null);
-      setMessages([]);
-      setThreadTurns([]);
-      setThreadItems([]);
-      setCurrentTurnId(null);
-      setQueuedTurns([]);
-      setThreadRead(null);
-      setExecutionRuntime(null);
-      setTodoItems([]);
-      setChildSubagentSessions([]);
-      setSubagentParentContext(null);
+      applySessionSnapshot(createEmptyAgentSessionSnapshot());
       resetPendingActions();
       resetStreamingRefs();
       restoredWorkspaceRef.current = null;
@@ -336,17 +371,15 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     );
 
     restoreCandidateSessionIdRef.current = scopedSessionCandidate;
-    setSessionId(null);
-    setMessages(scopedMessages);
-    setThreadTurns(scopedTurns);
-    setThreadItems(scopedItems);
-    setCurrentTurnId(scopedCurrentTurnId);
-    setQueuedTurns([]);
-    setThreadRead(null);
-    setExecutionRuntime(null);
-    setTodoItems([]);
-    setChildSubagentSessions([]);
-    setSubagentParentContext(null);
+    applySessionSnapshot({
+      ...createEmptyAgentSessionSnapshot(),
+      messages: scopedMessages,
+      threadTurns: scopedTurns,
+      threadItems: filterConversationThreadItems(
+        normalizeLegacyThreadItems(scopedItems),
+      ),
+      currentTurnId: scopedCurrentTurnId,
+    });
     resetPendingActions();
     resetStreamingRefs();
     restoredWorkspaceRef.current = null;
@@ -359,6 +392,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     resetStreamingRefs,
     scopedKeys,
     workspaceId,
+    applySessionSnapshot,
   ]);
 
   useEffect(() => {
@@ -517,6 +551,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           providerTypeRef.current,
           modelRef.current,
         );
+        persistSessionAccessMode(newSessionId, accessMode);
         markSessionExecutionStrategySynced(newSessionId, executionStrategy);
         void runtime
           .setSessionProviderSelection(
@@ -533,6 +568,11 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           })
           .catch((error) => {
             console.warn("[AsterChat] 新会话回写 provider/model 失败:", error);
+          });
+        void runtime
+          .setSessionAccessMode?.(newSessionId, accessMode)
+          .catch((error) => {
+            console.warn("[AsterChat] 新会话回写 accessMode 失败:", error);
           });
         persistSessionRestoreCandidate(newSessionId);
         saveTransient(scopedKeys.messagesKey, []);
@@ -564,11 +604,13 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       }
     },
     [
+      accessMode,
       executionStrategy,
       loadTopics,
       modelRef,
       markSessionExecutionStrategySynced,
       persistSessionModelPreference,
+      persistSessionAccessMode,
       markSessionModelPreferenceSynced,
       persistSessionRestoreCandidate,
       providerTypeRef,
@@ -586,16 +628,11 @@ export function useAgentSession(options: UseAgentSessionOptions) {
 
       const scopedMessagesKey = scopedKeys.messagesKey;
 
-      setMessages([]);
-      setThreadTurns([]);
-      setThreadItems([]);
-      setCurrentTurnId(null);
-      setQueuedTurns([]);
-      setThreadRead(null);
-      setTodoItems([]);
-      setChildSubagentSessions([]);
-      setSubagentParentContext(null);
-      setSessionId(null);
+      applySessionSnapshot(
+        createEmptyAgentSessionSnapshot({
+          executionRuntime: executionRuntimeRef.current,
+        }),
+      );
       resetPendingActions();
       restoredWorkspaceRef.current = null;
       hydratedSessionRef.current = null;
@@ -613,6 +650,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       }
     },
     [
+      applySessionSnapshot,
       persistSessionRestoreCandidate,
       resetPendingActions,
       resetStreamingRefs,
@@ -632,30 +670,6 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     );
   }, []);
 
-  const applyRuntimeReadModel = useCallback(
-    (
-      detail: Awaited<ReturnType<AgentRuntimeAdapter["getSession"]>>,
-      options?: { preserveExecutionRuntimeOnMissingDetail?: boolean },
-    ) => {
-      const nextExecutionRuntime = createExecutionRuntimeFromSessionDetail(detail);
-      setQueuedTurns(normalizeQueuedTurnSnapshots(detail.queued_turns));
-      setThreadRead(detail.thread_read ?? null);
-      setExecutionRuntime((current) => {
-        if (
-          options?.preserveExecutionRuntimeOnMissingDetail &&
-          !nextExecutionRuntime
-        ) {
-          return current;
-        }
-        return nextExecutionRuntime;
-      });
-      setTodoItems(detail.todo_items ?? []);
-      setChildSubagentSessions(detail.child_subagent_sessions ?? []);
-      setSubagentParentContext(detail.subagent_parent_context ?? null);
-    },
-    [],
-  );
-
   const applySessionDetail = useCallback(
     (
       topicId: string,
@@ -666,56 +680,27 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         preserveExecutionStrategyOnMissingDetail?: boolean;
       },
     ) => {
-      const hydratedMessages = hydrateSessionDetailMessages(detail, topicId);
-      const incomingTurns = detail.turns || [];
-      const incomingItems = detail.items || [];
-      const shouldPreserveExistingTimeline = sessionIdRef.current === topicId;
-      const nextMessages = shouldPreserveExistingTimeline
-        ? mergeHydratedMessagesWithLocalState(
-            messagesRef.current,
-            hydratedMessages,
-          )
-        : hydratedMessages;
-      const nextTurns = shouldPreserveExistingTimeline
-        ? mergeThreadTurns(threadTurnsRef.current, incomingTurns)
-        : incomingTurns;
-      const nextItems = shouldPreserveExistingTimeline
-        ? mergeThreadItems(threadItemsRef.current, incomingItems)
-        : incomingItems;
-      const shouldPreserveExecutionRuntimeOnMissingDetail =
-        shouldPreserveExistingTimeline && !options?.syncSessionId;
-
-      setMessages(nextMessages);
-      setThreadTurns(nextTurns);
-      setThreadItems(nextItems);
-      applyRuntimeReadModel(detail, {
-        preserveExecutionRuntimeOnMissingDetail:
-          shouldPreserveExecutionRuntimeOnMissingDetail,
-      });
-      setCurrentTurnId(
-        nextTurns.length > 0
-          ? nextTurns[nextTurns.length - 1]?.id || null
-          : null,
-      );
-
-      const selectedTopic = topics.find((topic) => topic.id === topicId);
-      const nextExecutionStrategy =
-        options?.executionStrategyOverride ||
-        detail.execution_strategy ||
-        selectedTopic?.executionStrategy ||
-        (options?.preserveExecutionStrategyOnMissingDetail
-          ? executionStrategy
-          : null);
-      setExecutionStrategyState(
-        normalizeExecutionStrategy(nextExecutionStrategy),
-      );
-
-      if (options?.syncSessionId) {
-        setSessionId(topicId);
-      }
+      const { executionStrategy: nextExecutionStrategy, snapshot } =
+        buildHydratedAgentSessionSnapshot({
+          topicId,
+          detail,
+          currentSessionId: sessionIdRef.current,
+          currentMessages: messagesRef.current,
+          currentThreadTurns: threadTurnsRef.current,
+          currentThreadItems: threadItemsRef.current,
+          currentExecutionRuntime: executionRuntimeRef.current,
+          currentExecutionStrategy: executionStrategy,
+          topics,
+          syncSessionId: options?.syncSessionId,
+          executionStrategyOverride: options?.executionStrategyOverride,
+          preserveExecutionStrategyOnMissingDetail:
+            options?.preserveExecutionStrategyOnMissingDetail,
+        });
+      applySessionSnapshot(snapshot);
+      setExecutionStrategyState(nextExecutionStrategy);
     },
     [
-      applyRuntimeReadModel,
+      applySessionSnapshot,
       executionStrategy,
       sessionIdRef,
       setExecutionStrategyState,
@@ -761,6 +746,9 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           createSessionModelPreferenceFromExecutionRuntime(
             detail.execution_runtime,
           );
+        const runtimeAccessMode = createSessionAccessModeFromExecutionRuntime(
+          detail.execution_runtime,
+        );
         const runtimeWorkspaceId = normalizeProjectId(detail.workspace_id);
         const selectedTopic = topics.find((topic) => topic.id === topicId);
         const shadowWorkspaceId = loadPersistedSessionWorkspaceId(topicId);
@@ -812,6 +800,23 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         if (runtimeExecutionStrategy) {
           markSessionExecutionStrategySynced(topicId, runtimeExecutionStrategy);
         }
+        if (runtimeAccessMode) {
+          setAccessModeState(runtimeAccessMode);
+          persistSessionAccessMode(topicId, runtimeAccessMode);
+        } else {
+          const shadowAccessMode = loadSessionAccessMode(topicId);
+          if (shadowAccessMode) {
+            setAccessModeState(shadowAccessMode);
+            void runtime
+              .setSessionAccessMode?.(topicId, shadowAccessMode)
+              .catch((error) => {
+                console.warn(
+                  "[AsterChat] 迁移会话 accessMode fallback 失败:",
+                  error,
+                );
+              });
+          }
+        }
         logAgentDebug("useAgentSession", "switchTopic.success", {
           durationMs: Date.now() - startedAt,
           executionStrategySource: runtimeExecutionStrategy
@@ -826,6 +831,11 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           modelPreferenceSource: runtimePreference
             ? "execution_runtime"
             : topicPreference
+              ? "session_storage"
+              : null,
+          accessModeSource: runtimeAccessMode
+            ? "execution_runtime"
+            : loadSessionAccessMode(topicId)
               ? "session_storage"
               : null,
           queuedTurnsCount: detail.queued_turns?.length ?? 0,
@@ -913,32 +923,12 @@ export function useAgentSession(options: UseAgentSessionOptions) {
           { level: "error" },
         );
         if (isAsterSessionNotFoundError(error)) {
-          setMessages([]);
-          setThreadTurns([]);
-          setThreadItems([]);
-          setCurrentTurnId(null);
-          setQueuedTurns([]);
-          setThreadRead(null);
-          setExecutionRuntime(null);
-          setTodoItems([]);
-          setChildSubagentSessions([]);
-          setSubagentParentContext(null);
-          setSessionId(null);
+          applySessionSnapshot(createEmptyAgentSessionSnapshot());
           persistSessionRestoreCandidate(null);
           void loadTopics();
           return;
         }
-        setMessages([]);
-        setThreadTurns([]);
-        setThreadItems([]);
-        setCurrentTurnId(null);
-        setQueuedTurns([]);
-        setThreadRead(null);
-        setExecutionRuntime(null);
-        setTodoItems([]);
-        setChildSubagentSessions([]);
-        setSubagentParentContext(null);
-        setSessionId(null);
+        applySessionSnapshot(createEmptyAgentSessionSnapshot());
         persistSessionRestoreCandidate(null);
         toast.error(
           `加载对话历史失败: ${error instanceof Error ? error.message : String(error)}`,
@@ -947,18 +937,22 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     },
     [
       applySessionDetail,
+      applySessionSnapshot,
       applySessionModelPreference,
       loadSessionModelPreference,
       loadTopics,
+      loadSessionAccessMode,
       markSessionModelPreferenceSynced,
       markSessionExecutionStrategySynced,
       messages.length,
       modelRef,
       persistSessionModelPreference,
       persistSessionRestoreCandidate,
+      persistSessionAccessMode,
       providerTypeRef,
       runtime,
       sessionIdRef,
+      setAccessModeState,
       topics,
       workspaceId,
     ],
@@ -971,17 +965,10 @@ export function useAgentSession(options: UseAgentSessionOptions) {
 
     const restoreCandidate = restoreCandidateSessionIdRef.current?.trim();
     if (!disableSessionRestore && restoreCandidate) {
-      const targetSessionId =
-        topics.length > 0
-          ? resolveRestorableSessionId({
-              candidateSessionId: restoreCandidate,
-              sessions: topics.map((topic) => ({
-                id: topic.id,
-                createdAt: Math.floor(topic.createdAt.getTime() / 1000),
-                updatedAt: Math.floor(topic.updatedAt.getTime() / 1000),
-              })),
-            })
-          : restoreCandidate;
+      const targetSessionId = resolveRestorableTopicSessionId(
+        restoreCandidate,
+        topics,
+      );
 
       if (targetSessionId) {
         await switchTopic(targetSessionId, { forceRefresh: true });
@@ -1002,30 +989,16 @@ export function useAgentSession(options: UseAgentSessionOptions) {
 
   const refreshSessionDetail = useCallback(
     async (targetSessionId?: string) => {
-      const resolvedSessionId = targetSessionId || sessionIdRef.current;
-      if (!resolvedSessionId?.trim()) {
-        return false;
-      }
-
-      try {
-        const detail = await runtime.getSession(resolvedSessionId);
-        if (sessionIdRef.current !== resolvedSessionId) {
-          return false;
-        }
-        applySessionDetail(resolvedSessionId, detail, {
-          preserveExecutionStrategyOnMissingDetail: true,
-        });
-        if (detail.execution_strategy) {
-          markSessionExecutionStrategySynced(
-            resolvedSessionId,
-            normalizeExecutionStrategy(detail.execution_strategy),
-          );
-        }
-        return true;
-      } catch (error) {
-        console.warn("[AsterChat] 刷新会话详情失败:", error);
-        return false;
-      }
+      return refreshAgentSessionDetailState({
+        runtime,
+        sessionIdRef,
+        targetSessionId,
+        applySessionDetail,
+        markSessionExecutionStrategySynced,
+        onWarn: (error) => {
+          console.warn("[AsterChat] 刷新会话详情失败:", error);
+        },
+      });
     },
     [
       applySessionDetail,
@@ -1037,25 +1010,17 @@ export function useAgentSession(options: UseAgentSessionOptions) {
 
   const refreshSessionReadModel = useCallback(
     async (targetSessionId?: string) => {
-      const resolvedSessionId = targetSessionId || sessionIdRef.current;
-      if (!resolvedSessionId?.trim()) {
-        return false;
-      }
-
-      try {
-        const threadRead = await runtime.getSessionReadModel(resolvedSessionId);
-        if (sessionIdRef.current !== resolvedSessionId) {
-          return false;
-        }
-        setQueuedTurns(normalizeQueuedTurnSnapshots(threadRead?.queued_turns));
-        setThreadRead(threadRead ?? null);
-        return true;
-      } catch (error) {
-        console.warn("[AsterChat] 刷新运行态摘要失败:", error);
-        return false;
-      }
+      return refreshAgentSessionReadModelState({
+        runtime,
+        sessionIdRef,
+        targetSessionId,
+        applyReadModelSnapshot,
+        onWarn: (error) => {
+          console.warn("[AsterChat] 刷新运行态摘要失败:", error);
+        },
+      });
     },
-    [runtime, sessionIdRef],
+    [applyReadModelSnapshot, runtime, sessionIdRef],
   );
 
   useEffect(() => {
@@ -1070,17 +1035,10 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     restoredWorkspaceRef.current = resolvedWorkspaceId;
 
     const scopedCandidate = restoreCandidateSessionIdRef.current;
-    const targetSessionId =
-      topics.length > 0
-        ? resolveRestorableSessionId({
-            candidateSessionId: scopedCandidate,
-            sessions: topics.map((topic) => ({
-              id: topic.id,
-              createdAt: Math.floor(topic.createdAt.getTime() / 1000),
-              updatedAt: Math.floor(topic.updatedAt.getTime() / 1000),
-            })),
-          })
-        : scopedCandidate;
+    const targetSessionId = resolveRestorableTopicSessionId(
+      scopedCandidate,
+      topics,
+    );
     if (!targetSessionId) {
       logAgentDebug(
         "useAgentSession",
@@ -1137,23 +1095,19 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     if (!topicsReady) return;
 
     if (topics.length > 0 && !topics.some((topic) => topic.id === sessionId)) {
-      const shouldVerifyMissingSession =
-        currentTurnId !== null ||
-        threadTurns.length > 0 ||
-        threadItems.length > 0 ||
-        queuedTurns.length > 0;
+      const shouldVerifyMissingSession = hasSessionHydrationActivity({
+        currentTurnId,
+        threadTurnsCount: threadTurns.length,
+        threadItemsCount: threadItems.length,
+        queuedTurnsCount: queuedTurns.length,
+      });
 
       if (!shouldVerifyMissingSession) {
-        setSessionId(null);
-        setMessages([]);
-        setThreadTurns([]);
-        setThreadItems([]);
-        setCurrentTurnId(null);
-        setQueuedTurns([]);
-        setThreadRead(null);
-        setTodoItems([]);
-        setChildSubagentSessions([]);
-        setSubagentParentContext(null);
+        applySessionSnapshot(
+          createEmptyAgentSessionSnapshot({
+            executionRuntime: executionRuntimeRef.current,
+          }),
+        );
         persistSessionRestoreCandidate(null);
         hydratedSessionRef.current = null;
         missingSessionVerificationRef.current = null;
@@ -1214,17 +1168,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
             return;
           }
 
-          setSessionId(null);
-          setMessages([]);
-          setThreadTurns([]);
-          setThreadItems([]);
-          setCurrentTurnId(null);
-          setQueuedTurns([]);
-          setThreadRead(null);
-          setExecutionRuntime(null);
-          setTodoItems([]);
-          setChildSubagentSessions([]);
-          setSubagentParentContext(null);
+          applySessionSnapshot(createEmptyAgentSessionSnapshot());
           persistSessionRestoreCandidate(null);
           hydratedSessionRef.current = null;
           restoredWorkspaceRef.current = null;
@@ -1292,6 +1236,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
     topics,
     topicsReady,
     workspaceId,
+    applySessionSnapshot,
   ]);
 
   useEffect(() => {
@@ -1343,17 +1288,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
         await loadTopics();
 
         if (topicId === sessionIdRef.current) {
-          setSessionId(null);
-          setMessages([]);
-          setThreadTurns([]);
-          setThreadItems([]);
-          setCurrentTurnId(null);
-          setQueuedTurns([]);
-          setThreadRead(null);
-          setExecutionRuntime(null);
-          setTodoItems([]);
-          setChildSubagentSessions([]);
-          setSubagentParentContext(null);
+          applySessionSnapshot(createEmptyAgentSessionSnapshot());
           resetPendingActions();
           resetStreamingRefs();
           hydratedSessionRef.current = null;
@@ -1378,6 +1313,7 @@ export function useAgentSession(options: UseAgentSessionOptions) {
       runtime,
       scopedKeys,
       sessionIdRef,
+      applySessionSnapshot,
     ],
   );
 

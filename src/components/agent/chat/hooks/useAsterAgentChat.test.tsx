@@ -87,6 +87,8 @@ vi.mock("@/lib/api/agentProtocol", async () => {
 
 vi.mock("@/lib/dev-bridge", () => ({
   safeListen: mockSafeListen,
+  hasDevBridgeEventListenerCapability: vi.fn(() => false),
+  isDevBridgeAvailable: vi.fn(() => false),
 }));
 
 vi.mock("sonner", () => ({
@@ -1705,6 +1707,9 @@ describe("useAsterAgentChat thread timeline", () => {
   });
 
   it("submitTurn 失败时应保留失败回合与失败消息，而不是清空当前过程", async () => {
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
     const workspaceId = "ws-thread-submit-failed";
     seedSession(workspaceId, "session-thread-submit-failed");
     mockSubmitAgentRuntimeTurn.mockRejectedValueOnce(
@@ -1746,6 +1751,7 @@ describe("useAsterAgentChat thread timeline", () => {
         "请求过于频繁，请稍后重试",
       );
     } finally {
+      consoleErrorSpy.mockRestore();
       harness.unmount();
     }
   });
@@ -2125,6 +2131,20 @@ describe("useAsterAgentChat runtime routing", () => {
             checkpoints: ["thinking 已开启", "搜索与工具保持候选状态"],
           },
         });
+      });
+
+      expect(
+        harness
+          .getValue()
+          .threadItems.some(
+            (item) =>
+              item.type === "turn_summary" &&
+              typeof item.text === "string" &&
+              item.text.includes("先深度思考"),
+          ),
+      ).toBe(true);
+
+      act(() => {
         stream.emit({
           type: "thinking_delta",
           text: "先判断任务是直接回答还是需要联网。",
@@ -2141,7 +2161,7 @@ describe("useAsterAgentChat runtime routing", () => {
 
       expect(assistantMessage?.runtimeStatus).toMatchObject({
         phase: "routing",
-        title: "已决定：先深度思考",
+        title: "先深度思考",
       });
       expect(
         assistantMessage?.contentParts?.some(
@@ -2258,6 +2278,7 @@ describe("useAsterAgentChat runtime routing", () => {
             id: "turn-summary-real-1",
             type: "turn_summary",
             status: "completed",
+            text: "直接回答优先",
           }),
           expect.objectContaining({
             id: "reasoning-real-1",
@@ -2494,7 +2515,7 @@ describe("useAsterAgentChat slash skill 执行链路", () => {
       );
       expect(mockSubmitAgentRuntimeTurn).not.toHaveBeenCalled();
       expect(harness.getValue().sessionId).toBe("session-slash-new");
-      expect(mockToast.success).toHaveBeenCalledWith(
+      expect(mockToast.success).not.toHaveBeenCalledWith(
         "已创建新任务：重构输入命令",
       );
     } finally {
@@ -2845,6 +2866,125 @@ describe("useAsterAgentChat action_required 渲染链路", () => {
           (option) => option.label,
         ),
       ).toEqual(["自动执行（Auto）", "确认后执行（Ask）"]);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("ask_user 多问题时应在进入聊天状态前裁剪为单轮单问", async () => {
+    const workspaceId = "ws-action-required-governed-ask";
+    seedSession(workspaceId, "session-action-required-governed-ask");
+    const harness = mountHook(workspaceId);
+    const stream = captureTurnStream();
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        stream.emit({
+          type: "action_required",
+          request_id: "req-ar-governed-ask-1",
+          action_type: "ask_user",
+          prompt: "继续前先确认几个点",
+          questions: [
+            {
+              question: "你希望我先聚焦哪一部分？",
+            },
+            {
+              question: "这一步更看重速度还是完整度？",
+            },
+          ],
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(assistantMessage?.actionRequests?.[0]).toMatchObject({
+        requestId: "req-ar-governed-ask-1",
+        governance: {
+          originalQuestionCount: 2,
+          deferredQuestionCount: 1,
+        },
+      });
+      expect(assistantMessage?.actionRequests?.[0]?.questions).toEqual([
+        {
+          question: "你希望我先聚焦哪一部分？",
+          multiSelect: false,
+        },
+      ]);
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("elicitation 多字段时应在进入聊天状态前裁剪为单轮单字段", async () => {
+    const workspaceId = "ws-action-required-governed-elicitation";
+    seedSession(workspaceId, "session-action-required-governed-elicitation");
+    const harness = mountHook(workspaceId);
+    const stream = captureTurnStream();
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("请继续", [], false, false, false, "react");
+      });
+
+      act(() => {
+        stream.emit({
+          type: "action_required",
+          request_id: "req-ar-governed-elicitation-1",
+          action_type: "elicitation",
+          prompt: "补充创作约束",
+          requested_schema: {
+            type: "object",
+            required: ["topic", "style"],
+            properties: {
+              topic: {
+                type: "string",
+                title: "主题",
+              },
+              style: {
+                type: "string",
+                title: "风格",
+              },
+            },
+          },
+        });
+      });
+
+      const assistantMessage = [...harness.getValue().messages]
+        .reverse()
+        .find((msg) => msg.role === "assistant");
+
+      expect(assistantMessage?.actionRequests?.[0]).toMatchObject({
+        requestId: "req-ar-governed-elicitation-1",
+        governance: {
+          originalFieldCount: 2,
+          retainedFieldKey: "topic",
+          deferredFieldCount: 1,
+        },
+        requestedSchema: {
+          type: "object",
+          required: ["topic"],
+          properties: {
+            topic: {
+              type: "string",
+              title: "主题",
+            },
+          },
+        },
+      });
     } finally {
       harness.unmount();
     }
@@ -4145,6 +4285,7 @@ describe("useAsterAgentChat 偏好持久化", () => {
   });
 
   it("会话已绑定其他工作区时不应覆盖 agent_session_workspace 映射", async () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const workspaceId = "ws-current";
     const sessionId = "session-conflict";
     seedSession(workspaceId, sessionId);
@@ -4164,6 +4305,7 @@ describe("useAsterAgentChat 偏好持久化", () => {
         ),
       ).toBe("ws-legacy");
     } finally {
+      consoleWarnSpy.mockRestore();
       harness.unmount();
     }
   });
@@ -4202,6 +4344,7 @@ describe("useAsterAgentChat 偏好持久化", () => {
   });
 
   it("恢复候选会话时应先由 runtime 确认工作区归属", async () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const workspaceId = "ws-restore-runtime-guard";
     const sessionId = "session-restore-runtime-guard";
     seedSession(workspaceId, sessionId);
@@ -4229,6 +4372,7 @@ describe("useAsterAgentChat 偏好持久化", () => {
         "null",
       );
     } finally {
+      consoleWarnSpy.mockRestore();
       harness.unmount();
     }
   });
@@ -4611,6 +4755,39 @@ describe("useAsterAgentChat 偏好持久化", () => {
       expect(mockUpdateAgentRuntimeSession).toHaveBeenCalledWith({
         session_id: topicId,
         execution_strategy: "auto",
+      });
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("切换话题时 recent_access_mode 缺失应回退本地 session access shadow 并回写 session", async () => {
+    const workspaceId = "ws-topic-access-fallback";
+    const topicId = "topic-access-fallback";
+    localStorage.setItem(
+      `aster_session_access_mode_${workspaceId}_${topicId}`,
+      JSON.stringify("full-access"),
+    );
+    mockGetAgentRuntimeSession.mockResolvedValue({
+      id: topicId,
+      messages: [],
+      execution_strategy: "react",
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+
+      await act(async () => {
+        await harness.getValue().switchTopic(topicId);
+      });
+      await flushEffects();
+
+      expect(harness.getValue().accessMode).toBe("full-access");
+      expect(mockUpdateAgentRuntimeSession).toHaveBeenCalledWith({
+        session_id: topicId,
+        recent_access_mode: "full-access",
       });
     } finally {
       harness.unmount();
@@ -6817,6 +6994,55 @@ describe("useAsterAgentChat 兼容接口", () => {
       ).toBe("auto");
     } finally {
       (resolveStrategySync as (() => void) | null)?.();
+      harness.unmount();
+    }
+  });
+
+  it("已有 recent_access_mode 时发送消息应沿用恢复后的正式权限策略", async () => {
+    const workspaceId = "ws-runtime-access-restore";
+    const topicId = "topic-runtime-access-restore";
+    mockGetAgentRuntimeSession.mockResolvedValue({
+      id: topicId,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      execution_strategy: "react",
+      execution_runtime: {
+        session_id: topicId,
+        execution_strategy: "react",
+        recent_access_mode: "read-only",
+        source: "session",
+      },
+      messages: [],
+      turns: [],
+      items: [],
+    });
+
+    const harness = mountHook(workspaceId);
+
+    try {
+      await flushEffects();
+      await act(async () => {
+        await harness.getValue().switchTopic(topicId);
+      });
+      expect(harness.getValue().accessMode).toBe("read-only");
+      mockSubmitAgentRuntimeTurn.mockClear();
+
+      await act(async () => {
+        await harness
+          .getValue()
+          .sendMessage("沿用只读权限继续分析", [], false, false, false, "react");
+      });
+
+      expect(mockSubmitAgentRuntimeTurn).toHaveBeenCalledTimes(1);
+      expect(
+        mockSubmitAgentRuntimeTurn.mock.calls[0]?.[0]?.turn_config
+          ?.approval_policy,
+      ).toBe("on-request");
+      expect(
+        mockSubmitAgentRuntimeTurn.mock.calls[0]?.[0]?.turn_config
+          ?.sandbox_policy,
+      ).toBe("read-only");
+    } finally {
       harness.unmount();
     }
   });

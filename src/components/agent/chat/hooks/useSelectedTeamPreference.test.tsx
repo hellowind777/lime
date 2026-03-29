@@ -215,6 +215,7 @@ describe("useSelectedTeamPreference", () => {
   });
 
   it("项目级持久化失败时应回滚到当前项目 Team", async () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const engineeringTeam = createTeamDefinitionFromPreset(
       "code-triage-team",
     ) as TeamDefinition;
@@ -247,6 +248,7 @@ describe("useSelectedTeamPreference", () => {
       expect(persistSpy).toHaveBeenCalledWith(researchTeam);
       expect(harness.getValue().selectedTeam?.id).toBe("code-triage-team");
     } finally {
+      consoleWarnSpy.mockRestore();
       harness.unmount();
     }
   });

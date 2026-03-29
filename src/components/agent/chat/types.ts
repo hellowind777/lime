@@ -51,12 +51,35 @@ export interface SiteSavedContentTarget {
   title?: string;
 }
 
+export type PendingA2UISource =
+  | {
+      kind: "assistant_message" | "legacy_message";
+      messageId: string;
+    }
+  | {
+      kind: "action_request";
+      requestId: string;
+    };
+
 // ============ 权限确认相关类型 ============
 
 export interface ActionRequiredScope {
   sessionId?: string;
   threadId?: string;
   turnId?: string;
+}
+
+export interface ActionRequestGovernanceMeta {
+  strategy: "single_turn_single_question";
+  source: "runtime_action_required" | "legacy_questionnaire";
+  originalQuestionCount?: number;
+  originalFieldCount?: number;
+  originalSectionCount?: number;
+  retainedQuestionIndex?: number;
+  retainedFieldKey?: string;
+  retainedSectionIndex?: number;
+  deferredQuestionCount?: number;
+  deferredFieldCount?: number;
 }
 
 /** 权限确认请求类型 */
@@ -95,6 +118,8 @@ export interface ActionRequired {
   allowCapabilityFallback?: boolean;
   /** 浏览器引导失败或附加说明 */
   detail?: string;
+  /** 单轮澄清治理元数据 */
+  governance?: ActionRequestGovernanceMeta;
 }
 
 /** 问题定义（用于 ask_user 类型） */

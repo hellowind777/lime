@@ -12,6 +12,7 @@ import {
 const HARNESS_PANEL_VISIBILITY_KEY = "lime.chat.harness-panel.visible.v1";
 
 interface UseWorkspaceContextHarnessRuntimeParams {
+  enabled: boolean;
   projectId?: string;
   activeTheme: string;
   messages: Message[];
@@ -31,6 +32,7 @@ interface UseWorkspaceContextHarnessRuntimeParams {
 }
 
 export function useWorkspaceContextHarnessRuntime({
+  enabled,
   projectId,
   activeTheme,
   messages,
@@ -44,8 +46,14 @@ export function useWorkspaceContextHarnessRuntime({
   compatSubagentRuntime,
 }: UseWorkspaceContextHarnessRuntimeParams) {
   const [harnessPanelVisible, setHarnessPanelVisible] = useState(() =>
-    loadPersistedBoolean(HARNESS_PANEL_VISIBILITY_KEY, false),
+    enabled ? loadPersistedBoolean(HARNESS_PANEL_VISIBILITY_KEY, false) : false,
   );
+
+  useEffect(() => {
+    if (!enabled && harnessPanelVisible) {
+      setHarnessPanelVisible(false);
+    }
+  }, [enabled, harnessPanelVisible]);
 
   useEffect(() => {
     savePersistedBoolean(HARNESS_PANEL_VISIBILITY_KEY, harnessPanelVisible);
@@ -58,20 +66,24 @@ export function useWorkspaceContextHarnessRuntime({
     providerType,
     model,
   });
+  const workbenchEnabled = enabled;
   const isThemeWorkbench = contextWorkspace.enabled;
   const harnessSkillNames = useMemo(
-    () => collectConversationSkillNames(messages),
-    [messages],
+    () => (workbenchEnabled ? collectConversationSkillNames(messages) : []),
+    [messages, workbenchEnabled],
   );
-  const harnessPendingCount = harnessState.pendingApprovals.length;
+  const harnessPendingCount = workbenchEnabled
+    ? harnessState.pendingApprovals.length
+    : 0;
   const shouldAlwaysShowHarnessToggle =
-    contextWorkspace.enabled && mappedTheme === "social-media";
+    workbenchEnabled && contextWorkspace.enabled && mappedTheme === "social-media";
   const shouldAlwaysShowGeneralWorkbenchToggle =
-    chatMode === "general" && !contextWorkspace.enabled;
+    workbenchEnabled && chatMode === "general" && !contextWorkspace.enabled;
   const hasHarnessActivity =
-    harnessPanelVisible ||
-    harnessState.hasSignals ||
-    compatSubagentRuntime.isRunning;
+    workbenchEnabled &&
+    (harnessPanelVisible ||
+      harnessState.hasSignals ||
+      compatSubagentRuntime.isRunning);
   const showHarnessToggle =
     shouldAlwaysShowHarnessToggle ||
     shouldAlwaysShowGeneralWorkbenchToggle ||
@@ -82,35 +94,50 @@ export function useWorkspaceContextHarnessRuntime({
       : hasHarnessActivity
         ? "active"
         : "idle";
-  const navbarHarnessPanelVisible = harnessPanelVisible;
+  const navbarHarnessPanelVisible = workbenchEnabled && harnessPanelVisible;
   const visibleContextItems = useMemo(() => {
+    if (!workbenchEnabled) {
+      return [];
+    }
+
     const activeItems = contextWorkspace.sidebarContextItems.filter(
       (item) => item.active,
     );
     return activeItems.length > 0
       ? activeItems
       : contextWorkspace.sidebarContextItems;
-  }, [contextWorkspace.sidebarContextItems]);
+  }, [contextWorkspace.sidebarContextItems, workbenchEnabled]);
   const harnessEnvironment = useMemo(
-    () => ({
-      skillsCount: harnessSkillNames.length,
-      skillNames: harnessSkillNames.slice(0, 4),
-      memorySignals: [
-        projectMemory?.characters.length ? "角色" : null,
-        projectMemory?.world_building ? "世界观" : null,
-        projectMemory?.style_guide ? "风格" : null,
-        projectMemory?.outline.length ? "大纲" : null,
-      ].filter((item): item is string => item !== null),
-      contextItemsCount: contextWorkspace.sidebarContextItems.length,
-      activeContextCount: contextWorkspace.sidebarContextItems.filter(
-        (item) => item.active,
-      ).length,
-      contextItemNames: visibleContextItems
-        .map((item) => item.name)
-        .filter((name) => !!name.trim())
-        .slice(0, 4),
-      contextEnabled: contextWorkspace.enabled,
-    }),
+    () =>
+      workbenchEnabled
+        ? {
+            skillsCount: harnessSkillNames.length,
+            skillNames: harnessSkillNames.slice(0, 4),
+            memorySignals: [
+              projectMemory?.characters.length ? "角色" : null,
+              projectMemory?.world_building ? "世界观" : null,
+              projectMemory?.style_guide ? "风格" : null,
+              projectMemory?.outline.length ? "大纲" : null,
+            ].filter((item): item is string => item !== null),
+            contextItemsCount: contextWorkspace.sidebarContextItems.length,
+            activeContextCount: contextWorkspace.sidebarContextItems.filter(
+              (item) => item.active,
+            ).length,
+            contextItemNames: visibleContextItems
+              .map((item) => item.name)
+              .filter((name) => !!name.trim())
+              .slice(0, 4),
+            contextEnabled: contextWorkspace.enabled,
+          }
+        : {
+            skillsCount: 0,
+            skillNames: [],
+            memorySignals: [],
+            contextItemsCount: 0,
+            activeContextCount: 0,
+            contextItemNames: [],
+            contextEnabled: false,
+          },
     [
       contextWorkspace.enabled,
       contextWorkspace.sidebarContextItems,
@@ -120,13 +147,17 @@ export function useWorkspaceContextHarnessRuntime({
       projectMemory?.style_guide,
       projectMemory?.world_building,
       visibleContextItems,
+      workbenchEnabled,
     ],
   );
   const handleToggleHarnessPanel = useCallback(() => {
+    if (!workbenchEnabled) {
+      return;
+    }
     setHarnessPanelVisible((current) => !current);
-  }, []);
+  }, [workbenchEnabled]);
   const activeRuntimeStatusTitle = useMemo(() => {
-    if (!isSending) {
+    if (!workbenchEnabled || !isSending) {
       return null;
     }
 
@@ -138,10 +169,11 @@ export function useWorkspaceContextHarnessRuntime({
     }
 
     return "正在准备处理";
-  }, [isSending, messages]);
+  }, [isSending, messages, workbenchEnabled]);
 
   return {
     contextWorkspace,
+    workbenchEnabled,
     isThemeWorkbench,
     harnessPanelVisible,
     setHarnessPanelVisible,

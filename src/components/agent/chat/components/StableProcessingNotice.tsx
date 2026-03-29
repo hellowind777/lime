@@ -3,30 +3,21 @@ import { ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   getStableProcessingDescription,
-  shouldShowStableProcessingNotice,
   STABLE_PROCESSING_LABEL,
   type StableProcessingScope,
 } from "../utils/stableProcessingExperience";
 
 interface StableProcessingNoticeProps {
-  providerType?: string | null;
-  model?: string | null;
   scope?: StableProcessingScope;
   className?: string;
   testId?: string;
 }
 
 export const StableProcessingNotice: React.FC<StableProcessingNoticeProps> = ({
-  providerType,
-  model,
   scope = "request",
   className,
   testId = "stable-processing-notice",
 }) => {
-  if (!shouldShowStableProcessingNotice({ providerType, model })) {
-    return null;
-  }
-
   return (
     <div
       data-testid={testId}

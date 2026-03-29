@@ -36,6 +36,7 @@ pub mod runtime_evidence_pack_service;
 pub mod runtime_handoff_artifact_service;
 pub mod runtime_replay_case_service;
 pub mod runtime_review_decision_service;
+pub mod site_adapter_import_service;
 pub mod site_adapter_registry;
 pub mod site_capability_service;
 pub mod sysinfo_service;

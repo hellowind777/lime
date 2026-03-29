@@ -602,6 +602,8 @@ impl Tool for LimeSiteTool {
                         .as_ref()
                         .and_then(|target| target.project_id.clone()),
                     save_title,
+                    require_attached_session: None,
+                    skill_title: None,
                 };
 
                 let result = Self::apply_save_target_to_run_result(
@@ -715,6 +717,8 @@ mod tests {
             content_id: None,
             project_id: None,
             save_title: None,
+            require_attached_session: None,
+            skill_title: None,
         };
         let result = SiteAdapterRunResult {
             ok: true,
@@ -785,6 +789,8 @@ mod tests {
             content_id: None,
             project_id: None,
             save_title: None,
+            require_attached_session: None,
+            skill_title: None,
         };
         let result = SiteAdapterRunResult {
             ok: true,

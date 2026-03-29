@@ -8,11 +8,23 @@ vi.mock("react-syntax-highlighter", () => ({
   Prism: ({
     children,
     className,
+    customStyle,
+    codeTagProps,
   }: {
     children: React.ReactNode;
     className?: string;
+    customStyle?: React.CSSProperties;
+    codeTagProps?: {
+      style?: React.CSSProperties;
+    };
   }) => (
-    <pre data-testid="syntax-highlighter" className={className}>
+    <pre
+      data-testid="syntax-highlighter"
+      className={className}
+      data-font-family={customStyle?.fontFamily}
+      data-text-shadow={customStyle?.textShadow}
+      data-font-ligatures={String(codeTagProps?.style?.fontVariantLigatures)}
+    >
       {children}
     </pre>
   ),
@@ -42,6 +54,8 @@ interface RenderOptions {
   isStreaming?: boolean;
   collapseCodeBlocks?: boolean;
   shouldCollapseCodeBlock?: (language: string, code: string) => boolean;
+  showBlockActions?: boolean;
+  onQuoteContent?: (content: string) => void;
 }
 
 const mountedRoots: MountedHarness[] = [];
@@ -73,6 +87,8 @@ function render(
     isStreaming = false,
     collapseCodeBlocks = false,
     shouldCollapseCodeBlock,
+    showBlockActions = false,
+    onQuoteContent,
   }: RenderOptions = {},
 ): HTMLDivElement {
   const container = document.createElement("div");
@@ -86,6 +102,8 @@ function render(
         isStreaming={isStreaming}
         collapseCodeBlocks={collapseCodeBlocks}
         shouldCollapseCodeBlock={shouldCollapseCodeBlock}
+        showBlockActions={showBlockActions}
+        onQuoteContent={onQuoteContent}
       />,
     );
   });
@@ -100,6 +118,8 @@ function renderHarness(
     isStreaming = false,
     collapseCodeBlocks = false,
     shouldCollapseCodeBlock,
+    showBlockActions = false,
+    onQuoteContent,
   }: RenderOptions = {},
 ) {
   const container = document.createElement("div");
@@ -113,6 +133,8 @@ function renderHarness(
       collapseCodeBlocks: nextCollapseCodeBlocks = collapseCodeBlocks,
       shouldCollapseCodeBlock: nextShouldCollapseCodeBlock =
         shouldCollapseCodeBlock,
+      showBlockActions: nextShowBlockActions = showBlockActions,
+      onQuoteContent: nextOnQuoteContent = onQuoteContent,
     }: RenderOptions = {},
   ) => {
     act(() => {
@@ -122,6 +144,8 @@ function renderHarness(
           isStreaming={nextIsStreaming}
           collapseCodeBlocks={nextCollapseCodeBlocks}
           shouldCollapseCodeBlock={nextShouldCollapseCodeBlock}
+          showBlockActions={nextShowBlockActions}
+          onQuoteContent={nextOnQuoteContent}
         />,
       );
     });
@@ -131,6 +155,8 @@ function renderHarness(
     isStreaming,
     collapseCodeBlocks,
     shouldCollapseCodeBlock,
+    showBlockActions,
+    onQuoteContent,
   });
 
   mountedRoots.push({ container, root });
@@ -138,6 +164,98 @@ function renderHarness(
 }
 
 describe("MarkdownRenderer", () => {
+  it("代码块复制按钮应使用中文文案并反馈复制状态", async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText,
+      },
+    });
+
+    const content = ["```bash", "echo hello", "```"].join("\n");
+    const container = render(content);
+    const button = container.querySelector("button");
+
+    expect(button).not.toBeNull();
+    expect(button?.textContent).toContain("复制");
+
+    await act(async () => {
+      button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("echo hello");
+    expect(container.querySelector("button")?.textContent).toContain("已复制");
+
+    act(() => {
+      vi.advanceTimersByTime(1200);
+    });
+
+    expect(container.querySelector("button")?.textContent).toContain("复制");
+  });
+
+  it("输出内容区块应支持复制与引用按钮", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const onQuoteContent = vi.fn();
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText,
+      },
+    });
+
+    const container = render("第一段输出\n\n第二段输出", {
+      showBlockActions: true,
+      onQuoteContent,
+    });
+
+    const quoteButton = container.querySelector(
+      'button[aria-label="引用内容区块"]',
+    );
+    const copyButton = container.querySelector(
+      'button[aria-label="复制内容区块"]',
+    );
+
+    expect(quoteButton).not.toBeNull();
+    expect(copyButton).not.toBeNull();
+
+    await act(async () => {
+      quoteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onQuoteContent).toHaveBeenCalledWith("第一段输出\n\n第二段输出");
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(writeText).toHaveBeenCalledWith("第一段输出\n\n第二段输出");
+  });
+
+  it("base64 图片说明文案应保持精简中文", () => {
+    const content = "![示例图](data:image/png;base64,ZmFrZQ==)";
+
+    const container = render(content);
+
+    expect(container.textContent).toContain("图片 · 点击查看大图");
+  });
+
+  it("Markdown 表格应包裹在横向滚动容器中，避免窄列压缩", () => {
+    const content = [
+      "| 模块 | 输入 | 输出 | 备注 |",
+      "| --- | --- | --- | --- |",
+      "| Browser Runtime | 页面信息 | 结构化摘要 | 主链 |",
+    ].join("\n");
+
+    const container = render(content);
+    const tableScroll = container.querySelector(
+      '[data-testid="markdown-table-scroll"]',
+    );
+
+    expect(tableScroll).not.toBeNull();
+    expect(tableScroll?.querySelector("table")).not.toBeNull();
+    expect(container.textContent).toContain("Browser Runtime");
+  });
+
   it("非流式时应保留 raw html 渲染能力", () => {
     const content = [
       "前置文本",
@@ -187,6 +305,35 @@ describe("MarkdownRenderer", () => {
     expect(container.querySelector(".rendered-html")).not.toBeNull();
   });
 
+  it("持续流式输出时应周期性刷新正文，而不是等到停止后才一起出现", () => {
+    vi.useFakeTimers();
+    const { container, rerender } = renderHarness("第一行", {
+      isStreaming: true,
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+    rerender("第一行\n第二行", { isStreaming: true });
+
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+    rerender("第一行\n第二行\n第三行", { isStreaming: true });
+
+    act(() => {
+      vi.advanceTimersByTime(10);
+    });
+    rerender("第一行\n第二行\n第三行\n第四行", { isStreaming: true });
+
+    act(() => {
+      vi.advanceTimersByTime(8);
+    });
+
+    expect(container.textContent).toContain("第三行");
+    expect(container.textContent).not.toBe("第一行");
+  });
+
   it("逐块判定返回 false 时应保持对话内联代码渲染", () => {
     const shouldCollapseCodeBlock = vi.fn(() => false);
     const content = ["```ts", "const answer = 42;", "```"].join("\n");
@@ -207,6 +354,74 @@ describe("MarkdownRenderer", () => {
       container.querySelector('[data-testid="syntax-highlighter"]'),
     ).not.toBeNull();
     expect(container.textContent).toContain("const answer = 42;");
+  });
+
+  it("代码块高亮应关闭 textShadow 与字体连字，避免中英混排发虚", () => {
+    const content = [
+      "```typescript",
+      "const answer = 42;",
+      "```",
+    ].join("\n");
+
+    const container = render(content);
+    const syntaxHighlighter = container.querySelector(
+      '[data-testid="syntax-highlighter"]',
+    );
+
+    expect(syntaxHighlighter?.getAttribute("data-text-shadow")).toBe("none");
+    expect(syntaxHighlighter?.getAttribute("data-font-ligatures")).toBe("none");
+    expect(syntaxHighlighter?.getAttribute("data-font-family")).toContain(
+      "ui-monospace",
+    );
+  });
+
+  it("文本流程代码块应渲染为流程视图而不是语法高亮", () => {
+    const content = [
+      "```text",
+      '用户操作 -> 点击"添加凭证"',
+      "↓",
+      "选择提供商 -> 下拉选择 (OpenAI/Claude/Gemini/Kiro)",
+      "↓",
+      "填写信息 -> API Key、Secret、Endpoint（可选）",
+      "```",
+    ].join("\n");
+
+    const container = render(content);
+
+    expect(
+      container.querySelector('[data-testid="markdown-flow-code-block"]'),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('[data-testid="syntax-highlighter"]'),
+    ).toBeNull();
+  });
+
+  it("伪代码目录块即使标注为 typescript 也应降级为纯文本视图", () => {
+    const content = [
+      "```typescript",
+      "- AppLayout (应用主布局: Sidebar + Header + Content)",
+      "- Sidebar (侧边导航栏)",
+      "- Header (顶部导航栏)",
+      "- PageHeader (页面标题与操作区)",
+      "- ContentContainer (内容容器)",
+      "- EmptyState (空状态占位)",
+      "```",
+    ].join("\n");
+
+    const container = render(content);
+    const plainBlock = container.querySelector(
+      '[data-testid="markdown-plain-code-block"]',
+    );
+
+    expect(plainBlock).not.toBeNull();
+    expect(
+      plainBlock?.querySelector('[data-testid="markdown-plain-code-content"]'),
+    ).not.toBeNull();
+    expect(plainBlock?.querySelector("pre")).toBeNull();
+    expect(
+      container.querySelector('[data-testid="syntax-highlighter"]'),
+    ).toBeNull();
+    expect(container.textContent).toContain("AppLayout");
   });
 
   it("逐块判定返回 true 时才应渲染 artifact 占位卡", () => {

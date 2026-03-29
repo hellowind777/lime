@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
+import { siteGetAdapterLaunchReadiness } from "@/lib/webview-api";
 import { createAutomationJob } from "@/lib/api/automation";
 import {
   createServiceSkillRun,
@@ -36,7 +37,7 @@ import { buildServiceSkillWorkspaceSeed } from "../service-skills/workspaceLaunc
 import {
   buildServiceSkillSiteCapabilityArgs,
   buildServiceSkillSiteCapabilitySaveTitle,
-  isServiceSkillSiteCapabilityBound,
+  isServiceSkillExecutableAsSiteAdapter,
 } from "../service-skills/siteCapabilityBinding";
 import type {
   ServiceSkillHomeItem,
@@ -242,15 +243,15 @@ export function useWorkspaceServiceSkillEntryActions({
 
       if (!resolved.ok) {
         if (resolved.reason === "missing_project") {
-          toast.error("缺少项目工作区，请先选择项目后再启动服务技能。");
+          toast.error("缺少项目工作区，请先选择项目后再启动技能。");
           return false;
         }
-        toast.error("服务技能缺少可执行内容，请先补齐参数后重试。");
+        toast.error("技能缺少可执行内容，请先补齐参数后重试。");
         return false;
       }
 
       if (!onNavigate) {
-        toast.error("当前入口暂不支持切换服务技能工作区，请从桌面主界面重试。");
+        toast.error("当前入口暂不支持切换技能工作区，请从桌面主界面重试。");
         return false;
       }
 
@@ -367,6 +368,78 @@ export function useWorkspaceServiceSkillEntryActions({
     [activeTheme, createServiceSkillSeededContent, currentContentId, currentProjectId],
   );
 
+  const prepareServiceSkillSiteWorkspacePayload = useCallback(
+    async (
+      skill: ServiceSkillHomeItem,
+      slotValues: ServiceSkillSlotValues,
+      launchReadiness: Awaited<ReturnType<typeof siteGetAdapterLaunchReadiness>>,
+    ): Promise<HomeShellEnterWorkspacePayload> => {
+      if (!isServiceSkillExecutableAsSiteAdapter(skill)) {
+        throw new Error("当前技能未绑定站点执行能力");
+      }
+
+      if (
+        skill.readinessRequirements?.requiresProject &&
+        !currentProjectId
+      ) {
+        throw new Error("缺少项目工作区，请先选择项目后再启动站点技能。");
+      }
+
+      const binding = skill.siteCapabilityBinding;
+      const saveMode = binding.saveMode ?? "project_resource";
+      const initialArgs = buildServiceSkillSiteCapabilityArgs(
+        skill,
+        slotValues,
+      );
+      const initialSaveTitle = buildServiceSkillSiteCapabilitySaveTitle(
+        skill,
+        slotValues,
+      );
+      let nextContentId = currentContentId || undefined;
+
+      if (
+        saveMode === "current_content" &&
+        !nextContentId &&
+        currentProjectId
+      ) {
+        const created = await createServiceSkillSeededContent(
+          skill,
+          currentProjectId,
+        );
+        nextContentId = created?.id ?? undefined;
+      }
+
+      const seed = buildServiceSkillWorkspaceSeed(
+        skill,
+        skill.themeTarget ?? activeTheme,
+      );
+
+      return {
+        contentId: nextContentId,
+        themeOverride: "general",
+        ...(seed?.requestMetadata
+          ? { initialRequestMetadata: seed.requestMetadata }
+          : {}),
+        initialSiteSkillLaunch: {
+          adapterName: binding.adapterName,
+          args: initialArgs,
+          autoRun: binding.autoRun ?? true,
+          profileKey: launchReadiness.profile_key,
+          targetId: launchReadiness.target_id,
+          requireAttachedSession: true,
+          saveTitle: nextContentId ? undefined : initialSaveTitle,
+          skillTitle: skill.title,
+        },
+      };
+    },
+    [
+      activeTheme,
+      createServiceSkillSeededContent,
+      currentContentId,
+      currentProjectId,
+    ],
+  );
+
   const prepareServiceSkillCloudResultWorkspacePayload = useCallback(
     async (
       skill: ServiceSkillHomeItem,
@@ -420,7 +493,7 @@ export function useWorkspaceServiceSkillEntryActions({
       skill: ServiceSkillHomeItem,
       slotValues: ServiceSkillSlotValues,
     ): Promise<void> => {
-      if (!isServiceSkillSiteCapabilityBound(skill)) {
+      if (!isServiceSkillExecutableAsSiteAdapter(skill)) {
         return;
       }
 
@@ -438,6 +511,16 @@ export function useWorkspaceServiceSkillEntryActions({
       }
 
       const binding = skill.siteCapabilityBinding;
+      let launchReadiness:
+        | Awaited<ReturnType<typeof siteGetAdapterLaunchReadiness>>
+        | null = null;
+      try {
+        launchReadiness = await siteGetAdapterLaunchReadiness({
+          adapter_name: binding.adapterName,
+        });
+      } catch {
+        launchReadiness = null;
+      }
       const saveMode = binding.saveMode ?? "project_resource";
       const initialArgs = buildServiceSkillSiteCapabilityArgs(
         skill,
@@ -469,6 +552,14 @@ export function useWorkspaceServiceSkillEntryActions({
       const navigationParams: BrowserRuntimePageParams = {
         projectId: currentProjectId ?? undefined,
         contentId: nextContentId,
+        initialProfileKey:
+          launchReadiness?.status === "ready"
+            ? launchReadiness.profile_key
+            : undefined,
+        initialTargetId:
+          launchReadiness?.status === "ready"
+            ? launchReadiness.target_id
+            : undefined,
         initialAdapterName: binding.adapterName,
         initialArgs,
         initialAutoRun: binding.autoRun ?? false,
@@ -495,8 +586,51 @@ export function useWorkspaceServiceSkillEntryActions({
 
   const handleServiceSkillLaunch = useCallback(
     async (skill: ServiceSkillHomeItem, slotValues: ServiceSkillSlotValues) => {
-      if (isServiceSkillSiteCapabilityBound(skill)) {
-        await handleServiceSkillBrowserRuntimeLaunch(skill, slotValues);
+      if (isServiceSkillExecutableAsSiteAdapter(skill)) {
+        let launchReadiness: Awaited<
+          ReturnType<typeof siteGetAdapterLaunchReadiness>
+        >;
+        try {
+          launchReadiness = await siteGetAdapterLaunchReadiness({
+            adapter_name: skill.siteCapabilityBinding.adapterName,
+          });
+        } catch (error) {
+          toast.error(`检测浏览器会话失败：${getErrorMessage(error)}`);
+          return;
+        }
+
+        if (launchReadiness.status !== "ready") {
+          toast.error(
+            launchReadiness.report_hint
+              ? `${launchReadiness.message} ${launchReadiness.report_hint}`
+              : launchReadiness.message,
+          );
+          return;
+        }
+
+        let workspacePayload: HomeShellEnterWorkspacePayload;
+        try {
+          workspacePayload = await prepareServiceSkillSiteWorkspacePayload(
+            skill,
+            slotValues,
+            launchReadiness,
+          );
+        } catch (error) {
+          toast.error(`准备站点技能失败：${getErrorMessage(error)}`);
+          return;
+        }
+
+        const entered = navigateToServiceSkillWorkspace(workspacePayload);
+        if (!entered) {
+          return;
+        }
+
+        recordServiceSkillUsage({
+          skillId: skill.id,
+          runnerType: skill.runnerType,
+        });
+        setServiceSkillDialogOpen(false);
+        setSelectedServiceSkill(null);
         return;
       }
 
@@ -605,7 +739,7 @@ export function useWorkspaceServiceSkillEntryActions({
           prompt,
         );
       } catch (error) {
-        toast.error(`准备服务型技能工作区失败：${getErrorMessage(error)}`);
+        toast.error(`准备技能工作区失败：${getErrorMessage(error)}`);
         return;
       }
 
@@ -622,10 +756,10 @@ export function useWorkspaceServiceSkillEntryActions({
       setSelectedServiceSkill(null);
     },
     [
-      handleServiceSkillBrowserRuntimeLaunch,
       input,
       navigateToServiceSkillWorkspace,
       prepareServiceSkillCloudResultWorkspacePayload,
+      prepareServiceSkillSiteWorkspacePayload,
       prepareServiceSkillWorkspacePayload,
       recordServiceSkillUsage,
     ],
@@ -712,7 +846,7 @@ export function useWorkspaceServiceSkillEntryActions({
   const handleAutomationDialogSubmit = useCallback(
     async (payload: AutomationJobDialogSubmit) => {
       if (payload.mode !== "create") {
-        throw new Error("服务型技能入口当前只支持创建新的本地自动化任务");
+        throw new Error("当前技能入口只支持创建新的本地自动化任务");
       }
 
       setAutomationJobSaving(true);
@@ -810,6 +944,7 @@ export function useWorkspaceServiceSkillEntryActions({
     handleServiceSkillSelect,
     handleServiceSkillDialogOpenChange,
     handleServiceSkillLaunch,
+    handleServiceSkillBrowserRuntimeLaunch,
     handleServiceSkillAutomationSetup,
     handleAutomationDialogOpenChange,
     handleAutomationDialogSubmit,

@@ -158,7 +158,11 @@ export function A2UIRenderer({
   );
 
   if (!rootComponent) {
-    return <div className={A2UI_RENDERER_TOKENS.errorText}>错误：找不到根组件 {response.root}</div>;
+    return (
+      <div className={A2UI_RENDERER_TOKENS.errorText}>
+        错误：找不到根组件 {response.root}
+      </div>
+    );
   }
 
   return (
@@ -203,19 +207,27 @@ export function A2UIRenderer({
 export { ComponentRenderer } from "./ComponentRenderer";
 
 // 导出布局组件
-export { RowRenderer } from "./layout/Row";
-export { ColumnRenderer } from "./layout/Column";
-export { CardRenderer } from "./layout/Card";
-export { DividerRenderer } from "./layout/Divider";
+export { RowRenderer } from "../catalog/basic/components/Row";
+export { ColumnRenderer } from "../catalog/basic/components/Column";
+export { ListRenderer } from "../catalog/basic/components/List";
+export { TabsRenderer } from "../catalog/basic/components/Tabs";
+export { ModalRenderer } from "../catalog/basic/components/Modal";
+export { CardRenderer } from "../catalog/basic/components/Card";
+export { DividerRenderer } from "../catalog/basic/components/Divider";
 
 // 导出展示组件
-export { TextRenderer } from "./display/Text";
-export { ButtonRenderer } from "./display/Button";
+export { TextRenderer } from "../catalog/basic/components/Text";
+export { ImageRenderer } from "../catalog/basic/components/Image";
+export { IconRenderer } from "../catalog/basic/components/Icon";
+export { VideoRenderer } from "../catalog/basic/components/Video";
+export { AudioPlayerRenderer } from "../catalog/basic/components/AudioPlayer";
+export { ButtonRenderer } from "../catalog/basic/components/Button";
 
 // 导出表单组件
-export { TextFieldRenderer } from "./form/TextField";
-export { CheckBoxRenderer } from "./form/CheckBox";
-export { ChoicePickerRenderer } from "./form/ChoicePicker";
-export { SliderRenderer } from "./form/Slider";
+export { TextFieldRenderer } from "../catalog/basic/components/TextField";
+export { CheckBoxRenderer } from "../catalog/basic/components/CheckBox";
+export { ChoicePickerRenderer } from "../catalog/basic/components/ChoicePicker";
+export { SliderRenderer } from "../catalog/basic/components/Slider";
+export { DateTimeInputRenderer } from "../catalog/basic/components/DateTimeInput";
 
 export default A2UIRenderer;

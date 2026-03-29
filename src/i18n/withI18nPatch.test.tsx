@@ -56,6 +56,7 @@ describe("withI18nPatch", () => {
   });
 
   it("配置读取超时后回退默认语言并继续渲染", async () => {
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     mockGetConfig.mockImplementation(
       () => new Promise(() => undefined) as Promise<unknown>,
     );
@@ -71,7 +72,11 @@ describe("withI18nPatch", () => {
     });
     await flushEffects(4);
 
-    expect(mounted.container.textContent).toContain("应用已就绪");
-    expect(mockReplaceTextInDOM).toHaveBeenCalledWith("zh");
+    try {
+      expect(mounted.container.textContent).toContain("应用已就绪");
+      expect(mockReplaceTextInDOM).toHaveBeenCalledWith("zh");
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
   });
 });

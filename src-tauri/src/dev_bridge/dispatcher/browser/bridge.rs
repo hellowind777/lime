@@ -29,6 +29,18 @@ pub(super) async fn try_handle(
         "get_chrome_bridge_status" => serde_json::to_value(
             crate::commands::webview_cmd::get_chrome_bridge_status_global().await?,
         )?,
+        "disconnect_browser_connector_session" => {
+            let args = args_or_default(args);
+            let profile_key = args
+                .get("profileKey")
+                .or_else(|| args.get("profile_key"))
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string());
+            serde_json::to_value(
+                crate::commands::webview_cmd::disconnect_browser_connector_session(profile_key)
+                    .await?,
+            )?
+        }
         "get_browser_backend_policy" => serde_json::to_value(
             crate::commands::webview_cmd::get_browser_backend_policy_global().await?,
         )?,

@@ -192,4 +192,69 @@ describe("homeShellEntry", () => {
       },
     });
   });
+
+  it("站点技能初始载荷允许无 prompt 直接进入 Claw 工作区", () => {
+    expect(
+      resolveHomeShellWorkspaceEntry({
+        projectId: "project-1",
+        activeTheme: "knowledge",
+        creationMode: "guided",
+        defaultToolPreferences,
+        payload: {
+          themeOverride: "general",
+          initialSiteSkillLaunch: {
+            adapterName: "github/search",
+            args: {
+              query: "browser assist mcp",
+            },
+            autoRun: true,
+            requireAttachedSession: true,
+          },
+        },
+        now: () => 987,
+      }),
+    ).toEqual({
+      ok: true,
+      toolPreferences: defaultToolPreferences,
+      targetTheme: "general",
+      nextNewChatAt: 987,
+      navigationParams: {
+        agentEntry: "claw",
+        immersiveHome: false,
+        projectId: "project-1",
+        theme: "general",
+        initialCreationMode: "guided",
+        initialUserPrompt: undefined,
+        initialUserImages: undefined,
+        openBrowserAssistOnMount: undefined,
+        initialSiteSkillLaunch: {
+          adapterName: "github/search",
+          args: {
+            query: "browser assist mcp",
+          },
+          autoRun: true,
+          requireAttachedSession: true,
+        },
+        newChatAt: 987,
+        lockTheme: false,
+      },
+      workspaceBootstrap: {
+        projectId: "project-1",
+        initialUserPrompt: undefined,
+        initialUserImages: undefined,
+        theme: "general",
+        initialCreationMode: "guided",
+        openBrowserAssistOnMount: undefined,
+        initialSiteSkillLaunch: {
+          adapterName: "github/search",
+          args: {
+            query: "browser assist mcp",
+          },
+          autoRun: true,
+          requireAttachedSession: true,
+        },
+        newChatAt: 987,
+      },
+    });
+  });
 });

@@ -5,6 +5,8 @@
  */
 
 import type { A2UIResponse, ParseResult, ParsedMessageContent } from "./types";
+import { isDataBindingValue, resolveDataAtPath } from "./dataModel";
+import { convertProtocolToA2UIResponse } from "./protocol";
 
 /** A2UI 标签正则 - 支持 <a2ui> 和 ```a2ui 代码块 */
 const A2UI_TAG_REGEX = /<a2ui>([\s\S]*?)<\/a2ui>/g;
@@ -202,7 +204,6 @@ export function parseAIResponse(
   let match: RegExpExecArray | null;
   const a2uiTagRegex = new RegExp(A2UI_TAG_REGEX.source, "g");
   while ((match = a2uiTagRegex.exec(content)) !== null) {
-    console.log("[A2UI Parser] 找到 <a2ui> 标签:", match.index);
     matches.push({
       start: match.index,
       end: match.index + match[0].length,
@@ -215,12 +216,6 @@ export function parseAIResponse(
   // 支持 ```a2ui, ```A2UI, ``` a2ui 等变体
   const a2uiCodeRegex = /```\s*a2ui\s*\n?([\s\S]*?)```/gi;
   while ((match = a2uiCodeRegex.exec(content)) !== null) {
-    console.log(
-      "[A2UI Parser] 找到 ```a2ui 代码块:",
-      match.index,
-      "内容长度:",
-      match[1].length,
-    );
     matches.push({
       start: match.index,
       end: match.index + match[0].length,
@@ -248,12 +243,6 @@ export function parseAIResponse(
   while ((match = writeFileRegex.exec(content)) !== null) {
     const filePath = match[1] || "文档.md"; // 默认文件名
     const fileContent = match[2].trim();
-    console.log(
-      "[A2UI Parser] 找到 <write_file> 标签:",
-      match.index,
-      "path:",
-      filePath,
-    );
     matches.push({
       start: match.index,
       end: match.index + match[0].length,
@@ -360,11 +349,31 @@ export function parseAIResponse(
   return { parts, hasA2UI, hasWriteFile, hasPending };
 }
 
+function parseJsonLines(jsonStr: string): unknown[] | null {
+  const lines = jsonStr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) {
+    return null;
+  }
+
+  const messages: unknown[] = [];
+
+  for (const line of lines) {
+    messages.push(JSON.parse(line));
+  }
+
+  return messages;
+}
+
 /**
  * 解析 A2UI JSON 字符串
- * 支持两种格式：
- * 1. 完整 A2UI 格式（带 components 和 root）
+ * 支持三类格式：
+ * 1. 完整 A2UI 响应
  * 2. 简化表单格式（type: 'form'）
+ * 3. 官方/aster-rust 的 JSON / JSONL 消息流
  */
 export function parseA2UIJson(jsonStr: string): A2UIResponse | null {
   try {
@@ -374,34 +383,48 @@ export function parseA2UIJson(jsonStr: string): A2UIResponse | null {
       .replace(/\s*```$/i, "")
       .trim();
 
-    // 调试日志
-    if (cleaned.length > 50) {
-      console.log(
-        "[A2UI Parser] parseA2UIJson 输入长度:",
-        cleaned.length,
-        "开头:",
-        cleaned.slice(0, 50),
-      );
-    }
+    const parsed = (() => {
+      try {
+        return JSON.parse(cleaned);
+      } catch {
+        return parseJsonLines(cleaned);
+      }
+    })();
 
-    const parsed = JSON.parse(cleaned);
+    if (parsed === null) {
+      return null;
+    }
 
     // 检查是否为简化表单格式
     if (isSimpleForm(parsed)) {
-      console.log("[A2UI Parser] 检测到简化表单格式，转换中...");
       return convertSimpleFormToA2UI(parsed);
     }
 
-    // 验证完整 A2UI 格式
-    if (parsed.id && parsed.components && parsed.root) {
-      if (!Array.isArray(parsed.components)) {
+    const response = convertProtocolToA2UIResponse(parsed);
+    if (response) {
+      return response;
+    }
+
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "id" in parsed &&
+      "components" in parsed &&
+      "root" in parsed
+    ) {
+      if (!Array.isArray((parsed as A2UIResponse).components)) {
         console.warn("[A2UI Parser] components 不是数组");
         return null;
       }
       return parsed as A2UIResponse;
     }
 
-    console.warn("[A2UI Parser] 无法识别的格式:", Object.keys(parsed));
+    console.warn(
+      "[A2UI Parser] 无法识别的格式:",
+      typeof parsed === "object" && parsed !== null
+        ? Object.keys(parsed)
+        : parsed,
+    );
     return null;
   } catch (e) {
     // 只在内容足够长时打印警告（可能是完整但格式错误的 JSON）
@@ -434,25 +457,15 @@ export function resolveDynamicValue<T>(
   value: T | { path: string } | undefined,
   data: Record<string, unknown>,
   defaultValue: T,
+  scopePath: string = "/",
 ): T {
   if (value === undefined) {
     return defaultValue;
   }
 
-  if (typeof value === "object" && value !== null && "path" in value) {
-    // 解析路径
-    const path = (value as { path: string }).path;
-    const parts = path.split(".");
-    let current: unknown = data;
-
-    for (const part of parts) {
-      if (current === null || current === undefined) {
-        return defaultValue;
-      }
-      current = (current as Record<string, unknown>)[part];
-    }
-
-    return (current as T) ?? defaultValue;
+  if (isDataBindingValue(value)) {
+    const resolved = resolveDataAtPath(data, value.path, scopePath);
+    return (resolved as T) ?? defaultValue;
   }
 
   return value as T;

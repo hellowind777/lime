@@ -39,7 +39,7 @@ export function buildServiceSkillWorkspaceSeed(
   }
 
   return {
-    title: skill.title.trim() || "服务型技能交付物",
+    title: skill.title.trim() || "技能工作稿",
     contentType: getDefaultContentTypeForProject(targetTheme as ProjectType),
     requestMetadata: resolveServiceSkillArtifactRequestMetadata(
       skill.defaultArtifactKind,

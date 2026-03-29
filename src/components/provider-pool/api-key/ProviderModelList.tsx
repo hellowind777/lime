@@ -25,14 +25,17 @@ import {
 } from "@/components/ui/tooltip";
 import type { EnhancedModelMetadata } from "@/lib/types/modelRegistry";
 import { apiKeyProviderApi } from "@/lib/api/apiKeyProvider";
-import { modelRegistryApi } from "@/lib/api/modelRegistry";
+import {
+  fetchProviderModelsAuto,
+  modelRegistryApi,
+  type FetchProviderModelsResult,
+} from "@/lib/api/modelRegistry";
 import { ModelCapabilityBadges } from "@/components/model/ModelCapabilityBadges";
 import {
   buildCatalogAliasMap,
   resolveRegistryProviderId,
 } from "./providerTypeMapping";
 import { getLatestSelectableModel } from "./ProviderConfigForm.utils";
-import { invoke } from "@tauri-apps/api/core";
 
 // ============================================================================
 // 类型定义
@@ -62,23 +65,6 @@ export interface ProviderModelListProps {
 // ============================================================================
 // API 响应类型
 // ============================================================================
-
-interface FetchModelsResult {
-  models: EnhancedModelMetadata[];
-  source: "Api" | "LocalFallback";
-  error: string | null;
-  request_url?: string | null;
-  diagnostic_hint?: string | null;
-  error_kind?:
-    | "not_found"
-    | "unauthorized"
-    | "forbidden"
-    | "network"
-    | "invalid_response"
-    | "other"
-    | null;
-  should_prompt_error?: boolean;
-}
 
 interface CachedProviderModels {
   models: EnhancedModelMetadata[];
@@ -323,12 +309,8 @@ export const ProviderModelList: React.FC<ProviderModelListProps> = ({
     setApiShouldPromptError(false);
 
     try {
-      const result = await invoke<FetchModelsResult>(
-        "fetch_provider_models_auto",
-        {
-          providerId,
-        },
-      );
+      const result: FetchProviderModelsResult =
+        await fetchProviderModelsAuto(providerId);
 
       if (result && result.models) {
         setApiModels(result.models);

@@ -34,6 +34,7 @@ import {
   buildFailedAgentRuntimeStatus,
   formatAgentRuntimeStatusSummary,
 } from "../utils/agentRuntimeStatus";
+import { normalizeLegacyRuntimeStatusTitle } from "@/lib/api/agentTextNormalization";
 import { resolveRuntimeWarningToastPresentation } from "./runtimeWarningPresentation";
 import {
   applyModelChangeExecutionRuntime,
@@ -310,16 +311,45 @@ export function handleTurnStreamEvent({
 
     case "runtime_status":
       activateStream();
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMsgId
-            ? {
-                ...msg,
-                runtimeStatus: data.status,
-              }
-            : msg,
-        ),
-      );
+      {
+        const normalizedStatus = {
+          ...data.status,
+          title: normalizeLegacyRuntimeStatusTitle(data.status.title),
+        };
+        const nextSummaryText = formatAgentRuntimeStatusSummary(normalizedStatus);
+        const updatedAt = new Date().toISOString();
+        setThreadItems((prev) => {
+          const runtimeSummaryItem =
+            prev.find((item) => item.id === pendingItemKey) ||
+            [...prev]
+              .reverse()
+              .find(
+                (item) =>
+                  item.thread_id === activeSessionId &&
+                  item.type === "turn_summary" &&
+                  item.status === "in_progress",
+              );
+          if (!runtimeSummaryItem || runtimeSummaryItem.type !== "turn_summary") {
+            return prev;
+          }
+
+          return upsertThreadItemState(prev, {
+            ...runtimeSummaryItem,
+            text: nextSummaryText,
+            updated_at: updatedAt,
+          });
+        });
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMsgId
+              ? {
+                  ...msg,
+                  runtimeStatus: normalizedStatus,
+                }
+              : msg,
+          ),
+        );
+      }
       break;
 
     case "turn_context":

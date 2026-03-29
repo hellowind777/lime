@@ -18,8 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { SaveIcon, Loader2Icon, SparklesIcon } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
+import { generatePersona } from "@/lib/api/personas";
 import type { Persona, CreatePersonaRequest } from "@/types/persona";
 
 export interface PersonaDialogProps {
@@ -86,15 +86,7 @@ export function PersonaDialog({
     if (!aiPrompt.trim()) return;
     setGenerating(true);
     try {
-      const result = await invoke<{
-        name: string;
-        description: string;
-        style: string;
-        tone: string;
-        targetAudience: string;
-        forbiddenWords: string[];
-        preferredWords: string[];
-      }>("generate_persona", { prompt: aiPrompt.trim() });
+      const result = await generatePersona(aiPrompt.trim());
 
       // 填充表单
       setName(result.name || "");

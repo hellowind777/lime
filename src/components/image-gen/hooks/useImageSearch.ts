@@ -5,10 +5,17 @@
  */
 
 import { useCallback, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import {
+  searchPixabayImages,
+  searchWebImages,
+  type AspectRatioFilter,
+  type PixabaySearchRequest,
+  type WebImageSearchRequest,
+} from "@/lib/api/imageSearch";
+
+export type { AspectRatioFilter } from "@/lib/api/imageSearch";
 
 export type SearchSource = "web" | "pixabay";
-export type AspectRatioFilter = "all" | "landscape" | "portrait" | "square";
 
 export interface SearchImageResult {
   id: string;
@@ -20,76 +27,6 @@ export interface SearchImageResult {
   pageUrl: string;
   user: string;
   provider: "pixabay" | "pexels";
-}
-
-interface PixabaySearchRequest {
-  query: string;
-  page: number;
-  perPage: number;
-  orientation?: string;
-}
-
-interface PixabaySearchResponse {
-  total: number;
-  total_hits?: number;
-  totalHits?: number;
-  hits: Array<{
-    id: number;
-    preview_url?: string;
-    previewUrl?: string;
-    large_image_url?: string;
-    largeImageUrl?: string;
-    image_width?: number;
-    imageWidth?: number;
-    image_height?: number;
-    imageHeight?: number;
-    tags: string;
-    page_url?: string;
-    pageUrl?: string;
-    user: string;
-  }>;
-}
-
-interface WebImageSearchRequest {
-  query: string;
-  page: number;
-  perPage: number;
-  aspect?: AspectRatioFilter;
-}
-
-interface WebImageSearchResponse {
-  total: number;
-  totalResults?: number;
-  photos?: Array<{
-    id: number;
-    width: number;
-    height: number;
-    url: string;
-    alt?: string;
-    src: {
-      medium?: string;
-      small?: string;
-      tiny?: string;
-      large?: string;
-      large2x?: string;
-      original?: string;
-      landscape?: string;
-      portrait?: string;
-    };
-  }>;
-  provider: string;
-  hits: Array<{
-    id: string;
-    thumbnail_url?: string;
-    thumbnailUrl?: string;
-    content_url?: string;
-    contentUrl?: string;
-    width: number;
-    height: number;
-    name: string;
-    host_page_url?: string;
-    hostPageUrl?: string;
-  }>;
 }
 
 interface SourceSearchState {
@@ -215,10 +152,7 @@ export function useImageSearch() {
             orientation: mapPixabayOrientation(aspectRatio),
           };
 
-          const response = await invoke<PixabaySearchResponse>(
-            "search_pixabay_images",
-            { req },
-          );
+          const response = await searchPixabayImages(req);
 
           const mapped = response.hits.map((hit) => ({
             id: String(hit.id),
@@ -260,12 +194,7 @@ export function useImageSearch() {
           perPage: DEFAULT_PER_PAGE,
           aspect: mapWebAspect(aspectRatio),
         };
-        const response = await invoke<WebImageSearchResponse>(
-          "search_web_images",
-          {
-            req,
-          },
-        );
+        const response = await searchWebImages(req);
 
         const normalizedHits =
           response.hits?.length > 0
@@ -325,12 +254,12 @@ export function useImageSearch() {
             [source]: {
               ...prev[source],
               results: nextResults,
-                total: response.total || response.totalResults || filtered.length,
-                page,
-                loading: false,
-                error: null,
-                lastQuery: searchQuery,
-              },
+              total: response.total || response.totalResults || filtered.length,
+              page,
+              loading: false,
+              error: null,
+              lastQuery: searchQuery,
+            },
           };
         });
       } catch (error) {

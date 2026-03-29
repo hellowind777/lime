@@ -2,15 +2,11 @@
 //!
 //! 负责把结构化自动化任务映射到 Aster 执行链路。
 
-use super::{AutomationJobRecord, AutomationPayload};
+use super::{AutomationJobRecord, AutomationPayload, BROWSER_AUTOMATION_RETIRED_MESSAGE};
 use crate::agent::AsterAgentWrapper;
-use crate::app::AppState;
 use crate::commands::api_key_provider_cmd::ApiKeyProviderServiceState;
 use crate::commands::aster_agent_cmd::{
     build_queued_turn_task, build_runtime_queue_executor, AsterChatRequest,
-};
-use crate::commands::browser_runtime_cmd::{
-    launch_browser_session_with_db, LaunchBrowserSessionRequest,
 };
 use crate::config::GlobalConfigManagerState;
 use crate::database::DbConnection;
@@ -73,31 +69,8 @@ pub async fn execute_job(
                     )
                     .await
                 }
-                AutomationPayload::BrowserSession {
-                    profile_id,
-                    profile_key,
-                    url,
-                    environment_preset_id,
-                    target_id,
-                    open_window,
-                    stream_mode,
-                } => {
-                    execute_browser_session(
-                        job,
-                        db,
-                        app_handle,
-                        LaunchBrowserSessionRequest {
-                            profile_id: Some(profile_id),
-                            profile_key,
-                            url,
-                            environment_preset_id,
-                            environment: None,
-                            target_id,
-                            open_window,
-                            stream_mode,
-                        },
-                    )
-                    .await
+                AutomationPayload::BrowserSession { .. } => {
+                    Err(BROWSER_AUTOMATION_RETIRED_MESSAGE.to_string())
                 }
             }
         }
@@ -164,6 +137,8 @@ async fn execute_agent_turn(
         provider_preference: None,
         model_preference: None,
         thinking_enabled: None,
+        approval_policy: None,
+        sandbox_policy: None,
         project_id: None,
         workspace_id: job.workspace_id.clone(),
         web_search: Some(web_search),
@@ -205,47 +180,6 @@ async fn execute_agent_turn(
         })),
         session_id: Some(session_id),
         browser_session: None,
-    })
-}
-
-async fn execute_browser_session(
-    job: &AutomationJobRecord,
-    db: &DbConnection,
-    app_handle: &Option<AppHandle>,
-    request: LaunchBrowserSessionRequest,
-) -> Result<JobExecutionResult, String> {
-    let app = app_handle
-        .as_ref()
-        .ok_or_else(|| "应用句柄不可用，无法执行浏览器自动化任务".to_string())?;
-    let app_state = app
-        .try_state::<AppState>()
-        .ok_or_else(|| "AppState 未初始化，无法执行浏览器自动化任务".to_string())?;
-    let app_state = app_state.inner().clone();
-
-    let response =
-        launch_browser_session_with_db(app.clone(), app_state, db.clone(), request).await?;
-    let session_id = response.session.session_id.clone();
-    Ok(JobExecutionResult {
-        output: format!("浏览器任务已启动: {} -> {}", job.name, session_id),
-        output_data: Some(json!({
-            "kind": "browser_session",
-            "job_id": job.id.clone(),
-            "job_name": job.name.clone(),
-            "workspace_id": job.workspace_id.clone(),
-            "session_id": response.session.session_id.clone(),
-            "profile_key": response.session.profile_key.clone(),
-            "environment_preset_id": response.session.environment_preset_id.clone(),
-            "environment_preset_name": response.session.environment_preset_name.clone(),
-            "target_id": response.session.target_id.clone(),
-            "target_title": response.session.target_title.clone(),
-            "target_url": response.session.target_url.clone(),
-            "lifecycle_state": response.session.lifecycle_state,
-            "control_mode": response.session.control_mode,
-            "remote_debugging_port": response.session.remote_debugging_port,
-            "ws_debugger_url": response.session.ws_debugger_url.clone(),
-        })),
-        session_id: Some(session_id),
-        browser_session: Some(response.session),
     })
 }
 

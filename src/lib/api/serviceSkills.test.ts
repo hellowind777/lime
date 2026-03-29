@@ -66,23 +66,56 @@ describe("serviceSkills API", () => {
     expect(catalog.items.length).toBeGreaterThan(0);
     expect(
       catalog.items.find((item) => item.id === "github-repo-radar")
-        ?.siteCapabilityBinding,
     ).toEqual(
       expect.objectContaining({
-        adapterName: "github/search",
-        autoRun: true,
-        requireAttachedSession: true,
-        saveMode: "current_content",
+        skillType: "site",
+        outputDestination:
+          "采集结果会优先写回当前内容；如果当前内容不可用，再沉淀为项目资源。",
+        triggerHints: expect.arrayContaining(["需要围绕某个技术主题快速找 GitHub 仓库线索时使用。"]),
+        setupRequirements: expect.arrayContaining(["需要浏览器里已有 GitHub 登录态。"]),
+        examples: expect.arrayContaining([
+          "帮我查一批和 MCP browser automation 相关的 GitHub 仓库。",
+        ]),
+        siteCapabilityBinding: expect.objectContaining({
+          adapterName: "github/search",
+          autoRun: true,
+          requireAttachedSession: true,
+          saveMode: "current_content",
+        }),
+        skillBundle: expect.objectContaining({
+          name: "github-repo-radar",
+          standardCompliance: expect.objectContaining({
+            isStandard: true,
+          }),
+          metadata: expect.objectContaining({
+            Lime_skill_type: "site",
+            Lime_site_adapter: "github/search",
+          }),
+        }),
       }),
     );
     expect(
       catalog.items.find((item) => item.id === "carousel-post-replication"),
     ).toEqual(
       expect.objectContaining({
+        skillType: "service",
         entryHint: expect.any(String),
         aliases: expect.arrayContaining(["轮播帖"]),
+        usageGuidelines: expect.arrayContaining([
+          "适合先产出一版结构化草稿，再在当前工作区继续精修。",
+        ]),
         surfaceScopes: expect.arrayContaining(["mention"]),
         promptTemplateKey: "replication",
+        skillBundle: expect.objectContaining({
+          name: "carousel-post-replication",
+          standardCompliance: expect.objectContaining({
+            isStandard: true,
+          }),
+          metadata: expect.objectContaining({
+            Lime_skill_type: "service",
+            Lime_prompt_template_key: "replication",
+          }),
+        }),
       }),
     );
 
@@ -102,6 +135,31 @@ describe("serviceSkills API", () => {
     expect(catalog.version).toBe("tenant-2026-03-24");
     expect(skills).toHaveLength(1);
     expect(skills[0]?.id).toBe("tenant-remote-skill");
+  });
+
+  it("旧格式远端目录缺少 skillBundle 时应自动补齐标准摘要", async () => {
+    const remoteCatalog = buildRemoteCatalog();
+    if (remoteCatalog.items[0]) {
+      delete remoteCatalog.items[0].skillBundle;
+    }
+
+    saveServiceSkillCatalog(remoteCatalog, "bootstrap_sync");
+
+    const catalog = await getServiceSkillCatalog();
+
+    expect(catalog.items[0]?.skillBundle).toEqual(
+      expect.objectContaining({
+        name: "carousel-post-replication",
+        standardCompliance: expect.objectContaining({
+          isStandard: true,
+        }),
+        metadata: expect.objectContaining({
+          Lime_skill_type: "service",
+          Lime_output_destination:
+            "结果会写回当前工作区中的内容草稿，方便继续改写和发布。",
+        }),
+      }),
+    );
   });
 
   it("清空缓存后应恢复到 seeded catalog", async () => {

@@ -419,6 +419,9 @@ pub struct Config {
     /// 用户资料
     #[serde(default)]
     pub user_profile: UserProfile,
+    /// 开发者功能开关
+    #[serde(default)]
+    pub developer: DeveloperConfig,
     /// 速率限制配置
     #[serde(default)]
     pub rate_limit: RateLimitSettings,
@@ -2168,6 +2171,7 @@ impl Default for Config {
             voice: VoiceConfig::default(),
             image_gen: ImageGenConfig::default(),
             user_profile: UserProfile::default(),
+            developer: DeveloperConfig::default(),
             rate_limit: RateLimitSettings::default(),
             crash_reporting: CrashReportingConfig::default(),
             conversation: ConversationSettings::default(),
@@ -2451,6 +2455,14 @@ pub struct ChatAppearanceConfig {
     /// 推荐点击时自动附带当前选中文本上下文
     #[serde(default)]
     pub append_selected_text_to_recommendation: Option<bool>,
+}
+
+/// 开发者能力配置
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct DeveloperConfig {
+    /// 是否允许在工作区启用处理工作台与信息收集
+    #[serde(default)]
+    pub workspace_harness_enabled: bool,
 }
 
 /// 记忆管理配置
@@ -3230,6 +3242,12 @@ mod unit_tests {
     }
 
     #[test]
+    fn test_developer_config_default() {
+        let config = DeveloperConfig::default();
+        assert!(!config.workspace_harness_enabled);
+    }
+
+    #[test]
     fn test_config_with_experimental() {
         let config = Config::default();
         assert!(!config.experimental.screenshot_chat.enabled);
@@ -3244,6 +3262,7 @@ mod unit_tests {
             config.experimental.voice_input.shortcut,
             "CommandOrControl+Shift+V"
         );
+        assert!(!config.developer.workspace_harness_enabled);
         assert!(config.tool_calling.enabled);
         assert!(config.tool_calling.dynamic_filtering);
         assert!(!config.tool_calling.native_input_examples);

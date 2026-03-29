@@ -5,6 +5,7 @@ import { WorkbenchRightRail } from "./WorkbenchRightRail";
 import {
   cleanupMountedRoots,
   clickElement,
+  flushEffects,
   mountHarness,
   setupReactActEnvironment,
   type MountedRoot,
@@ -31,7 +32,7 @@ describe("WorkbenchRightRail", () => {
     });
   });
 
-  it("创作视图默认显示能力面板", () => {
+  it("创作视图默认显示能力面板", async () => {
     const { container } = mountHarness(
       WorkbenchRightRail,
       {
@@ -44,10 +45,12 @@ describe("WorkbenchRightRail", () => {
       mountedRoots,
     );
 
+    await flushEffects();
+
     expect(container.querySelector("[data-testid='workbench-right-rail-expanded']")).not.toBeNull();
   });
 
-  it("视频主题右侧栏不再默认显示项目风格策略", () => {
+  it("视频主题右侧栏不再默认显示项目风格策略", async () => {
     const { container } = mountHarness(
       WorkbenchRightRail,
       {
@@ -61,13 +64,15 @@ describe("WorkbenchRightRail", () => {
       mountedRoots,
     );
 
+    await flushEffects();
+
     expect(container.textContent).toContain("视频助手");
     expect(container.textContent).not.toContain("风格策略");
     expect(container.textContent).not.toContain("编辑项目风格");
     expect(container.textContent).not.toContain("生成的素材输出将保存在此处");
   });
 
-  it("存在评审状态时应切换为评审专家团面板，关闭后恢复能力面板", () => {
+  it("存在评审状态时应切换为评审专家团面板，关闭后恢复能力面板", async () => {
     const closeSpy = vi.fn();
 
     act(() => {
@@ -110,6 +115,8 @@ describe("WorkbenchRightRail", () => {
       mountedRoots,
     );
 
+    await flushEffects();
+
     expect(container.textContent).toContain("评审专家团");
     expect(container.textContent).toContain("林岑·叙事总编");
     expect(container.querySelector("[data-testid='workbench-right-rail-expanded']")).toBeNull();
@@ -117,6 +124,8 @@ describe("WorkbenchRightRail", () => {
     clickElement(
       container.querySelector("button[aria-label='关闭评审专家团']"),
     );
+
+    await flushEffects();
 
     expect(closeSpy).toHaveBeenCalledTimes(1);
     expect(container.querySelector("[data-testid='workbench-right-rail-expanded']")).not.toBeNull();

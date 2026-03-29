@@ -22,6 +22,7 @@ const HARNESS_SUBAGENT_PREFERENCE_KEYS = [
   "subagentMode",
 ] as const;
 const HARNESS_CONTENT_ID_KEYS = ["content_id", "contentId"] as const;
+const HARNESS_ACCESS_MODE_KEYS = ["access_mode", "accessMode"] as const;
 const HARNESS_THEME_KEYS = ["theme", "harness_theme", "harnessTheme"] as const;
 const HARNESS_SESSION_MODE_KEYS = ["session_mode", "sessionMode"] as const;
 const HARNESS_GATE_KEY_KEYS = ["gate_key", "gateKey"] as const;
@@ -539,6 +540,20 @@ export function buildSubmitOpRuntimeCompaction(
     requestContentId === knownRecentContentId
   ) {
     metadata = omitHarnessFieldsFromRequestMetadata(metadata, HARNESS_CONTENT_ID_KEYS);
+  }
+
+  const requestAccessMode = normalizeComparableText(
+    readHarnessStringFromRequestMetadata(metadata, HARNESS_ACCESS_MODE_KEYS),
+  );
+  const knownRecentAccessMode = normalizeComparableText(
+    executionRuntime?.recent_access_mode,
+  );
+  if (
+    requestAccessMode !== null &&
+    knownRecentAccessMode !== null &&
+    requestAccessMode === knownRecentAccessMode
+  ) {
+    metadata = omitHarnessFieldsFromRequestMetadata(metadata, HARNESS_ACCESS_MODE_KEYS);
   }
 
   const requestTheme = normalizeComparableText(

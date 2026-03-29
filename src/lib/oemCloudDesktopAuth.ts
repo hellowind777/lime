@@ -7,6 +7,7 @@ import {
   setOemCloudBootstrapSnapshot,
   setStoredOemCloudSessionState,
 } from "@/lib/oemCloudSession";
+import { syncSkillCatalogFromBootstrapPayload } from "@/lib/skillCatalogBootstrap";
 import { syncServiceSkillCatalogFromBootstrapPayload } from "@/lib/serviceSkillCatalogBootstrap";
 import { syncSiteAdapterCatalogFromBootstrapPayload } from "@/lib/siteAdapterCatalogBootstrap";
 
@@ -186,6 +187,7 @@ export async function completeOemCloudDesktopOAuthLogin(
 
     setStoredOemCloudSessionState(nextSession);
     setOemCloudBootstrapSnapshot(nextBootstrap);
+    syncSkillCatalogFromBootstrapPayload(nextBootstrap);
     syncServiceSkillCatalogFromBootstrapPayload(nextBootstrap);
     void syncSiteAdapterCatalogFromBootstrapPayload(nextBootstrap);
     dispatchOemCloudOAuthCompleted({

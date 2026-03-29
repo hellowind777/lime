@@ -131,6 +131,114 @@
       "source_version": "2026-03-25"
     },
     {
+      "name": "linux-do/categories",
+      "domain": "linux.do",
+      "description": "读取 linux.do 分类列表。",
+      "read_only": true,
+      "capabilities": ["categories", "community", "research"],
+      "args": [
+        {
+          "name": "limit",
+          "description": "返回分类数量上限",
+          "required": false,
+          "arg_type": "integer",
+          "example": 10
+        }
+      ],
+      "example": "linux-do/categories {\"limit\":10}",
+      "auth_hint": "请先在浏览器中登录 linux.do，再重试该命令。",
+      "entry": {
+        "kind": "fixed_url",
+        "url": "https://linux.do"
+      },
+      "script_file": "scripts/linux-do-categories.js",
+      "source_version": "2026-03-28"
+    },
+    {
+      "name": "linux-do/hot",
+      "domain": "linux.do",
+      "description": "读取 linux.do 热门话题。",
+      "read_only": true,
+      "capabilities": ["hot", "topics", "community", "research"],
+      "args": [
+        {
+          "name": "limit",
+          "description": "返回话题数量上限",
+          "required": false,
+          "arg_type": "integer",
+          "example": 10
+        },
+        {
+          "name": "period",
+          "description": "热门周期，可选 all/daily/weekly/monthly/yearly",
+          "required": false,
+          "arg_type": "string",
+          "example": "weekly"
+        }
+      ],
+      "example": "linux-do/hot {\"period\":\"weekly\",\"limit\":10}",
+      "auth_hint": "请先在浏览器中登录 linux.do，再重试该命令。",
+      "entry": {
+        "kind": "fixed_url",
+        "url": "https://linux.do"
+      },
+      "script_file": "scripts/linux-do-hot.js",
+      "source_version": "2026-03-28"
+    },
+    {
+      "name": "smzdm/search",
+      "domain": "search.smzdm.com",
+      "description": "按关键词采集什么值得买搜索结果。",
+      "read_only": true,
+      "capabilities": ["search", "shopping", "deals", "research"],
+      "args": [
+        {
+          "name": "query",
+          "description": "搜索关键词",
+          "required": true,
+          "arg_type": "string",
+          "example": "Mac mini"
+        },
+        {
+          "name": "limit",
+          "description": "返回条目数量上限",
+          "required": false,
+          "arg_type": "integer",
+          "example": 5
+        }
+      ],
+      "example": "smzdm/search {\"query\":\"Mac mini\",\"limit\":5}",
+      "entry": {
+        "kind": "url_template",
+        "template": "https://search.smzdm.com/?c=home&s={{query|urlencode}}&v=b"
+      },
+      "script_file": "scripts/smzdm-search.js",
+      "source_version": "2026-03-28"
+    },
+    {
+      "name": "yahoo-finance/quote",
+      "domain": "finance.yahoo.com",
+      "description": "读取 Yahoo Finance 股票行情摘要。",
+      "read_only": true,
+      "capabilities": ["quote", "finance", "research"],
+      "args": [
+        {
+          "name": "symbol",
+          "description": "股票代码，例如 AAPL、MSFT",
+          "required": true,
+          "arg_type": "string",
+          "example": "AAPL"
+        }
+      ],
+      "example": "yahoo-finance/quote {\"symbol\":\"AAPL\"}",
+      "entry": {
+        "kind": "url_template",
+        "template": "https://finance.yahoo.com/quote/{{symbol|urlencode}}/"
+      },
+      "script_file": "scripts/yahoo-finance-quote.js",
+      "source_version": "2026-03-28"
+    },
+    {
       "name": "zhihu/hot",
       "domain": "www.zhihu.com",
       "description": "采集知乎热榜问题列表。",

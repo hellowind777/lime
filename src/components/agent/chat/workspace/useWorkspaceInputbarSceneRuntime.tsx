@@ -75,6 +75,8 @@ interface UseWorkspaceInputbarSceneRuntimeParams {
   projectId: InputbarParams["workspaceId"];
   executionStrategy: InputbarParams["executionStrategy"];
   setExecutionStrategy: InputbarParams["setExecutionStrategy"];
+  accessMode: InputbarParams["accessMode"];
+  setAccessMode: InputbarParams["setAccessMode"];
   activeTheme: InputbarParams["activeTheme"];
   navigationActions: Pick<NavigationActions, "handleManageProviders">;
   selectedTeam: InputbarParams["selectedTeam"];
@@ -163,6 +165,8 @@ export function useWorkspaceInputbarSceneRuntime({
   projectId,
   executionStrategy,
   setExecutionStrategy,
+  accessMode,
+  setAccessMode,
   activeTheme,
   navigationActions,
   selectedTeam,
@@ -282,6 +286,8 @@ export function useWorkspaceInputbarSceneRuntime({
         workspaceId: projectId,
         executionStrategy,
         setExecutionStrategy,
+        accessMode,
+        setAccessMode,
         activeTheme,
         onManageProviders: navigationActions.handleManageProviders,
         selectedTeam,

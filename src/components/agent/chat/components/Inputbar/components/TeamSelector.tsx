@@ -1,7 +1,6 @@
 import React, {
   Suspense,
   lazy,
-  useEffect,
   useMemo,
   useState,
 } from "react";
@@ -9,8 +8,8 @@ import { Users } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import type { WorkspaceSettings } from "@/types/workspace";
-import { scheduleIdleModulePreload } from "./scheduleIdleModulePreload";
 import type { TeamDefinition } from "../../../utils/teamDefinitions";
+import { useIdleModulePreload } from "./useIdleModulePreload";
 
 const preloadTeamSelectorPanel = () => import("./TeamSelectorPanel");
 
@@ -52,13 +51,11 @@ export const TeamSelector: React.FC<TeamSelectorProps> = ({
 }) => {
   const [open, setOpen] = useState(false);
 
-  useEffect(() => {
-    return scheduleIdleModulePreload(() => {
-      void preloadTeamSelectorPanel();
-    });
-  }, []);
+  useIdleModulePreload(() => {
+    void preloadTeamSelectorPanel();
+  });
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (autoOpenToken === null || autoOpenToken === undefined) {
       return;
     }

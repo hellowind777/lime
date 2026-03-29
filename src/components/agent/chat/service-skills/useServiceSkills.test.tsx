@@ -2,11 +2,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  clearServiceSkillCatalogCache,
-  getSeededServiceSkillCatalog,
-  saveServiceSkillCatalog,
-  type ServiceSkillCatalog,
-} from "@/lib/api/serviceSkills";
+  clearSkillCatalogCache,
+  getSeededSkillCatalog,
+  saveSkillCatalog,
+  type SkillCatalog,
+} from "@/lib/api/skillCatalog";
 import { recordServiceSkillAutomationLink } from "./automationLinkStorage";
 import { recordServiceSkillCloudRun } from "./cloudRunStorage";
 import { useServiceSkills } from "./useServiceSkills";
@@ -16,19 +16,29 @@ interface HookHarness {
   unmount: () => void;
 }
 
-function buildRemoteCatalog(): ServiceSkillCatalog {
-  const seeded = getSeededServiceSkillCatalog();
+function buildRemoteCatalog(): SkillCatalog {
+  const seeded = getSeededSkillCatalog();
   return {
-    version: "tenant-2026-03-24",
+    version: "tenant-2026-03-29",
     tenantId: "tenant-demo",
-    syncedAt: "2026-03-24T12:00:00.000Z",
+    syncedAt: "2026-03-29T12:00:00.000Z",
+    groups: [
+      {
+        key: "general",
+        title: "通用技能",
+        summary: "不依赖站点登录态的业务技能。",
+        sort: 90,
+        itemCount: 2,
+      },
+    ],
     items: [
       {
         ...seeded.items[0]!,
         id: "tenant-daily-briefing",
         title: "租户日报摘要",
         summary: "远端同步后的目录项",
-        version: "tenant-2026-03-24",
+        version: "tenant-2026-03-29",
+        groupKey: "general",
       },
       {
         ...seeded.items[1]!,
@@ -36,18 +46,28 @@ function buildRemoteCatalog(): ServiceSkillCatalog {
         title: "本地增长打法模版",
         summary: "项目内维护的本地补充技能。",
         source: "local_custom",
-        version: "local-2026-03-24",
+        version: "local-2026-03-29",
+        groupKey: "general",
       },
     ],
   };
 }
 
-function buildCloudCatalog(): ServiceSkillCatalog {
-  const seeded = getSeededServiceSkillCatalog();
+function buildCloudCatalog(): SkillCatalog {
+  const seeded = getSeededSkillCatalog();
   return {
-    version: "tenant-2026-03-27",
+    version: "tenant-2026-03-30",
     tenantId: "tenant-demo",
-    syncedAt: "2026-03-27T12:00:00.000Z",
+    syncedAt: "2026-03-30T12:00:00.000Z",
+    groups: [
+      {
+        key: "general",
+        title: "通用技能",
+        summary: "不依赖站点登录态的业务技能。",
+        sort: 90,
+        itemCount: 1,
+      },
+    ],
     items: [
       {
         ...seeded.items[1]!,
@@ -57,7 +77,46 @@ function buildCloudCatalog(): ServiceSkillCatalog {
         executionLocation: "cloud_required",
         defaultExecutorBinding: "cloud_scene",
         themeTarget: "video",
-        version: "tenant-2026-03-27",
+        version: "tenant-2026-03-30",
+        groupKey: "general",
+        execution: {
+          kind: "cloud_scene",
+        },
+      },
+    ],
+  };
+}
+
+function buildMetadataOnlySiteCatalog(): SkillCatalog {
+  const seeded = getSeededSkillCatalog();
+  const siteSkill = seeded.items.find((item) => item.groupKey === "github");
+  if (!siteSkill) {
+    throw new Error("缺少 GitHub seeded 技能");
+  }
+
+  return {
+    version: "tenant-2026-03-31",
+    tenantId: "tenant-demo",
+    syncedAt: "2026-03-31T12:00:00.000Z",
+    groups: [
+      {
+        key: "github",
+        title: "GitHub",
+        summary: "围绕仓库与 Issue 的只读研究技能。",
+        sort: 10,
+        itemCount: 1,
+      },
+    ],
+    items: [
+      {
+        ...siteSkill,
+        id: "metadata-only-site-skill",
+        title: "仅带分组信息的站点技能",
+        summary: "远端目录只保留分组与执行信息，由客户端回退渲染站点技能语义。",
+        siteCapabilityBinding: undefined,
+        execution: {
+          kind: "site_adapter",
+        },
       },
     ],
   };
@@ -136,7 +195,7 @@ describe("useServiceSkills", () => {
     vi.restoreAllMocks();
   });
 
-  it("目录更新事件后应刷新服务型技能列表", async () => {
+  it("目录更新事件后应刷新技能列表并保留分组元数据", async () => {
     const harness = mountHook();
 
     try {
@@ -145,21 +204,12 @@ describe("useServiceSkills", () => {
       expect(harness.getValue().skills[0]?.id).toBe(
         "carousel-post-replication",
       );
+      expect(harness.getValue().groups.length).toBeGreaterThan(0);
       expect(harness.getValue().catalogMeta).toEqual(
         expect.objectContaining({
           tenantId: "local-seeded",
           sourceLabel: "本地 Seeded 目录",
           isSeeded: true,
-        }),
-      );
-      expect(
-        harness
-          .getValue()
-          .skills.find((skill) => skill.id === "github-repo-radar"),
-      ).toEqual(
-        expect.objectContaining({
-          runnerLabel: "浏览器站点执行",
-          actionLabel: "启动采集",
         }),
       );
 
@@ -185,35 +235,41 @@ describe("useServiceSkills", () => {
           statusLabel: "成功",
         }),
       );
-      expect(
-        harness
-          .getValue()
-          .skills.find((skill) => skill.id === "carousel-post-replication")
-          ?.automationStatus?.detail,
-      ).toContain("下次");
 
       act(() => {
-        saveServiceSkillCatalog(buildRemoteCatalog(), "bootstrap_sync");
+        saveSkillCatalog(buildRemoteCatalog(), "bootstrap_sync");
       });
 
       await flushEffects();
 
-      expect(harness.getValue().skills).toHaveLength(2);
+      expect(harness.getValue().skills.length).toBeGreaterThanOrEqual(2);
+      expect(
+        harness.getValue().skills.map((skill) => skill.id),
+      ).toEqual(
+        expect.arrayContaining([
+          "tenant-daily-briefing",
+          "local-playbook-template",
+        ]),
+      );
       expect(harness.getValue().skills[0]?.id).toBe("tenant-daily-briefing");
-      expect(harness.getValue().skills[1]?.id).toBe("local-playbook-template");
       expect(harness.getValue().skills[0]?.badge).toBe("云目录");
-      expect(harness.getValue().skills[1]?.badge).toBe("本地技能");
+      expect(
+        harness
+          .getValue()
+          .skills.find((skill) => skill.id === "local-playbook-template")
+          ?.badge,
+      ).toBe("本地技能");
       expect(harness.getValue().catalogMeta).toEqual(
         expect.objectContaining({
           tenantId: "tenant-demo",
-          version: "tenant-2026-03-24",
-          sourceLabel: "租户云目录",
+          version: "tenant-2026-03-29",
+          sourceLabel: "租户技能目录",
           isSeeded: false,
         }),
       );
 
       act(() => {
-        clearServiceSkillCatalogCache();
+        clearSkillCatalogCache();
       });
 
       await flushEffects();
@@ -233,7 +289,29 @@ describe("useServiceSkills", () => {
     }
   });
 
-  it("有 OEM 会话时应先显示本地目录再后台刷新远端目录", async () => {
+  it("站点技能缺少 siteCapabilityBinding 时也应保留站点执行语义", async () => {
+    saveSkillCatalog(buildMetadataOnlySiteCatalog(), "bootstrap_sync");
+
+    const harness = mountHook();
+
+    try {
+      await flushEffects();
+
+      expect(harness.getValue().skills[0]).toEqual(
+        expect.objectContaining({
+          id: "metadata-only-site-skill",
+          runnerLabel: "站点登录态采集",
+          runnerDescription:
+            "会复用当前浏览器里的真实登录态执行站点任务，并优先把结果沉淀到当前工作区。",
+          actionLabel: "开始执行",
+        }),
+      );
+    } finally {
+      harness.unmount();
+    }
+  });
+
+  it("有 OEM 会话时应先显示本地目录再后台刷新远端技能目录", async () => {
     window.__LIME_OEM_CLOUD__ = {
       baseUrl: "https://oem.example.com",
       tenantId: "tenant-demo",
@@ -253,7 +331,7 @@ describe("useServiceSkills", () => {
       await flushEffects(4);
 
       expect(fetchMock).toHaveBeenCalledWith(
-        "https://oem.example.com/api/v1/public/tenants/tenant-demo/client/service-skills",
+        "https://oem.example.com/api/v1/public/tenants/tenant-demo/client/skills",
         expect.objectContaining({
           method: "GET",
           headers: expect.objectContaining({
@@ -281,14 +359,21 @@ describe("useServiceSkills", () => {
 
       await flushEffects(4);
 
-      expect(harness.getValue().skills).toHaveLength(2);
+      expect(harness.getValue().skills.length).toBeGreaterThanOrEqual(2);
       expect(harness.getValue().skills[0]?.id).toBe("tenant-daily-briefing");
-      expect(harness.getValue().skills[1]?.id).toBe("local-playbook-template");
+      expect(
+        harness.getValue().skills.map((skill) => skill.id),
+      ).toEqual(
+        expect.arrayContaining([
+          "tenant-daily-briefing",
+          "local-playbook-template",
+        ]),
+      );
       expect(harness.getValue().catalogMeta).toEqual(
         expect.objectContaining({
           tenantId: "tenant-demo",
-          version: "tenant-2026-03-24",
-          sourceLabel: "租户云目录",
+          version: "tenant-2026-03-29",
+          sourceLabel: "租户技能目录",
           isSeeded: false,
         }),
       );
@@ -304,7 +389,7 @@ describe("useServiceSkills", () => {
       await flushEffects();
 
       act(() => {
-        saveServiceSkillCatalog(buildCloudCatalog(), "manual_override");
+        saveSkillCatalog(buildCloudCatalog(), "manual_override");
       });
 
       await flushEffects();
@@ -314,8 +399,8 @@ describe("useServiceSkills", () => {
           id: "cloud-run-1",
           status: "success",
           outputSummary: "云端结果已生成",
-          finishedAt: "2026-03-27T12:03:00.000Z",
-          updatedAt: "2026-03-27T12:03:00.000Z",
+          finishedAt: "2026-03-30T12:03:00.000Z",
+          updatedAt: "2026-03-30T12:03:00.000Z",
         });
       });
 

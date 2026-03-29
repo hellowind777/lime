@@ -8,8 +8,8 @@ import {
   type MountedRoot,
 } from "../test-utils";
 
-const { mockConvertFileSrc } = vi.hoisted(() => ({
-  mockConvertFileSrc: vi.fn(),
+const { mockConvertLocalFileSrc } = vi.hoisted(() => ({
+  mockConvertLocalFileSrc: vi.fn(),
 }));
 const {
   mockEmitCanvasImageInsertRequest,
@@ -26,8 +26,8 @@ const { mockToastSuccess, mockToastError } = vi.hoisted(() => ({
   mockToastError: vi.fn(),
 }));
 
-vi.mock("@tauri-apps/api/core", () => ({
-  convertFileSrc: mockConvertFileSrc,
+vi.mock("@/lib/api/fileSystem", () => ({
+  convertLocalFileSrc: mockConvertLocalFileSrc,
 }));
 
 vi.mock("@/lib/canvasImageInsertBus", () => ({
@@ -113,7 +113,7 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement {
 beforeEach(() => {
   setReactActEnvironment();
   vi.clearAllMocks();
-  mockConvertFileSrc.mockReturnValue("asset://city.jpg");
+  mockConvertLocalFileSrc.mockReturnValue("asset://city.jpg");
   mockOnCanvasImageInsertAck.mockReturnValue(() => undefined);
   mockGetActiveContentTarget.mockReturnValue({
     projectId: "project-1",

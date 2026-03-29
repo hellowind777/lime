@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { safeInvoke } from "@/lib/dev-bridge";
+import { notificationService } from "@/lib/notificationService";
 import { showSystemNotification } from "./notification";
 
-vi.mock("@/lib/dev-bridge", () => ({
-  safeInvoke: vi.fn(),
+vi.mock("@/lib/notificationService", () => ({
+  notificationService: {
+    notify: vi.fn(),
+  },
 }));
 
 describe("notification API", () => {
@@ -12,7 +14,7 @@ describe("notification API", () => {
   });
 
   it("应代理系统通知命令", async () => {
-    vi.mocked(safeInvoke).mockResolvedValueOnce(undefined);
+    vi.mocked(notificationService.notify).mockResolvedValueOnce(undefined);
 
     await expect(
       showSystemNotification({
@@ -21,5 +23,10 @@ describe("notification API", () => {
         icon: "icon",
       }),
     ).resolves.toBeUndefined();
+    expect(notificationService.notify).toHaveBeenCalledWith({
+      title: "title",
+      body: "body",
+      type: "info",
+    });
   });
 });

@@ -102,4 +102,19 @@ describe("AppSidebar", () => {
     ).not.toBeNull();
     expect(localStorage.getItem(APP_SIDEBAR_COLLAPSED_STORAGE_KEY)).toBe("false");
   });
+
+  it("旧导航配置未包含技能时也应显示固定技能入口", async () => {
+    mockGetConfig.mockResolvedValue({
+      navigation: {
+        enabled_items: ["home-general", "claw"],
+      },
+    });
+
+    const container = mountSidebar({
+      agentEntry: "new-task",
+    } as AgentPageParams);
+    await flushEffects();
+
+    expect(container.textContent).toContain("技能");
+  });
 });

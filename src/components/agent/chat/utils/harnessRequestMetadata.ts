@@ -1,5 +1,6 @@
 import type { BrowserTaskRequirement, Message } from "../types";
 import type { TeamRoleDefinition, TeamDefinitionSource } from "./teamDefinitions";
+import type { AgentAccessMode } from "../hooks/agentChatStorage";
 
 export interface BuildHarnessRequestMetadataOptions {
   base?: Record<string, unknown>;
@@ -11,6 +12,7 @@ export interface BuildHarnessRequestMetadataOptions {
     task: boolean;
     subagent: boolean;
   };
+  accessMode?: AgentAccessMode;
   sessionMode: "default" | "theme_workbench";
   gateKey?: string | null;
   runTitle?: string | null;
@@ -78,6 +80,7 @@ export function buildHarnessRequestMetadata(
     theme,
     turnPurpose,
     preferences,
+    accessMode,
     sessionMode,
     gateKey,
     runTitle,
@@ -120,6 +123,7 @@ export function buildHarnessRequestMetadata(
       task: preferences.task,
       subagent: preferences.subagent,
     },
+    access_mode: accessMode || undefined,
     session_mode: sessionMode,
     gate_key:
       sessionMode === "theme_workbench" ? gateKey || undefined : undefined,

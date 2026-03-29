@@ -103,6 +103,8 @@ export type ChildList = string[] | ChildTemplate;
 export interface RowComponent extends ComponentCommon {
   component: "Row";
   children: ChildList;
+  wrap?: boolean;
+  minChildWidth?: number;
   justify?:
     | "start"
     | "center"
@@ -250,7 +252,7 @@ export type IconName = PresetIconName | { path: string };
 /** 图标 */
 export interface IconComponent extends ComponentCommon {
   component: "Icon";
-  name: IconName;
+  name: DynamicString | IconName;
 }
 
 /** 图片 */
@@ -462,11 +464,36 @@ export type ServerMessageContent =
   | { updateDataModel: UpdateDataModel }
   | { deleteSurface: DeleteSurface };
 
-/** 服务端消息 */
-export interface ServerMessage {
-  version: string;
-  content: ServerMessageContent;
+/** 兼容 v0.8 的 beginRendering */
+export interface BeginRendering {
+  surfaceId: string;
+  root: string;
+  catalogId?: string;
 }
+
+/** 兼容 v0.8 的 surfaceUpdate */
+export interface SurfaceUpdate {
+  surfaceId: string;
+  components: unknown[];
+}
+
+/** 兼容 v0.8 的 dataModelUpdate */
+export interface DataModelUpdate {
+  surfaceId: string;
+  path?: string;
+  contents: unknown[];
+}
+
+/** 当前消息信封（与 aster-rust flatten 对齐） */
+export type ServerMessage =
+  | ({ version: string } & { createSurface: CreateSurface })
+  | ({ version: string } & { updateComponents: UpdateComponents })
+  | ({ version: string } & { updateDataModel: UpdateDataModel })
+  | ({ version: string } & { deleteSurface: DeleteSurface })
+  | { beginRendering: BeginRendering }
+  | { surfaceUpdate: SurfaceUpdate }
+  | { dataModelUpdate: DataModelUpdate }
+  | { deleteSurface: DeleteSurface };
 
 // ============================================================
 // A2UI 响应格式（简化版，兼容现有实现）
